@@ -45,7 +45,7 @@ export default function TaskForm({ task, onSuccess, onCancel }: TaskFormProps) {
       // Convert dueDate to proper format
       const formData = {
         ...data,
-        dueDate: data.dueDate ? new Date(data.dueDate).toISOString() : null,
+        dueDate: data.dueDate && data.dueDate.trim() ? new Date(data.dueDate).toISOString() : null,
         contactId: data.contactId || null,
         dealId: data.dealId || null,
       };

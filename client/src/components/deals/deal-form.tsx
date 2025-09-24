@@ -41,7 +41,7 @@ export default function DealForm({ deal, onSuccess, onCancel }: DealFormProps) {
       // Convert expectedCloseDate to proper format
       const formData = {
         ...data,
-        expectedCloseDate: data.expectedCloseDate ? new Date(data.expectedCloseDate).toISOString() : null,
+        expectedCloseDate: data.expectedCloseDate && data.expectedCloseDate.trim() ? new Date(data.expectedCloseDate).toISOString() : null,
       };
 
       if (deal) {

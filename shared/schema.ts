@@ -59,12 +59,16 @@ export const insertContactSchema = createInsertSchema(contacts).omit({
 export const insertDealSchema = createInsertSchema(deals).omit({
   id: true,
   createdAt: true,
+}).extend({
+  expectedCloseDate: z.string().optional().nullable(),
 });
 
 export const insertTaskSchema = createInsertSchema(tasks).omit({
   id: true,
   completedAt: true,
   createdAt: true,
+}).extend({
+  dueDate: z.string().optional().nullable(),
 });
 
 export const insertActivitySchema = createInsertSchema(activities).omit({
