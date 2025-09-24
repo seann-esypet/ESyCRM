@@ -1,0 +1,416 @@
+import { useQuery } from "@tanstack/react-query";
+import Header from "@/components/layout/header";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { 
+  BarChart3, 
+  TrendingUp, 
+  Users, 
+  DollarSign, 
+  Target,
+  Calendar,
+  PieChart,
+  Activity
+} from "lucide-react";
+import type { Deal, Contact, Task, Activity as ActivityType } from "@shared/schema";
+
+export default function Reports() {
+  const { data: deals, isLoading: dealsLoading } = useQuery<Deal[]>({
+    queryKey: ["/api/deals"],
+  });
+
+  const { data: contacts, isLoading: contactsLoading } = useQuery<Contact[]>({
+    queryKey: ["/api/contacts"],
+  });
+
+  const { data: tasks, isLoading: tasksLoading } = useQuery<Task[]>({
+    queryKey: ["/api/tasks"],
+  });
+
+  const { data: activities, isLoading: activitiesLoading } = useQuery<ActivityType[]>({
+    queryKey: ["/api/activities"],
+    queryFn: async () => {
+      const response = await fetch("/api/activities?limit=100");
+      return response.json();
+    },
+  });
+
+  const isLoading = dealsLoading || contactsLoading || tasksLoading || activitiesLoading;
+
+  // Calculate metrics
+  const calculateMetrics = () => {
+    if (!deals || !contacts || !tasks) return null;
+
+    const totalRevenue = deals
+      .filter(deal => deal.stage === "closed_won")
+      .reduce((sum, deal) => sum + parseFloat(deal.value || "0"), 0);
+
+    const totalPipeline = deals
+      .filter(deal => !["closed_won", "closed_lost"].includes(deal.stage))
+      .reduce((sum, deal) => sum + parseFloat(deal.value || "0"), 0);
+
+    const conversionRate = deals.length > 0 
+      ? (deals.filter(deal => deal.stage === "closed_won").length / deals.length) * 100 
+      : 0;
+
+    const completedTasks = tasks.filter(task => task.status === "completed").length;
+    const taskCompletionRate = tasks.length > 0 ? (completedTasks / tasks.length) * 100 : 0;
+
+    const activeContacts = contacts.filter(contact => contact.status === "active").length;
+
+    // Deal stage distribution
+    const stageDistribution = deals.reduce((acc, deal) => {
+      acc[deal.stage] = (acc[deal.stage] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    // Monthly activity (last 6 months)
+    const sixMonthsAgo = new Date();
+    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+    
+    const recentActivities = activities?.filter(activity => 
+      activity.createdAt && new Date(activity.createdAt) >= sixMonthsAgo
+    ) || [];
+
+    const monthlyActivity = recentActivities.reduce((acc, activity) => {
+      if (activity.createdAt) {
+        const month = new Date(activity.createdAt).toLocaleDateString('en-US', { 
+          year: 'numeric', 
+          month: 'short' 
+        });
+        acc[month] = (acc[month] || 0) + 1;
+      }
+      return acc;
+    }, {} as Record<string, number>);
+
+    return {
+      totalRevenue,
+      totalPipeline,
+      conversionRate,
+      taskCompletionRate,
+      activeContacts,
+      stageDistribution,
+      monthlyActivity,
+    };
+  };
+
+  const metrics = calculateMetrics();
+
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(amount);
+  };
+
+  const getStageLabel = (stage: string) => {
+    switch (stage) {
+      case "lead": return "Lead";
+      case "qualified": return "Qualified";
+      case "proposal": return "Proposal";
+      case "negotiation": return "Negotiation";
+      case "closed_won": return "Closed Won";
+      case "closed_lost": return "Closed Lost";
+      default: return stage;
+    }
+  };
+
+  const getStageColor = (stage: string) => {
+    switch (stage) {
+      case "lead": return "bg-primary";
+      case "qualified": return "bg-accent";
+      case "proposal": return "bg-yellow-500";
+      case "negotiation": return "bg-orange-500";
+      case "closed_won": return "bg-green-500";
+      case "closed_lost": return "bg-red-500";
+      default: return "bg-muted";
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <>
+        <Header title="Reports" showAddButton={false} />
+        <main className="flex-1 overflow-y-auto p-6 bg-muted/30">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            {[...Array(4)].map((_, i) => (
+              <Card key={i} className="animate-pulse">
+                <CardContent className="p-6">
+                  <div className="space-y-4">
+                    <div className="h-4 bg-muted rounded w-24"></div>
+                    <div className="h-8 bg-muted rounded w-16"></div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </main>
+      </>
+    );
+  }
+
+  if (!metrics) {
+    return (
+      <>
+        <Header title="Reports" showAddButton={false} />
+        <main className="flex-1 overflow-y-auto p-6 bg-muted/30">
+          <Card>
+            <CardContent className="p-12 text-center">
+              <BarChart3 className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
+              <h3 className="text-lg font-medium text-foreground mb-2">No data available</h3>
+              <p className="text-muted-foreground">
+                Start adding contacts and deals to see your reports.
+              </p>
+            </CardContent>
+          </Card>
+        </main>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <Header title="Reports" showAddButton={false} />
+      
+      <main className="flex-1 overflow-y-auto p-6 bg-muted/30" data-testid="reports-content">
+        {/* Key Metrics */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+          <Card data-testid="revenue-metric">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Total Revenue</p>
+                  <p className="text-3xl font-bold text-foreground">
+                    {formatCurrency(metrics.totalRevenue)}
+                  </p>
+                </div>
+                <div className="p-3 bg-green-500/10 rounded-full">
+                  <DollarSign className="h-6 w-6 text-green-600" />
+                </div>
+              </div>
+              <div className="mt-4 flex items-center text-sm">
+                <span className="text-muted-foreground">Closed won deals</span>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card data-testid="pipeline-metric">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Pipeline Value</p>
+                  <p className="text-3xl font-bold text-foreground">
+                    {formatCurrency(metrics.totalPipeline)}
+                  </p>
+                </div>
+                <div className="p-3 bg-primary/10 rounded-full">
+                  <Target className="h-6 w-6 text-primary" />
+                </div>
+              </div>
+              <div className="mt-4 flex items-center text-sm">
+                <span className="text-muted-foreground">Active deals</span>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card data-testid="conversion-metric">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Conversion Rate</p>
+                  <p className="text-3xl font-bold text-foreground">
+                    {metrics.conversionRate.toFixed(1)}%
+                  </p>
+                </div>
+                <div className="p-3 bg-accent/10 rounded-full">
+                  <TrendingUp className="h-6 w-6 text-accent" />
+                </div>
+              </div>
+              <div className="mt-4 flex items-center text-sm">
+                <span className="text-muted-foreground">Deals to revenue</span>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card data-testid="task-completion-metric">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Task Completion</p>
+                  <p className="text-3xl font-bold text-foreground">
+                    {metrics.taskCompletionRate.toFixed(1)}%
+                  </p>
+                </div>
+                <div className="p-3 bg-yellow-500/10 rounded-full">
+                  <Target className="h-6 w-6 text-yellow-600" />
+                </div>
+              </div>
+              <div className="mt-4 flex items-center text-sm">
+                <span className="text-muted-foreground">Tasks completed</span>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          {/* Deal Stage Distribution */}
+          <Card data-testid="stage-distribution-chart">
+            <CardHeader className="flex flex-row items-center justify-between">
+              <CardTitle className="text-lg font-semibold flex items-center space-x-2">
+                <PieChart className="h-5 w-5" />
+                <span>Deal Stage Distribution</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {Object.entries(metrics.stageDistribution).map(([stage, count]) => {
+                  const percentage = deals ? (count / deals.length) * 100 : 0;
+                  return (
+                    <div key={stage} className="flex items-center justify-between">
+                      <div className="flex items-center space-x-3">
+                        <div className={`w-3 h-3 ${getStageColor(stage)} rounded-full`}></div>
+                        <span className="font-medium text-foreground">
+                          {getStageLabel(stage)}
+                        </span>
+                      </div>
+                      <div className="text-right">
+                        <p className="font-semibold text-foreground">{count} deals</p>
+                        <p className="text-sm text-muted-foreground">
+                          {percentage.toFixed(1)}%
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Monthly Activity Trend */}
+          <Card data-testid="monthly-activity-chart">
+            <CardHeader className="flex flex-row items-center justify-between">
+              <CardTitle className="text-lg font-semibold flex items-center space-x-2">
+                <Activity className="h-5 w-5" />
+                <span>Monthly Activity Trend</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {Object.entries(metrics.monthlyActivity)
+                  .sort(([a], [b]) => new Date(a + " 1").getTime() - new Date(b + " 1").getTime())
+                  .slice(-6) // Last 6 months
+                  .map(([month, count]) => {
+                    const maxCount = Math.max(...Object.values(metrics.monthlyActivity));
+                    const width = maxCount > 0 ? (count / maxCount) * 100 : 0;
+                    return (
+                      <div key={month} className="space-y-2">
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm font-medium text-foreground">{month}</span>
+                          <span className="text-sm text-muted-foreground">{count} activities</span>
+                        </div>
+                        <div className="w-full bg-muted rounded-full h-2">
+                          <div 
+                            className="bg-primary h-2 rounded-full transition-all duration-300"
+                            style={{ width: `${width}%` }}
+                          ></div>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Summary Statistics */}
+        <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6">
+          <Card data-testid="contacts-summary">
+            <CardHeader>
+              <CardTitle className="text-lg font-semibold flex items-center space-x-2">
+                <Users className="h-5 w-5" />
+                <span>Contacts Summary</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <span className="text-muted-foreground">Total Contacts</span>
+                  <span className="font-semibold text-foreground">{contacts?.length || 0}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-muted-foreground">Active Contacts</span>
+                  <span className="font-semibold text-foreground">{metrics.activeContacts}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-muted-foreground">Companies</span>
+                  <span className="font-semibold text-foreground">
+                    {new Set(contacts?.map(c => c.company).filter(Boolean)).size}
+                  </span>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card data-testid="deals-summary">
+            <CardHeader>
+              <CardTitle className="text-lg font-semibold flex items-center space-x-2">
+                <Target className="h-5 w-5" />
+                <span>Deals Summary</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <span className="text-muted-foreground">Total Deals</span>
+                  <span className="font-semibold text-foreground">{deals?.length || 0}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-muted-foreground">Won Deals</span>
+                  <span className="font-semibold text-foreground">
+                    {deals?.filter(d => d.stage === "closed_won").length || 0}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-muted-foreground">Lost Deals</span>
+                  <span className="font-semibold text-foreground">
+                    {deals?.filter(d => d.stage === "closed_lost").length || 0}
+                  </span>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card data-testid="tasks-summary">
+            <CardHeader>
+              <CardTitle className="text-lg font-semibold flex items-center space-x-2">
+                <Calendar className="h-5 w-5" />
+                <span>Tasks Summary</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <span className="text-muted-foreground">Total Tasks</span>
+                  <span className="font-semibold text-foreground">{tasks?.length || 0}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-muted-foreground">Completed</span>
+                  <span className="font-semibold text-foreground">
+                    {tasks?.filter(t => t.status === "completed").length || 0}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-muted-foreground">Pending</span>
+                  <span className="font-semibold text-foreground">
+                    {tasks?.filter(t => t.status === "pending").length || 0}
+                  </span>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </main>
+    </>
+  );
+}
