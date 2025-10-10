@@ -42,12 +42,12 @@ export default function TaskForm({ task, onSuccess, onCancel }: TaskFormProps) {
 
   const mutation = useMutation({
     mutationFn: async (data: InsertTask) => {
-      // Convert dueDate to proper format
+      // Convert dueDate to proper format and handle "none" values
       const formData = {
         ...data,
         dueDate: data.dueDate && data.dueDate.trim() ? new Date(data.dueDate).toISOString() : null,
-        contactId: data.contactId || null,
-        dealId: data.dealId || null,
+        contactId: data.contactId && data.contactId !== "none" ? data.contactId : null,
+        dealId: data.dealId && data.dealId !== "none" ? data.dealId : null,
       };
 
       if (task) {
@@ -124,14 +124,14 @@ export default function TaskForm({ task, onSuccess, onCancel }: TaskFormProps) {
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Related Contact (Optional)</FormLabel>
-                <Select onValueChange={field.onChange} defaultValue={field.value || ""}>
+                <Select onValueChange={field.onChange} defaultValue={field.value || "none"}>
                   <FormControl>
                     <SelectTrigger data-testid="select-contact">
                       <SelectValue placeholder="Select a contact" />
                     </SelectTrigger>
                   </FormControl>
                   <SelectContent>
-                    <SelectItem value="">No contact</SelectItem>
+                    <SelectItem value="none">No contact</SelectItem>
                     {contacts?.map((contact) => (
                       <SelectItem key={contact.id} value={contact.id}>
                         {contact.firstName} {contact.lastName} - {contact.company || "No company"}
@@ -150,14 +150,14 @@ export default function TaskForm({ task, onSuccess, onCancel }: TaskFormProps) {
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Related Deal (Optional)</FormLabel>
-                <Select onValueChange={field.onChange} defaultValue={field.value || ""}>
+                <Select onValueChange={field.onChange} defaultValue={field.value || "none"}>
                   <FormControl>
                     <SelectTrigger data-testid="select-deal">
                       <SelectValue placeholder="Select a deal" />
                     </SelectTrigger>
                   </FormControl>
                   <SelectContent>
-                    <SelectItem value="">No deal</SelectItem>
+                    <SelectItem value="none">No deal</SelectItem>
                     {deals?.map((deal) => (
                       <SelectItem key={deal.id} value={deal.id}>
                         {deal.title}
