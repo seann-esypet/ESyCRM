@@ -2,9 +2,17 @@
 
 ## Overview
 
-CRM Tracker is a modern Customer Relationship Management system built with a full-stack TypeScript architecture. The application provides comprehensive contact management, deal tracking, task organization, and business analytics features. It's designed as a single-page application with a clean, responsive interface that helps businesses manage their customer relationships effectively.
+CRM Tracker is a modern, multi-user Customer Relationship Management system built with a full-stack TypeScript architecture. The application provides comprehensive contact management, deal tracking, task organization, and business analytics features with secure user authentication and complete data isolation.
 
-The system follows a monorepo structure with shared TypeScript schemas and utilities, ensuring type safety across the entire application stack.
+**Key Features:**
+- **Multi-User Support**: Each salesperson gets their own secure portal with isolated data
+- **Contact Management**: Track customer information, companies, and relationships
+- **Deal Pipeline**: Manage sales opportunities through customizable stages
+- **Task Management**: Organize follow-ups and action items with priorities and due dates
+- **Analytics Dashboard**: Real-time insights into sales performance and pipeline health
+- **Secure Authentication**: Login with Google, GitHub, or email/password via Replit Auth
+
+The system follows a monorepo structure with shared TypeScript schemas and utilities, ensuring type safety across the entire application stack. All data is automatically scoped to the authenticated user, providing complete privacy and security for each salesperson's information.
 
 ## User Preferences
 
@@ -41,9 +49,19 @@ Preferred communication style: Simple, everyday language.
 - **Activities**: Audit trail for all system actions and interactions
 
 ### Authentication and Authorization
-- **Session Management**: Connect-pg-simple for PostgreSQL-backed sessions
-- **Security**: Express session middleware with secure cookie handling
-- Currently implements basic session management foundation for future authentication features
+- **Authentication Provider**: Replit Auth (OpenID Connect) with support for Google, GitHub, X, Apple, and email/password login
+- **Session Management**: PostgreSQL-backed sessions using connect-pg-simple with 7-day TTL
+- **User Management**: Automatic user creation and updates via OAuth claims
+- **Security Features**:
+  - Secure session cookies with httpOnly and secure flags
+  - Automatic token refresh for expired sessions
+  - Protected API routes with isAuthenticated middleware
+  - Per-user data isolation - each salesperson sees only their own contacts, deals, tasks, and activities
+- **Authorization**: All API endpoints require authentication and automatically filter data by authenticated user ID
+- **Environment Variables Required**:
+  - `SESSION_SECRET`: Secret key for session encryption (auto-provided by Replit)
+  - `REPLIT_DOMAINS`: Comma-separated list of deployment domains (auto-provided)
+  - `DATABASE_URL`: PostgreSQL connection string (auto-provided)
 
 ### Development and Build Process
 - **Type Safety**: Comprehensive TypeScript coverage across client, server, and shared code
