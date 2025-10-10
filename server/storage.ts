@@ -145,9 +145,15 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createDeal(insertDeal: InsertDeal, userId: string): Promise<Deal> {
+    const dealData = {
+      ...insertDeal,
+      userId,
+      expectedCloseDate: insertDeal.expectedCloseDate ? new Date(insertDeal.expectedCloseDate) : null,
+    };
+    
     const [deal] = await db
       .insert(deals)
-      .values({ ...insertDeal, userId })
+      .values(dealData)
       .returning();
     
     // Create activity
@@ -165,9 +171,14 @@ export class DatabaseStorage implements IStorage {
     const existing = await this.getDeal(id, userId);
     if (!existing) return undefined;
 
+    const dealUpdateData = {
+      ...updateData,
+      expectedCloseDate: updateData.expectedCloseDate ? new Date(updateData.expectedCloseDate) : undefined,
+    };
+
     const [updated] = await db
       .update(deals)
-      .set(updateData)
+      .set(dealUpdateData)
       .where(and(eq(deals.id, id), eq(deals.userId, userId)))
       .returning();
     
@@ -207,9 +218,15 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createTask(insertTask: InsertTask, userId: string): Promise<Task> {
+    const taskData = {
+      ...insertTask,
+      userId,
+      dueDate: insertTask.dueDate ? new Date(insertTask.dueDate) : null,
+    };
+    
     const [task] = await db
       .insert(tasks)
-      .values({ ...insertTask, userId })
+      .values(taskData)
       .returning();
     
     // Create activity
@@ -230,9 +247,15 @@ export class DatabaseStorage implements IStorage {
 
     const completedAt = updateData.status === "completed" ? new Date() : existing.completedAt;
     
+    const taskUpdateData = {
+      ...updateData,
+      dueDate: updateData.dueDate ? new Date(updateData.dueDate) : undefined,
+      completedAt,
+    };
+    
     const [updated] = await db
       .update(tasks)
-      .set({ ...updateData, completedAt })
+      .set(taskUpdateData)
       .where(and(eq(tasks.id, id), eq(tasks.userId, userId)))
       .returning();
     
