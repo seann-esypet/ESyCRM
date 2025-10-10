@@ -17,30 +17,26 @@ import Sidebar from "@/components/layout/sidebar";
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
 
+  // Show landing page for unauthenticated users
+  if (isLoading || !isAuthenticated) {
+    return <Landing />;
+  }
+
+  // Show authenticated app with sidebar
   return (
-    <Switch>
-      {isLoading || !isAuthenticated ? (
-        <Route path="/" component={Landing} />
-      ) : (
-        <Route path="/">
-          {() => (
-            <div className="flex h-screen bg-background">
-              <Sidebar />
-              <div className="flex-1 flex flex-col overflow-hidden">
-                <Switch>
-                  <Route path="/" component={Dashboard} />
-                  <Route path="/contacts" component={Contacts} />
-                  <Route path="/deals" component={Deals} />
-                  <Route path="/tasks" component={Tasks} />
-                  <Route path="/reports" component={Reports} />
-                  <Route component={NotFound} />
-                </Switch>
-              </div>
-            </div>
-          )}
-        </Route>
-      )}
-    </Switch>
+    <div className="flex h-screen bg-background">
+      <Sidebar />
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <Switch>
+          <Route path="/" component={Dashboard} />
+          <Route path="/contacts" component={Contacts} />
+          <Route path="/deals" component={Deals} />
+          <Route path="/tasks" component={Tasks} />
+          <Route path="/reports" component={Reports} />
+          <Route component={NotFound} />
+        </Switch>
+      </div>
+    </div>
   );
 }
 
