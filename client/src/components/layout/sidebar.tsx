@@ -1,11 +1,14 @@
 import { Link, useLocation } from "wouter";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/hooks/useAuth";
+import { Button } from "@/components/ui/button";
 import { 
   Users, 
   BarChart3, 
   Handshake, 
   CheckSquare, 
-  TrendingUp 
+  TrendingUp,
+  LogOut
 } from "lucide-react";
 
 const navigation = [
@@ -18,6 +21,11 @@ const navigation = [
 
 export default function Sidebar() {
   const [location] = useLocation();
+  const { user } = useAuth();
+
+  const handleLogout = () => {
+    window.location.href = "/api/logout";
+  };
 
   return (
     <div className="w-64 bg-card border-r border-border flex flex-col" data-testid="sidebar">
@@ -57,16 +65,41 @@ export default function Sidebar() {
       </nav>
 
       {/* User Profile */}
-      <div className="p-4 border-t border-border">
+      <div className="p-4 border-t border-border space-y-3">
         <div className="flex items-center space-x-3">
-          <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center">
-            <Users className="h-4 w-4 text-muted-foreground" />
-          </div>
-          <div>
-            <p className="text-sm font-medium text-foreground">John Smith</p>
-            <p className="text-xs text-muted-foreground">john@company.com</p>
+          {user?.profileImageUrl ? (
+            <img 
+              src={user.profileImageUrl} 
+              alt="Profile" 
+              className="w-8 h-8 rounded-full object-cover"
+              data-testid="img-user-avatar"
+            />
+          ) : (
+            <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center">
+              <Users className="h-4 w-4 text-muted-foreground" />
+            </div>
+          )}
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-foreground truncate" data-testid="text-user-name">
+              {user?.firstName && user?.lastName 
+                ? `${user.firstName} ${user.lastName}`
+                : user?.email || "User"}
+            </p>
+            <p className="text-xs text-muted-foreground truncate" data-testid="text-user-email">
+              {user?.email || ""}
+            </p>
           </div>
         </div>
+        <Button 
+          variant="outline" 
+          size="sm" 
+          className="w-full"
+          onClick={handleLogout}
+          data-testid="button-logout"
+        >
+          <LogOut className="h-4 w-4 mr-2" />
+          Sign Out
+        </Button>
       </div>
     </div>
   );

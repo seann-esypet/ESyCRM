@@ -1,26 +1,45 @@
+// From Replit Auth blueprint
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
+import { setupAuth, isAuthenticated } from "./replitAuth";
 import { insertContactSchema, insertDealSchema, insertTaskSchema } from "@shared/schema";
 import { z } from "zod";
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Contacts routes
-  app.get("/api/contacts", async (req, res) => {
+  // Setup auth middleware - From Replit Auth blueprint
+  await setupAuth(app);
+
+  // Auth routes - From Replit Auth blueprint
+  app.get('/api/auth/user', isAuthenticated, async (req: any, res) => {
     try {
+      const userId = req.user.claims.sub;
+      const user = await storage.getUser(userId);
+      res.json(user);
+    } catch (error) {
+      console.error("Error fetching user:", error);
+      res.status(500).json({ message: "Failed to fetch user" });
+    }
+  });
+
+  // Contacts routes - All protected with isAuthenticated
+  app.get("/api/contacts", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
       const { search } = req.query;
       const contacts = search 
-        ? await storage.searchContacts(search as string)
-        : await storage.getContacts();
+        ? await storage.searchContacts(search as string, userId)
+        : await storage.getContacts(userId);
       res.json(contacts);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch contacts" });
     }
   });
 
-  app.get("/api/contacts/:id", async (req, res) => {
+  app.get("/api/contacts/:id", isAuthenticated, async (req: any, res) => {
     try {
-      const contact = await storage.getContact(req.params.id);
+      const userId = req.user.claims.sub;
+      const contact = await storage.getContact(req.params.id, userId);
       if (!contact) {
         return res.status(404).json({ message: "Contact not found" });
       }
@@ -30,10 +49,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/contacts", async (req, res) => {
+  app.post("/api/contacts", isAuthenticated, async (req: any, res) => {
     try {
+      const userId = req.user.claims.sub;
       const contactData = insertContactSchema.parse(req.body);
-      const contact = await storage.createContact(contactData);
+      const contact = await storage.createContact(contactData, userId);
       res.status(201).json(contact);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -43,10 +63,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/contacts/:id", async (req, res) => {
+  app.put("/api/contacts/:id", isAuthenticated, async (req: any, res) => {
     try {
+      const userId = req.user.claims.sub;
       const contactData = insertContactSchema.partial().parse(req.body);
-      const contact = await storage.updateContact(req.params.id, contactData);
+      const contact = await storage.updateContact(req.params.id, contactData, userId);
       if (!contact) {
         return res.status(404).json({ message: "Contact not found" });
       }
@@ -59,9 +80,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/contacts/:id", async (req, res) => {
+  app.delete("/api/contacts/:id", isAuthenticated, async (req: any, res) => {
     try {
-      const deleted = await storage.deleteContact(req.params.id);
+      const userId = req.user.claims.sub;
+      const deleted = await storage.deleteContact(req.params.id, userId);
       if (!deleted) {
         return res.status(404).json({ message: "Contact not found" });
       }
@@ -71,22 +93,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Deals routes
-  app.get("/api/deals", async (req, res) => {
+  // Deals routes - All protected with isAuthenticated
+  app.get("/api/deals", isAuthenticated, async (req: any, res) => {
     try {
+      const userId = req.user.claims.sub;
       const { stage } = req.query;
       const deals = stage 
-        ? await storage.getDealsByStage(stage as string)
-        : await storage.getDeals();
+        ? await storage.getDealsByStage(stage as string, userId)
+        : await storage.getDeals(userId);
       res.json(deals);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch deals" });
     }
   });
 
-  app.get("/api/deals/:id", async (req, res) => {
+  app.get("/api/deals/:id", isAuthenticated, async (req: any, res) => {
     try {
-      const deal = await storage.getDeal(req.params.id);
+      const userId = req.user.claims.sub;
+      const deal = await storage.getDeal(req.params.id, userId);
       if (!deal) {
         return res.status(404).json({ message: "Deal not found" });
       }
@@ -96,10 +120,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/deals", async (req, res) => {
+  app.post("/api/deals", isAuthenticated, async (req: any, res) => {
     try {
+      const userId = req.user.claims.sub;
       const dealData = insertDealSchema.parse(req.body);
-      const deal = await storage.createDeal(dealData);
+      const deal = await storage.createDeal(dealData, userId);
       res.status(201).json(deal);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -109,10 +134,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/deals/:id", async (req, res) => {
+  app.put("/api/deals/:id", isAuthenticated, async (req: any, res) => {
     try {
+      const userId = req.user.claims.sub;
       const dealData = insertDealSchema.partial().parse(req.body);
-      const deal = await storage.updateDeal(req.params.id, dealData);
+      const deal = await storage.updateDeal(req.params.id, dealData, userId);
       if (!deal) {
         return res.status(404).json({ message: "Deal not found" });
       }
@@ -125,9 +151,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/deals/:id", async (req, res) => {
+  app.delete("/api/deals/:id", isAuthenticated, async (req: any, res) => {
     try {
-      const deleted = await storage.deleteDeal(req.params.id);
+      const userId = req.user.claims.sub;
+      const deleted = await storage.deleteDeal(req.params.id, userId);
       if (!deleted) {
         return res.status(404).json({ message: "Deal not found" });
       }
@@ -137,17 +164,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Tasks routes
-  app.get("/api/tasks", async (req, res) => {
+  // Tasks routes - All protected with isAuthenticated
+  app.get("/api/tasks", isAuthenticated, async (req: any, res) => {
     try {
+      const userId = req.user.claims.sub;
       const { status, upcoming } = req.query;
       let tasks;
       if (upcoming === "true") {
-        tasks = await storage.getUpcomingTasks();
+        tasks = await storage.getUpcomingTasks(userId);
       } else if (status) {
-        tasks = await storage.getTasksByStatus(status as string);
+        tasks = await storage.getTasksByStatus(status as string, userId);
       } else {
-        tasks = await storage.getTasks();
+        tasks = await storage.getTasks(userId);
       }
       res.json(tasks);
     } catch (error) {
@@ -155,9 +183,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/tasks/:id", async (req, res) => {
+  app.get("/api/tasks/:id", isAuthenticated, async (req: any, res) => {
     try {
-      const task = await storage.getTask(req.params.id);
+      const userId = req.user.claims.sub;
+      const task = await storage.getTask(req.params.id, userId);
       if (!task) {
         return res.status(404).json({ message: "Task not found" });
       }
@@ -167,10 +196,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/tasks", async (req, res) => {
+  app.post("/api/tasks", isAuthenticated, async (req: any, res) => {
     try {
+      const userId = req.user.claims.sub;
       const taskData = insertTaskSchema.parse(req.body);
-      const task = await storage.createTask(taskData);
+      const task = await storage.createTask(taskData, userId);
       res.status(201).json(task);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -180,10 +210,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/tasks/:id", async (req, res) => {
+  app.put("/api/tasks/:id", isAuthenticated, async (req: any, res) => {
     try {
+      const userId = req.user.claims.sub;
       const taskData = insertTaskSchema.partial().parse(req.body);
-      const task = await storage.updateTask(req.params.id, taskData);
+      const task = await storage.updateTask(req.params.id, taskData, userId);
       if (!task) {
         return res.status(404).json({ message: "Task not found" });
       }
@@ -196,9 +227,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/tasks/:id", async (req, res) => {
+  app.delete("/api/tasks/:id", isAuthenticated, async (req: any, res) => {
     try {
-      const deleted = await storage.deleteTask(req.params.id);
+      const userId = req.user.claims.sub;
+      const deleted = await storage.deleteTask(req.params.id, userId);
       if (!deleted) {
         return res.status(404).json({ message: "Task not found" });
       }
@@ -208,12 +240,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Activities routes
-  app.get("/api/activities", async (req, res) => {
+  // Activities routes - Protected with isAuthenticated
+  app.get("/api/activities", isAuthenticated, async (req: any, res) => {
     try {
+      const userId = req.user.claims.sub;
       const { limit } = req.query;
       const activities = await storage.getRecentActivities(
-        limit ? parseInt(limit as string) : undefined
+        limit ? parseInt(limit as string) : 10,
+        userId
       );
       res.json(activities);
     } catch (error) {
@@ -221,12 +255,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Dashboard metrics
-  app.get("/api/dashboard/metrics", async (req, res) => {
+  // Dashboard metrics - Protected with isAuthenticated
+  app.get("/api/dashboard/metrics", isAuthenticated, async (req: any, res) => {
     try {
-      const contacts = await storage.getContacts();
-      const deals = await storage.getDeals();
-      const tasks = await storage.getTasks();
+      const userId = req.user.claims.sub;
+      const contacts = await storage.getContacts(userId);
+      const deals = await storage.getDeals(userId);
+      const tasks = await storage.getTasks(userId);
       
       const activeDeals = deals.filter(deal => 
         !["closed_won", "closed_lost"].includes(deal.stage)
@@ -250,10 +285,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Deal pipeline summary
-  app.get("/api/dashboard/pipeline", async (req, res) => {
+  // Deal pipeline summary - Protected with isAuthenticated
+  app.get("/api/dashboard/pipeline", isAuthenticated, async (req: any, res) => {
     try {
-      const deals = await storage.getDeals();
+      const userId = req.user.claims.sub;
+      const deals = await storage.getDeals(userId);
       const stages = ["lead", "qualified", "proposal", "negotiation", "closed_won"];
       
       const pipeline = stages.map(stage => {

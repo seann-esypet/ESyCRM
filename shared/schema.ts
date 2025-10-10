@@ -1,10 +1,33 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, timestamp, decimal, integer } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, timestamp, decimal, integer, index, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
+// From Replit Auth blueprint - Session storage table
+export const sessions = pgTable(
+  "sessions",
+  {
+    sid: varchar("sid").primaryKey(),
+    sess: jsonb("sess").notNull(),
+    expire: timestamp("expire").notNull(),
+  },
+  (table) => [index("IDX_session_expire").on(table.expire)],
+);
+
+// From Replit Auth blueprint - User storage table
+export const users = pgTable("users", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  email: varchar("email").unique(),
+  firstName: varchar("first_name"),
+  lastName: varchar("last_name"),
+  profileImageUrl: varchar("profile_image_url"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 export const contacts = pgTable("contacts", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
   firstName: text("first_name").notNull(),
   lastName: text("last_name").notNull(),
   email: text("email"),
@@ -18,6 +41,7 @@ export const contacts = pgTable("contacts", {
 
 export const deals = pgTable("deals", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
   title: text("title").notNull(),
   contactId: varchar("contact_id").references(() => contacts.id),
   value: decimal("value", { precision: 10, scale: 2 }),
@@ -30,6 +54,7 @@ export const deals = pgTable("deals", {
 
 export const tasks = pgTable("tasks", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
   title: text("title").notNull(),
   description: text("description"),
   contactId: varchar("contact_id").references(() => contacts.id),
@@ -43,6 +68,7 @@ export const tasks = pgTable("tasks", {
 
 export const activities = pgTable("activities", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
   type: text("type").notNull(), // contact_added, deal_created, task_completed, etc.
   description: text("description").notNull(),
   contactId: varchar("contact_id").references(() => contacts.id),
@@ -53,11 +79,13 @@ export const activities = pgTable("activities", {
 
 export const insertContactSchema = createInsertSchema(contacts).omit({
   id: true,
+  userId: true,
   lastContactDate: true,
 });
 
 export const insertDealSchema = createInsertSchema(deals).omit({
   id: true,
+  userId: true,
   createdAt: true,
 }).extend({
   expectedCloseDate: z.string().optional().nullable(),
@@ -65,6 +93,7 @@ export const insertDealSchema = createInsertSchema(deals).omit({
 
 export const insertTaskSchema = createInsertSchema(tasks).omit({
   id: true,
+  userId: true,
   completedAt: true,
   createdAt: true,
 }).extend({
@@ -73,6 +102,7 @@ export const insertTaskSchema = createInsertSchema(tasks).omit({
 
 export const insertActivitySchema = createInsertSchema(activities).omit({
   id: true,
+  userId: true,
   createdAt: true,
 });
 
@@ -84,3 +114,5 @@ export type Task = typeof tasks.$inferSelect;
 export type InsertTask = z.infer<typeof insertTaskSchema>;
 export type Activity = typeof activities.$inferSelect;
 export type InsertActivity = z.infer<typeof insertActivitySchema>;
+export type User = typeof users.$inferSelect;
+export type UpsertUser = typeof users.$inferInsert;
