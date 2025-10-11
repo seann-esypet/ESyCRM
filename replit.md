@@ -5,7 +5,9 @@
 CRM Tracker is a modern, multi-user Customer Relationship Management system built with a full-stack TypeScript architecture. The application provides comprehensive contact management, deal tracking, task organization, and business analytics features with secure user authentication and complete data isolation.
 
 **Key Features:**
-- **Multi-User Support**: Each salesperson gets their own secure portal with isolated data
+- **Role-Based Access Control**: Multi-user system with two distinct roles
+  - **Salespeople**: Personal portal with isolated data (contacts, deals, tasks)
+  - **Administrators**: Full system access with oversight capabilities
 - **Contact Management**: Track customer information, companies, and relationships with duplicate detection
   - **Duplicate Detection**: Automatically identifies duplicates by normalized phone number, email, or first+last name combination
   - **CSV/Excel Import**: Bulk upload contacts from CSV or Excel files with validation, error reporting, and duplicate resolution
@@ -14,9 +16,12 @@ CRM Tracker is a modern, multi-user Customer Relationship Management system buil
   - **Smart Sorting**: Sortable columns with default ordering (open deals first, newest first)
 - **Task Management**: Organize follow-ups and action items with priorities and due dates
 - **Analytics Dashboard**: Real-time insights into sales performance and pipeline health
+  - **Salesperson View**: Personal metrics (revenue, pipeline, conversion rate, task completion)
+  - **Admin View**: Salesperson rankings by deals closed, total value, and win rate
+- **Admin Data Export**: CSV export functionality for contacts, deals, and tasks (admin-only)
 - **Secure Authentication**: Login with Google, GitHub, or email/password via Replit Auth
 
-The system follows a monorepo structure with shared TypeScript schemas and utilities, ensuring type safety across the entire application stack. All data is automatically scoped to the authenticated user, providing complete privacy and security for each salesperson's information.
+The system follows a monorepo structure with shared TypeScript schemas and utilities, ensuring type safety across the entire application stack. Data access is automatically controlled based on user role: salespeople see only their own data, while administrators have full system visibility.
 
 ## User Preferences
 
@@ -56,12 +61,19 @@ Preferred communication style: Simple, everyday language.
 - **Authentication Provider**: Replit Auth (OpenID Connect) with support for Google, GitHub, X, Apple, and email/password login
 - **Session Management**: PostgreSQL-backed sessions using connect-pg-simple with 7-day TTL
 - **User Management**: Automatic user creation and updates via OAuth claims
+- **Role-Based Access Control**:
+  - **User Roles**: `salesperson` (default) and `admin`
+  - **Role Persistence**: Stored in database users table, refreshed on each request
+  - **Data Isolation**: Salespeople see only their own data; admins see all data
+  - **Admin-Only Features**: CSV export, salesperson rankings, system-wide reporting
 - **Security Features**:
   - Secure session cookies with httpOnly and secure flags
   - Automatic token refresh for expired sessions
-  - Protected API routes with isAuthenticated middleware
+  - Protected API routes with `isAuthenticated` middleware
+  - Admin-only routes protected with `isAdmin` middleware
+  - Role-aware data filtering via `getUserIdForQuery` helper (returns null for admin, userId for salesperson)
   - Per-user data isolation - each salesperson sees only their own contacts, deals, tasks, and activities
-- **Authorization**: All API endpoints require authentication and automatically filter data by authenticated user ID
+- **Authorization**: All API endpoints require authentication and automatically filter data by authenticated user role
 - **Environment Variables Required**:
   - `SESSION_SECRET`: Secret key for session encryption (auto-provided by Replit)
   - `REPLIT_DOMAINS`: Comma-separated list of deployment domains (auto-provided)
