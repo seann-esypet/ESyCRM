@@ -25,37 +25,37 @@ export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   upsertUser(user: UpsertUser): Promise<User>;
   
-  // Contacts
-  getContacts(userId: string): Promise<Contact[]>;
-  getContact(id: string, userId: string): Promise<Contact | undefined>;
+  // Contacts (userId can be null for admins to get all data)
+  getContacts(userId: string | null): Promise<Contact[]>;
+  getContact(id: string, userId: string | null): Promise<Contact | undefined>;
   createContact(contact: InsertContact, userId: string): Promise<Contact>;
   bulkCreateContacts(contacts: Array<{ row: number, data: InsertContact }>, userId: string): Promise<{ successful: Contact[], failed: Array<{ row: number, error: string, data: any }> }>;
-  updateContact(id: string, contact: Partial<InsertContact>, userId: string): Promise<Contact | undefined>;
-  deleteContact(id: string, userId: string): Promise<boolean>;
-  searchContacts(query: string, userId: string): Promise<Contact[]>;
+  updateContact(id: string, contact: Partial<InsertContact>, userId: string | null): Promise<Contact | undefined>;
+  deleteContact(id: string, userId: string | null): Promise<boolean>;
+  searchContacts(query: string, userId: string | null): Promise<Contact[]>;
   findDuplicateContacts(contact: InsertContact, userId: string, excludeId?: string): Promise<Contact[]>;
 
-  // Deals
-  getDeals(userId: string): Promise<Deal[]>;
-  getDeal(id: string, userId: string): Promise<Deal | undefined>;
+  // Deals (userId can be null for admins to get all data)
+  getDeals(userId: string | null): Promise<Deal[]>;
+  getDeal(id: string, userId: string | null): Promise<Deal | undefined>;
   createDeal(deal: InsertDeal, userId: string): Promise<Deal>;
-  updateDeal(id: string, deal: Partial<InsertDeal>, userId: string): Promise<Deal | undefined>;
-  deleteDeal(id: string, userId: string): Promise<boolean>;
-  getDealsByStage(stage: string, userId: string): Promise<Deal[]>;
+  updateDeal(id: string, deal: Partial<InsertDeal>, userId: string | null): Promise<Deal | undefined>;
+  deleteDeal(id: string, userId: string | null): Promise<boolean>;
+  getDealsByStage(stage: string, userId: string | null): Promise<Deal[]>;
 
-  // Tasks
-  getTasks(userId: string): Promise<Task[]>;
-  getTask(id: string, userId: string): Promise<Task | undefined>;
+  // Tasks (userId can be null for admins to get all data)
+  getTasks(userId: string | null): Promise<Task[]>;
+  getTask(id: string, userId: string | null): Promise<Task | undefined>;
   createTask(task: InsertTask, userId: string): Promise<Task>;
-  updateTask(id: string, task: Partial<InsertTask>, userId: string): Promise<Task | undefined>;
-  deleteTask(id: string, userId: string): Promise<boolean>;
-  getTasksByStatus(status: string, userId: string): Promise<Task[]>;
-  getUpcomingTasks(userId: string): Promise<Task[]>;
+  updateTask(id: string, task: Partial<InsertTask>, userId: string | null): Promise<Task | undefined>;
+  deleteTask(id: string, userId: string | null): Promise<boolean>;
+  getTasksByStatus(status: string, userId: string | null): Promise<Task[]>;
+  getUpcomingTasks(userId: string | null): Promise<Task[]>;
 
-  // Activities
-  getActivities(userId: string): Promise<Activity[]>;
+  // Activities (userId can be null for admins to get all data)
+  getActivities(userId: string | null): Promise<Activity[]>;
   createActivity(activity: InsertActivity, userId: string): Promise<Activity>;
-  getRecentActivities(limit: number, userId: string): Promise<Activity[]>;
+  getRecentActivities(limit: number, userId: string | null): Promise<Activity[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -81,11 +81,20 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Contacts
-  async getContacts(userId: string): Promise<Contact[]> {
+  async getContacts(userId: string | null): Promise<Contact[]> {
+    if (userId === null) {
+      // Admin: get all contacts
+      return await db.select().from(contacts);
+    }
     return await db.select().from(contacts).where(eq(contacts.userId, userId));
   }
 
-  async getContact(id: string, userId: string): Promise<Contact | undefined> {
+  async getContact(id: string, userId: string | null): Promise<Contact | undefined> {
+    if (userId === null) {
+      // Admin: get any contact by ID
+      const [contact] = await db.select().from(contacts).where(eq(contacts.id, id));
+      return contact;
+    }
     const [contact] = await db.select().from(contacts)
       .where(and(eq(contacts.id, id), eq(contacts.userId, userId)));
     return contact;
@@ -127,7 +136,16 @@ export class DatabaseStorage implements IStorage {
     return { successful, failed };
   }
 
-  async updateContact(id: string, updateData: Partial<InsertContact>, userId: string): Promise<Contact | undefined> {
+  async updateContact(id: string, updateData: Partial<InsertContact>, userId: string | null): Promise<Contact | undefined> {
+    if (userId === null) {
+      // Admin: update any contact
+      const [updated] = await db
+        .update(contacts)
+        .set({ ...updateData, lastContactDate: new Date() })
+        .where(eq(contacts.id, id))
+        .returning();
+      return updated;
+    }
     const [updated] = await db
       .update(contacts)
       .set({ ...updateData, lastContactDate: new Date() })
@@ -136,14 +154,29 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  async deleteContact(id: string, userId: string): Promise<boolean> {
+  async deleteContact(id: string, userId: string | null): Promise<boolean> {
+    if (userId === null) {
+      // Admin: delete any contact
+      const result = await db.delete(contacts).where(eq(contacts.id, id));
+      return result.rowCount ? result.rowCount > 0 : false;
+    }
     const result = await db.delete(contacts)
       .where(and(eq(contacts.id, id), eq(contacts.userId, userId)));
     return result.rowCount ? result.rowCount > 0 : false;
   }
 
-  async searchContacts(query: string, userId: string): Promise<Contact[]> {
+  async searchContacts(query: string, userId: string | null): Promise<Contact[]> {
     const lowercaseQuery = `%${query.toLowerCase()}%`;
+    if (userId === null) {
+      // Admin: search all contacts
+      return await db.select().from(contacts)
+        .where(sql`(
+          LOWER(${contacts.firstName}) LIKE ${lowercaseQuery} OR 
+          LOWER(${contacts.lastName}) LIKE ${lowercaseQuery} OR 
+          LOWER(${contacts.email}) LIKE ${lowercaseQuery} OR 
+          LOWER(${contacts.company}) LIKE ${lowercaseQuery}
+        )`);
+    }
     return await db.select().from(contacts)
       .where(and(
         eq(contacts.userId, userId),
@@ -205,11 +238,20 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Deals
-  async getDeals(userId: string): Promise<Deal[]> {
+  async getDeals(userId: string | null): Promise<Deal[]> {
+    if (userId === null) {
+      // Admin: get all deals
+      return await db.select().from(deals);
+    }
     return await db.select().from(deals).where(eq(deals.userId, userId));
   }
 
-  async getDeal(id: string, userId: string): Promise<Deal | undefined> {
+  async getDeal(id: string, userId: string | null): Promise<Deal | undefined> {
+    if (userId === null) {
+      // Admin: get any deal by ID
+      const [deal] = await db.select().from(deals).where(eq(deals.id, id));
+      return deal;
+    }
     const [deal] = await db.select().from(deals)
       .where(and(eq(deals.id, id), eq(deals.userId, userId)));
     return deal;

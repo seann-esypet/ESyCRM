@@ -10,12 +10,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Setup auth middleware - From Replit Auth blueprint
   await setupAuth(app);
 
+  // Helper function to get user ID or null for admin (admin sees all data)
+  const getUserIdForQuery = (user: any): string | null => {
+    return user.role === "admin" ? null : user.claims.sub;
+  };
+
   // Auth routes - From Replit Auth blueprint
   app.get('/api/auth/user', isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
       const user = await storage.getUser(userId);
-      res.json(user);
+      // Include role from session in response
+      const userWithRole = {
+        ...user,
+        role: req.user.role || user?.role || "salesperson"
+      };
+      res.json(userWithRole);
     } catch (error) {
       console.error("Error fetching user:", error);
       res.status(500).json({ message: "Failed to fetch user" });
@@ -25,7 +35,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Contacts routes - All protected with isAuthenticated
   app.get("/api/contacts", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = getUserIdForQuery(req.user); // null for admin, user ID for salesperson
       const { search } = req.query;
       const contacts = search 
         ? await storage.searchContacts(search as string, userId)
@@ -38,7 +48,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/contacts/:id", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = getUserIdForQuery(req.user);
       const contact = await storage.getContact(req.params.id, userId);
       if (!contact) {
         return res.status(404).json({ message: "Contact not found" });

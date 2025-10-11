@@ -65,6 +65,10 @@ async function upsertUser(
     lastName: claims["last_name"],
     profileImageUrl: claims["profile_image_url"],
   });
+  
+  // Fetch the user to get their role from the database
+  const user = await storage.getUser(claims["sub"]);
+  return user;
 }
 
 export async function setupAuth(app: Express) {
@@ -79,9 +83,16 @@ export async function setupAuth(app: Express) {
     tokens: client.TokenEndpointResponse & client.TokenEndpointResponseHelpers,
     verified: passport.AuthenticateCallback
   ) => {
-    const user = {};
+    const user: any = {};
     updateUserSession(user, tokens);
-    await upsertUser(tokens.claims());
+    const dbUser = await upsertUser(tokens.claims());
+    if (dbUser) {
+      user.role = dbUser.role || "salesperson";
+      user.userId = dbUser.id;
+    } else {
+      user.role = "salesperson";
+      user.userId = tokens.claims()["sub"];
+    }
     verified(null, user);
   };
 
@@ -155,4 +166,18 @@ export const isAuthenticated: RequestHandler = async (req, res, next) => {
     res.status(401).json({ message: "Unauthorized" });
     return;
   }
+};
+
+export const isAdmin: RequestHandler = async (req, res, next) => {
+  const user = req.user as any;
+
+  if (!req.isAuthenticated()) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  if (user.role !== "admin") {
+    return res.status(403).json({ message: "Forbidden: Admin access required" });
+  }
+
+  return next();
 };
