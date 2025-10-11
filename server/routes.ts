@@ -417,6 +417,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Admin reports - Salesperson rankings
+  app.get("/api/admin/salesperson-rankings", isAdmin, async (req: any, res) => {
+    try {
+      // Get all users (salespeople and admins)
+      const allDeals = await storage.getDeals(null); // Get all deals
+      const allUsers = await storage.getAllUsers(); // Need to add this method
+      
+      // Calculate metrics per salesperson
+      const rankings = allUsers
+        .filter(user => user.role === "salesperson") // Only rank salespeople
+        .map(user => {
+          const userDeals = allDeals.filter(deal => deal.userId === user.id);
+          const wonDeals = userDeals.filter(deal => deal.stage === "closed_won");
+          const totalDeals = userDeals.length;
+          const totalValue = wonDeals.reduce((sum, deal) => sum + parseFloat(deal.value || "0"), 0);
+          const winRate = totalDeals > 0 ? (wonDeals.length / totalDeals) * 100 : 0;
+          const avgDealValue = wonDeals.length > 0 ? totalValue / wonDeals.length : 0;
+          
+          return {
+            userId: user.id,
+            name: `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email || 'Unknown',
+            dealsWon: wonDeals.length,
+            totalValue,
+            totalDeals,
+            winRate,
+            avgDealValue,
+          };
+        })
+        .sort((a, b) => b.dealsWon - a.dealsWon); // Sort by deals won (descending)
+      
+      res.json(rankings);
+    } catch (error) {
+      console.error("Error fetching salesperson rankings:", error);
+      res.status(500).json({ message: "Failed to fetch salesperson rankings" });
+    }
+  });
+
   // Export endpoints - Admin only
   app.get("/api/export/contacts", isAdmin, async (req: any, res) => {
     try {

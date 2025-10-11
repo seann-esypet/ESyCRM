@@ -24,6 +24,7 @@ export interface IStorage {
   // User operations - From Replit Auth blueprint
   getUser(id: string): Promise<User | undefined>;
   upsertUser(user: UpsertUser): Promise<User>;
+  getAllUsers(): Promise<User[]>;
   
   // Contacts (userId can be null for admins to get all data)
   getContacts(userId: string | null): Promise<Contact[]>;
@@ -78,6 +79,10 @@ export class DatabaseStorage implements IStorage {
       })
       .returning();
     return user;
+  }
+
+  async getAllUsers(): Promise<User[]> {
+    return await db.select().from(users);
   }
 
   // Contacts

@@ -9,21 +9,47 @@ import {
   Target,
   Calendar,
   PieChart,
-  Activity
+  Activity,
+  Trophy,
+  Award
 } from "lucide-react";
-import type { Deal, Contact, Task, Activity as ActivityType } from "@shared/schema";
+import type { Deal, Contact, Task, Activity as ActivityType, User } from "@shared/schema";
+import { useAuth } from "@/hooks/useAuth";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+
+type SalespersonRanking = {
+  userId: string;
+  name: string;
+  dealsWon: number;
+  totalValue: number;
+  totalDeals: number;
+  winRate: number;
+  avgDealValue: number;
+};
 
 export default function Reports() {
+  const { user } = useAuth();
+  const isAdmin = (user as any)?.role === "admin";
+  
+  // Admin-specific query for salesperson rankings
+  const { data: rankings, isLoading: rankingsLoading } = useQuery<SalespersonRanking[]>({
+    queryKey: ["/api/admin/salesperson-rankings"],
+    enabled: isAdmin, // Only fetch if user is admin
+  });
+
   const { data: deals, isLoading: dealsLoading } = useQuery<Deal[]>({
     queryKey: ["/api/deals"],
+    enabled: !isAdmin, // Only fetch for salespeople
   });
 
   const { data: contacts, isLoading: contactsLoading } = useQuery<Contact[]>({
     queryKey: ["/api/contacts"],
+    enabled: !isAdmin, // Only fetch for salespeople
   });
 
   const { data: tasks, isLoading: tasksLoading } = useQuery<Task[]>({
     queryKey: ["/api/tasks"],
+    enabled: !isAdmin, // Only fetch for salespeople
   });
 
   const { data: activities, isLoading: activitiesLoading } = useQuery<ActivityType[]>({
@@ -32,9 +58,12 @@ export default function Reports() {
       const response = await fetch("/api/activities?limit=100");
       return response.json();
     },
+    enabled: !isAdmin, // Only fetch for salespeople
   });
 
-  const isLoading = dealsLoading || contactsLoading || tasksLoading || activitiesLoading;
+  const isLoading = isAdmin 
+    ? rankingsLoading 
+    : (dealsLoading || contactsLoading || tasksLoading || activitiesLoading);
 
   // Calculate metrics
   const calculateMetrics = () => {
@@ -95,15 +124,6 @@ export default function Reports() {
 
   const metrics = calculateMetrics();
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    }).format(amount);
-  };
-
   const getStageLabel = (stage: string) => {
     switch (stage) {
       case "lead": return "Lead";
@@ -150,6 +170,167 @@ export default function Reports() {
     );
   }
 
+  // Helper function to format currency
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(amount);
+  };
+
+  // Admin view: Salesperson rankings
+  if (isAdmin) {
+    if (!rankings || rankings.length === 0) {
+      return (
+        <>
+          <Header title="Salesperson Rankings" showAddButton={false} />
+          <main className="flex-1 overflow-y-auto p-6 bg-muted/30">
+            <Card>
+              <CardContent className="p-12 text-center">
+                <Trophy className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
+                <h3 className="text-lg font-medium text-foreground mb-2">No salespeople data available</h3>
+                <p className="text-muted-foreground">
+                  Rankings will appear when salespeople start closing deals.
+                </p>
+              </CardContent>
+            </Card>
+          </main>
+        </>
+      );
+    }
+
+    return (
+      <>
+        <Header title="Salesperson Rankings" showAddButton={false} />
+        <main className="flex-1 overflow-y-auto p-6 bg-muted/30" data-testid="admin-rankings-content">
+          {/* Rankings Table */}
+          <Card className="mb-8" data-testid="rankings-table">
+            <CardHeader>
+              <CardTitle className="text-xl font-semibold flex items-center space-x-2">
+                <Trophy className="h-6 w-6 text-yellow-500" />
+                <span>Top Performers</span>
+              </CardTitle>
+              <p className="text-sm text-muted-foreground mt-2">
+                Ranked by number of deals closed
+              </p>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-16">Rank</TableHead>
+                    <TableHead>Salesperson</TableHead>
+                    <TableHead className="text-right">Deals Won</TableHead>
+                    <TableHead className="text-right">Total Value</TableHead>
+                    <TableHead className="text-right">Win Rate</TableHead>
+                    <TableHead className="text-right">Avg Deal Value</TableHead>
+                    <TableHead className="text-right">Total Deals</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {rankings.map((ranking, index) => (
+                    <TableRow key={ranking.userId} data-testid={`ranking-row-${index}`}>
+                      <TableCell className="font-semibold">
+                        {index === 0 && <Trophy className="h-5 w-5 inline text-yellow-500 mr-2" />}
+                        {index === 1 && <Award className="h-5 w-5 inline text-gray-400 mr-2" />}
+                        {index === 2 && <Award className="h-5 w-5 inline text-orange-600 mr-2" />}
+                        {index > 2 && <span className="ml-7">{index + 1}</span>}
+                        {index <= 2 && <span>{index + 1}</span>}
+                      </TableCell>
+                      <TableCell className="font-medium" data-testid={`salesperson-name-${index}`}>
+                        {ranking.name}
+                      </TableCell>
+                      <TableCell className="text-right font-semibold" data-testid={`deals-won-${index}`}>
+                        {ranking.dealsWon}
+                      </TableCell>
+                      <TableCell className="text-right" data-testid={`total-value-${index}`}>
+                        {formatCurrency(ranking.totalValue)}
+                      </TableCell>
+                      <TableCell className="text-right" data-testid={`win-rate-${index}`}>
+                        {ranking.winRate.toFixed(1)}%
+                      </TableCell>
+                      <TableCell className="text-right" data-testid={`avg-value-${index}`}>
+                        {formatCurrency(ranking.avgDealValue)}
+                      </TableCell>
+                      <TableCell className="text-right text-muted-foreground" data-testid={`total-deals-${index}`}>
+                        {ranking.totalDeals}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+
+          {/* Summary Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <Card>
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">Top Performer</p>
+                    <p className="text-2xl font-bold text-foreground">
+                      {rankings[0]?.name || 'N/A'}
+                    </p>
+                  </div>
+                  <div className="p-3 bg-yellow-500/10 rounded-full">
+                    <Trophy className="h-6 w-6 text-yellow-600" />
+                  </div>
+                </div>
+                <div className="mt-4 flex items-center text-sm">
+                  <span className="text-muted-foreground">{rankings[0]?.dealsWon || 0} deals closed</span>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">Total Revenue</p>
+                    <p className="text-2xl font-bold text-foreground">
+                      {formatCurrency(rankings.reduce((sum, r) => sum + r.totalValue, 0))}
+                    </p>
+                  </div>
+                  <div className="p-3 bg-green-500/10 rounded-full">
+                    <DollarSign className="h-6 w-6 text-green-600" />
+                  </div>
+                </div>
+                <div className="mt-4 flex items-center text-sm">
+                  <span className="text-muted-foreground">All salespeople combined</span>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">Average Win Rate</p>
+                    <p className="text-2xl font-bold text-foreground">
+                      {rankings.length > 0 
+                        ? (rankings.reduce((sum, r) => sum + r.winRate, 0) / rankings.length).toFixed(1)
+                        : 0}%
+                    </p>
+                  </div>
+                  <div className="p-3 bg-primary/10 rounded-full">
+                    <TrendingUp className="h-6 w-6 text-primary" />
+                  </div>
+                </div>
+                <div className="mt-4 flex items-center text-sm">
+                  <span className="text-muted-foreground">Across all salespeople</span>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </main>
+      </>
+    );
+  }
+
+  // Salesperson view: Personal metrics
   if (!metrics) {
     return (
       <>
