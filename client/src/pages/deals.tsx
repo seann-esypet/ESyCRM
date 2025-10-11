@@ -7,8 +7,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Edit, Trash2, Calendar, DollarSign, Handshake, LayoutGrid, List, ArrowUpDown, ArrowUp, ArrowDown, RotateCcw } from "lucide-react";
+import { Edit, Trash2, Calendar, DollarSign, Handshake, LayoutGrid, List, ArrowUpDown, ArrowUp, ArrowDown, RotateCcw, Download } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { useAuth } from "@/hooks/useAuth";
 import type { Deal, Contact } from "@shared/schema";
 
 type ViewType = "card" | "table";
@@ -16,6 +17,9 @@ type SortColumn = "title" | "value" | "expectedCloseDate" | "stage" | "contact" 
 type SortDirection = "asc" | "desc";
 
 export default function Deals() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+  
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [selectedDeal, setSelectedDeal] = useState<Deal | undefined>();
   const [viewType, setViewType] = useState<ViewType>("table");
@@ -89,6 +93,10 @@ export default function Deals() {
     if (confirm("Are you sure you want to delete this deal?")) {
       deleteMutation.mutate(id);
     }
+  };
+
+  const handleExport = () => {
+    window.open('/api/export/deals', '_blank');
   };
 
   const handleFormClose = () => {
@@ -218,6 +226,17 @@ export default function Deals() {
         onAddNew={() => setIsFormOpen(true)}
         customActions={
           <div className="flex gap-2">
+            {isAdmin && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleExport}
+                data-testid="button-export"
+              >
+                <Download className="h-4 w-4 mr-2" />
+                Export CSV
+              </Button>
+            )}
             {sortColumn && (
               <Button
                 variant="outline"

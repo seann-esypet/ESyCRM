@@ -6,9 +6,15 @@ import ContactForm from "@/components/contacts/contact-form";
 import ContactImport from "@/components/contacts/contact-import";
 import { queryClient } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Download } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
 import type { Contact } from "@shared/schema";
 
 export default function Contacts() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+  
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -58,6 +64,10 @@ export default function Contacts() {
     queryClient.invalidateQueries({ queryKey: ["/api/contacts"] });
   };
 
+  const handleExport = () => {
+    window.open('/api/export/contacts', '_blank');
+  };
+
   return (
     <>
       <Header 
@@ -67,6 +77,16 @@ export default function Contacts() {
         onImport={() => setIsImportOpen(true)}
         showImportButton={true}
         addButtonText="Add Contact"
+        customActions={isAdmin ? (
+          <Button 
+            variant="outline" 
+            onClick={handleExport}
+            data-testid="button-export"
+          >
+            <Download className="h-4 w-4 mr-2" />
+            Export CSV
+          </Button>
+        ) : null}
       />
       
       <main className="flex-1 overflow-y-auto p-6 bg-muted/30" data-testid="contacts-content">

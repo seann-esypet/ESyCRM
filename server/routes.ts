@@ -2,9 +2,10 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { setupAuth, isAuthenticated } from "./replitAuth";
+import { setupAuth, isAuthenticated, isAdmin } from "./replitAuth";
 import { insertContactSchema, insertDealSchema, insertTaskSchema, type InsertContact } from "@shared/schema";
 import { z } from "zod";
+import Papa from "papaparse";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Setup auth middleware - From Replit Auth blueprint
@@ -413,6 +414,52 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(pipeline);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch pipeline data" });
+    }
+  });
+
+  // Export endpoints - Admin only
+  app.get("/api/export/contacts", isAdmin, async (req: any, res) => {
+    try {
+      const contacts = await storage.getContacts(null); // null = get all data (admin)
+      // Use explicit fields to ensure consistent CSV format even with empty data
+      const fields = ['id', 'firstName', 'lastName', 'email', 'phone', 'company', 'jobTitle', 'source', 'notes', 'userId'];
+      const csv = Papa.unparse(contacts, { header: true, columns: fields });
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', 'attachment; filename=contacts.csv');
+      res.send(csv);
+    } catch (error) {
+      console.error("Error exporting contacts:", error);
+      res.status(500).json({ message: "Failed to export contacts" });
+    }
+  });
+
+  app.get("/api/export/deals", isAdmin, async (req: any, res) => {
+    try {
+      const deals = await storage.getDeals(null); // null = get all data (admin)
+      // Use explicit fields to ensure consistent CSV format even with empty data
+      const fields = ['id', 'title', 'description', 'stage', 'value', 'probability', 'expectedCloseDate', 'contactId', 'userId'];
+      const csv = Papa.unparse(deals, { header: true, columns: fields });
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', 'attachment; filename=deals.csv');
+      res.send(csv);
+    } catch (error) {
+      console.error("Error exporting deals:", error);
+      res.status(500).json({ message: "Failed to export deals" });
+    }
+  });
+
+  app.get("/api/export/tasks", isAdmin, async (req: any, res) => {
+    try {
+      const tasks = await storage.getTasks(null); // null = get all data (admin)
+      // Use explicit fields to ensure consistent CSV format even with empty data
+      const fields = ['id', 'title', 'description', 'status', 'priority', 'dueDate', 'completedAt', 'contactId', 'dealId', 'userId'];
+      const csv = Papa.unparse(tasks, { header: true, columns: fields });
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', 'attachment; filename=tasks.csv');
+      res.send(csv);
+    } catch (error) {
+      console.error("Error exporting tasks:", error);
+      res.status(500).json({ message: "Failed to export tasks" });
     }
   });
 

@@ -5,9 +5,15 @@ import TaskList from "@/components/tasks/task-list";
 import TaskForm from "@/components/tasks/task-form";
 import { queryClient } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Download } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
 import type { Task } from "@shared/schema";
 
 export default function Tasks() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+  
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [selectedTask, setSelectedTask] = useState<Task | undefined>();
 
@@ -48,11 +54,25 @@ export default function Tasks() {
     queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
   };
 
+  const handleExport = () => {
+    window.open('/api/export/tasks', '_blank');
+  };
+
   return (
     <>
       <Header 
         title="Tasks" 
         onAddNew={() => setIsFormOpen(true)}
+        customActions={isAdmin ? (
+          <Button 
+            variant="outline" 
+            onClick={handleExport}
+            data-testid="button-export"
+          >
+            <Download className="h-4 w-4 mr-2" />
+            Export CSV
+          </Button>
+        ) : null}
       />
       
       <main className="flex-1 overflow-y-auto p-6 bg-muted/30" data-testid="tasks-content">
