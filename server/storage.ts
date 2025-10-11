@@ -16,8 +16,9 @@ import {
   tasks,
   activities
 } from "@shared/schema";
+import { normalizePhoneNumber, normalizeName, normalizeEmail } from "@shared/utils";
 import { db } from "./db";
-import { eq, desc, and, sql, gte, lte } from "drizzle-orm";
+import { eq, desc, and, sql, gte, lte, or, ne } from "drizzle-orm";
 
 export interface IStorage {
   // User operations - From Replit Auth blueprint
@@ -32,6 +33,7 @@ export interface IStorage {
   updateContact(id: string, contact: Partial<InsertContact>, userId: string): Promise<Contact | undefined>;
   deleteContact(id: string, userId: string): Promise<boolean>;
   searchContacts(query: string, userId: string): Promise<Contact[]>;
+  findDuplicateContacts(contact: InsertContact, userId: string, excludeId?: string): Promise<Contact[]>;
 
   // Deals
   getDeals(userId: string): Promise<Deal[]>;
@@ -152,6 +154,54 @@ export class DatabaseStorage implements IStorage {
           LOWER(${contacts.company}) LIKE ${lowercaseQuery}
         )`
       ));
+  }
+
+  async findDuplicateContacts(contact: InsertContact, userId: string, excludeId?: string): Promise<Contact[]> {
+    const normalizedPhone = normalizePhoneNumber(contact.phone);
+    const normalizedEmail = normalizeEmail(contact.email);
+    const normalizedFirstName = normalizeName(contact.firstName);
+    const normalizedLastName = normalizeName(contact.lastName);
+    
+    // Get all contacts for the user
+    const userContacts = await db.select().from(contacts).where(eq(contacts.userId, userId));
+    
+    // Filter for potential duplicates
+    const duplicates = userContacts.filter(existing => {
+      // Exclude the contact being updated (if applicable)
+      if (excludeId && existing.id === excludeId) {
+        return false;
+      }
+      
+      // Check phone number match (normalized)
+      if (normalizedPhone && existing.phone) {
+        const existingNormalizedPhone = normalizePhoneNumber(existing.phone);
+        if (existingNormalizedPhone === normalizedPhone) {
+          return true;
+        }
+      }
+      
+      // Check email match (case-insensitive)
+      if (normalizedEmail && existing.email) {
+        const existingNormalizedEmail = normalizeEmail(existing.email);
+        if (existingNormalizedEmail === normalizedEmail) {
+          return true;
+        }
+      }
+      
+      // Check first and last name match (case-insensitive)
+      if (normalizedFirstName && normalizedLastName) {
+        const existingNormalizedFirstName = normalizeName(existing.firstName);
+        const existingNormalizedLastName = normalizeName(existing.lastName);
+        if (existingNormalizedFirstName === normalizedFirstName && 
+            existingNormalizedLastName === normalizedLastName) {
+          return true;
+        }
+      }
+      
+      return false;
+    });
+    
+    return duplicates;
   }
 
   // Deals
