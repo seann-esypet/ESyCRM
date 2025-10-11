@@ -45,11 +45,12 @@ export const deals = pgTable("deals", {
   userId: varchar("user_id").notNull().references(() => users.id),
   title: text("title").notNull(),
   contactId: varchar("contact_id").references(() => contacts.id),
-  value: decimal("value", { precision: 10, scale: 2 }),
+  value: text("value"), // Plan 1 - $2/appoint, Plan 2 - $99/mo, Plan 3 - $150/mo + credit card
   stage: text("stage").notNull().default("lead"), // lead, qualified, proposal, negotiation, closed_won, closed_lost
   probability: integer("probability").default(0), // 0-100
   expectedCloseDate: timestamp("expected_close_date"),
   description: text("description"),
+  approved: text("approved").default("pending"), // pending, approved, rejected - for commission approval by admin
   createdAt: timestamp("created_at").defaultNow(),
 });
 

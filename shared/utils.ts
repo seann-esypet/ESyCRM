@@ -34,3 +34,16 @@ export function normalizeEmail(email: string | null | undefined): string | null 
   if (!email) return null;
   return email.trim().toLowerCase() || null;
 }
+
+/**
+ * Calculate commission based on deal value plan
+ */
+export function calculateCommission(dealValue: string | null | undefined): number {
+  if (!dealValue) return 0;
+  
+  if (dealValue.includes("Plan 1")) return 50;
+  if (dealValue.includes("Plan 2")) return 99;
+  if (dealValue.includes("Plan 3")) return 149;
+  
+  return 0;
+}
