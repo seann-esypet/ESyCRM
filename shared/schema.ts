@@ -88,6 +88,7 @@ export const insertDealSchema = createInsertSchema(deals).omit({
   userId: true,
   createdAt: true,
 }).extend({
+  value: z.string().optional().nullable(),
   expectedCloseDate: z.string().optional().nullable(),
 });
 

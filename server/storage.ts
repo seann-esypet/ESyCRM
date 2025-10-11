@@ -148,7 +148,9 @@ export class DatabaseStorage implements IStorage {
     const dealData = {
       ...insertDeal,
       userId,
+      value: insertDeal.value && insertDeal.value.trim() ? insertDeal.value : null,
       expectedCloseDate: insertDeal.expectedCloseDate ? new Date(insertDeal.expectedCloseDate) : null,
+      contactId: insertDeal.contactId && insertDeal.contactId.trim() ? insertDeal.contactId : null,
     };
     
     const [deal] = await db
@@ -173,7 +175,9 @@ export class DatabaseStorage implements IStorage {
 
     const dealUpdateData = {
       ...updateData,
+      value: updateData.value !== undefined ? (updateData.value && updateData.value.trim() ? updateData.value : null) : undefined,
       expectedCloseDate: updateData.expectedCloseDate ? new Date(updateData.expectedCloseDate) : undefined,
+      contactId: updateData.contactId !== undefined ? (updateData.contactId && updateData.contactId.trim() ? updateData.contactId : null) : undefined,
     };
 
     const [updated] = await db
