@@ -29,6 +29,7 @@ export default function DealForm({ deal, onSuccess, onCancel }: DealFormProps) {
       title: deal?.title || "",
       contactId: deal?.contactId || "",
       value: deal?.value || "",
+      plan: deal?.plan || "",
       stage: deal?.stage || "lead",
       probability: deal?.probability || 0,
       expectedCloseDate: deal?.expectedCloseDate ? new Date(deal.expectedCloseDate).toISOString().split('T')[0] : "",
@@ -119,13 +120,26 @@ export default function DealForm({ deal, onSuccess, onCancel }: DealFormProps) {
 
           <FormField
             control={form.control}
-            name="value"
+            name="plan"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Deal Value</FormLabel>
-                <Select onValueChange={field.onChange} defaultValue={field.value || ""}>
+                <FormLabel>Deal Plan</FormLabel>
+                <Select 
+                  onValueChange={(value) => {
+                    field.onChange(value);
+                    // Set numeric value based on plan
+                    if (value.includes("Plan 1")) {
+                      form.setValue("value", "2");
+                    } else if (value.includes("Plan 2")) {
+                      form.setValue("value", "99");
+                    } else if (value.includes("Plan 3")) {
+                      form.setValue("value", "150");
+                    }
+                  }} 
+                  defaultValue={field.value || ""}
+                >
                   <FormControl>
-                    <SelectTrigger data-testid="select-value">
+                    <SelectTrigger data-testid="select-plan">
                       <SelectValue placeholder="Select a plan" />
                     </SelectTrigger>
                   </FormControl>

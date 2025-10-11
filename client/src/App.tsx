@@ -11,6 +11,7 @@ import Contacts from "@/pages/contacts";
 import Deals from "@/pages/deals";
 import Tasks from "@/pages/tasks";
 import Reports from "@/pages/reports";
+import Commissions from "@/pages/commissions";
 import Sidebar from "@/components/layout/sidebar";
 
 // From Replit Auth blueprint - Conditional routing based on auth state
@@ -32,6 +33,7 @@ function Router() {
           <Route path="/contacts" component={Contacts} />
           <Route path="/deals" component={Deals} />
           <Route path="/tasks" component={Tasks} />
+          <Route path="/commissions" component={Commissions} />
           <Route path="/reports" component={Reports} />
           <Route component={NotFound} />
         </Switch>

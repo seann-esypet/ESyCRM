@@ -325,12 +325,12 @@ export default function Reports() {
                     {adminDeals
                       .filter(deal => deal.stage === "closed_won")
                       .map((deal) => {
-                        const commission = calculateCommission(deal.value);
+                        const commission = calculateCommission(deal.plan);
                         return (
                           <TableRow key={deal.id} data-testid={`approval-row-${deal.id}`}>
                             <TableCell className="font-medium">{deal.title}</TableCell>
                             <TableCell>{deal.userId}</TableCell>
-                            <TableCell>{deal.value || "N/A"}</TableCell>
+                            <TableCell>{deal.plan || "N/A"}</TableCell>
                             <TableCell className="text-right font-semibold">
                               ${commission}
                             </TableCell>

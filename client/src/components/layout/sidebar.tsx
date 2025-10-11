@@ -8,6 +8,7 @@ import {
   Handshake, 
   CheckSquare, 
   TrendingUp,
+  DollarSign,
   LogOut
 } from "lucide-react";
 
@@ -16,6 +17,7 @@ const navigation = [
   { name: "Contacts", href: "/contacts", icon: Users },
   { name: "Deals", href: "/deals", icon: Handshake },
   { name: "Tasks", href: "/tasks", icon: CheckSquare },
+  { name: "Commissions", href: "/commissions", icon: DollarSign },
   { name: "Reports", href: "/reports", icon: TrendingUp },
 ];
 
