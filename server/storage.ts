@@ -282,7 +282,7 @@ export class DatabaseStorage implements IStorage {
     return deal;
   }
 
-  async updateDeal(id: string, updateData: Partial<InsertDeal>, userId: string): Promise<Deal | undefined> {
+  async updateDeal(id: string, updateData: Partial<InsertDeal>, userId: string | null): Promise<Deal | undefined> {
     const existing = await this.getDeal(id, userId);
     if (!existing) return undefined;
 
@@ -293,42 +293,62 @@ export class DatabaseStorage implements IStorage {
       contactId: updateData.contactId !== undefined ? (updateData.contactId && updateData.contactId.trim() ? updateData.contactId : null) : undefined,
     };
 
+    const whereClause = userId === null 
+      ? eq(deals.id, id)
+      : and(eq(deals.id, id), eq(deals.userId, userId));
+
     const [updated] = await db
       .update(deals)
       .set(dealUpdateData)
-      .where(and(eq(deals.id, id), eq(deals.userId, userId)))
+      .where(whereClause)
       .returning();
     
-    // Create activity if stage changed
+    // Create activity if stage changed (use the deal's actual userId for activity)
     if (updateData.stage && updateData.stage !== existing.stage) {
       await this.createActivity({
         type: "deal_stage_changed",
         description: `Deal "${updated.title}" moved to ${updateData.stage}`,
         dealId: id,
         contactId: updated.contactId || undefined,
-      }, userId);
+      }, updated.userId);
     }
     
     return updated;
   }
 
-  async deleteDeal(id: string, userId: string): Promise<boolean> {
-    const result = await db.delete(deals)
-      .where(and(eq(deals.id, id), eq(deals.userId, userId)));
+  async deleteDeal(id: string, userId: string | null): Promise<boolean> {
+    const whereClause = userId === null 
+      ? eq(deals.id, id)
+      : and(eq(deals.id, id), eq(deals.userId, userId));
+    
+    const result = await db.delete(deals).where(whereClause);
     return result.rowCount ? result.rowCount > 0 : false;
   }
 
-  async getDealsByStage(stage: string, userId: string): Promise<Deal[]> {
+  async getDealsByStage(stage: string, userId: string | null): Promise<Deal[]> {
+    if (userId === null) {
+      // Admin: get all deals in this stage
+      return await db.select().from(deals).where(eq(deals.stage, stage));
+    }
     return await db.select().from(deals)
       .where(and(eq(deals.stage, stage), eq(deals.userId, userId)));
   }
 
   // Tasks
-  async getTasks(userId: string): Promise<Task[]> {
+  async getTasks(userId: string | null): Promise<Task[]> {
+    if (userId === null) {
+      // Admin: get all tasks
+      return await db.select().from(tasks);
+    }
     return await db.select().from(tasks).where(eq(tasks.userId, userId));
   }
 
-  async getTask(id: string, userId: string): Promise<Task | undefined> {
+  async getTask(id: string, userId: string | null): Promise<Task | undefined> {
+    if (userId === null) {
+      // Admin: get any task by ID
+      const [task] = await db.select().from(tasks).where(eq(tasks.id, id));
+      return task;
+    }
     const [task] = await db.select().from(tasks)
       .where(and(eq(tasks.id, id), eq(tasks.userId, userId)));
     return task;
@@ -358,7 +378,7 @@ export class DatabaseStorage implements IStorage {
     return task;
   }
 
-  async updateTask(id: string, updateData: Partial<InsertTask>, userId: string): Promise<Task | undefined> {
+  async updateTask(id: string, updateData: Partial<InsertTask>, userId: string | null): Promise<Task | undefined> {
     const existing = await this.getTask(id, userId);
     if (!existing) return undefined;
 
@@ -370,13 +390,17 @@ export class DatabaseStorage implements IStorage {
       completedAt,
     };
     
+    const whereClause = userId === null 
+      ? eq(tasks.id, id)
+      : and(eq(tasks.id, id), eq(tasks.userId, userId));
+
     const [updated] = await db
       .update(tasks)
       .set(taskUpdateData)
-      .where(and(eq(tasks.id, id), eq(tasks.userId, userId)))
+      .where(whereClause)
       .returning();
     
-    // Create activity if completed
+    // Create activity if completed (use the task's actual userId for activity)
     if (updateData.status === "completed" && existing.status !== "completed") {
       await this.createActivity({
         type: "task_completed",
@@ -384,26 +408,44 @@ export class DatabaseStorage implements IStorage {
         taskId: id,
         contactId: updated.contactId || undefined,
         dealId: updated.dealId || undefined,
-      }, userId);
+      }, updated.userId);
     }
     
     return updated;
   }
 
-  async deleteTask(id: string, userId: string): Promise<boolean> {
-    const result = await db.delete(tasks)
-      .where(and(eq(tasks.id, id), eq(tasks.userId, userId)));
+  async deleteTask(id: string, userId: string | null): Promise<boolean> {
+    const whereClause = userId === null 
+      ? eq(tasks.id, id)
+      : and(eq(tasks.id, id), eq(tasks.userId, userId));
+    
+    const result = await db.delete(tasks).where(whereClause);
     return result.rowCount ? result.rowCount > 0 : false;
   }
 
-  async getTasksByStatus(status: string, userId: string): Promise<Task[]> {
+  async getTasksByStatus(status: string, userId: string | null): Promise<Task[]> {
+    if (userId === null) {
+      // Admin: get all tasks with this status
+      return await db.select().from(tasks).where(eq(tasks.status, status));
+    }
     return await db.select().from(tasks)
       .where(and(eq(tasks.status, status), eq(tasks.userId, userId)));
   }
 
-  async getUpcomingTasks(userId: string): Promise<Task[]> {
+  async getUpcomingTasks(userId: string | null): Promise<Task[]> {
     const now = new Date();
     const weekFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    
+    if (userId === null) {
+      // Admin: get all upcoming tasks
+      return await db.select().from(tasks)
+        .where(and(
+          eq(tasks.status, "pending"),
+          gte(tasks.dueDate, now),
+          lte(tasks.dueDate, weekFromNow)
+        ))
+        .orderBy(tasks.dueDate);
+    }
     
     return await db.select().from(tasks)
       .where(and(
@@ -416,7 +458,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Activities
-  async getActivities(userId: string): Promise<Activity[]> {
+  async getActivities(userId: string | null): Promise<Activity[]> {
+    if (userId === null) {
+      // Admin: get all activities
+      return await db.select().from(activities);
+    }
     return await db.select().from(activities).where(eq(activities.userId, userId));
   }
 
@@ -428,7 +474,13 @@ export class DatabaseStorage implements IStorage {
     return activity;
   }
 
-  async getRecentActivities(limit: number = 10, userId: string): Promise<Activity[]> {
+  async getRecentActivities(limit: number = 10, userId: string | null): Promise<Activity[]> {
+    if (userId === null) {
+      // Admin: get all recent activities
+      return await db.select().from(activities)
+        .orderBy(desc(activities.createdAt))
+        .limit(limit);
+    }
     return await db.select().from(activities)
       .where(eq(activities.userId, userId))
       .orderBy(desc(activities.createdAt))

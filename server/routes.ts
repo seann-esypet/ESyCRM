@@ -75,7 +75,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put("/api/contacts/:id", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = getUserIdForQuery(req.user);
       const contactData = insertContactSchema.partial().parse(req.body);
       const contact = await storage.updateContact(req.params.id, contactData, userId);
       if (!contact) {
@@ -92,7 +92,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete("/api/contacts/:id", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = getUserIdForQuery(req.user);
       const deleted = await storage.deleteContact(req.params.id, userId);
       if (!deleted) {
         return res.status(404).json({ message: "Contact not found" });
@@ -200,7 +200,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Deals routes - All protected with isAuthenticated
   app.get("/api/deals", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = getUserIdForQuery(req.user);
       const { stage } = req.query;
       const deals = stage 
         ? await storage.getDealsByStage(stage as string, userId)
@@ -213,7 +213,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/deals/:id", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = getUserIdForQuery(req.user);
       const deal = await storage.getDeal(req.params.id, userId);
       if (!deal) {
         return res.status(404).json({ message: "Deal not found" });
@@ -241,7 +241,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put("/api/deals/:id", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = getUserIdForQuery(req.user);
       const dealData = insertDealSchema.partial().parse(req.body);
       const deal = await storage.updateDeal(req.params.id, dealData, userId);
       if (!deal) {
@@ -258,7 +258,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete("/api/deals/:id", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = getUserIdForQuery(req.user);
       const deleted = await storage.deleteDeal(req.params.id, userId);
       if (!deleted) {
         return res.status(404).json({ message: "Deal not found" });
@@ -272,7 +272,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Tasks routes - All protected with isAuthenticated
   app.get("/api/tasks", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = getUserIdForQuery(req.user);
       const { status, upcoming } = req.query;
       let tasks;
       if (upcoming === "true") {
@@ -290,7 +290,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/tasks/:id", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = getUserIdForQuery(req.user);
       const task = await storage.getTask(req.params.id, userId);
       if (!task) {
         return res.status(404).json({ message: "Task not found" });
@@ -317,7 +317,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put("/api/tasks/:id", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = getUserIdForQuery(req.user);
       const taskData = insertTaskSchema.partial().parse(req.body);
       const task = await storage.updateTask(req.params.id, taskData, userId);
       if (!task) {
@@ -334,7 +334,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete("/api/tasks/:id", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = getUserIdForQuery(req.user);
       const deleted = await storage.deleteTask(req.params.id, userId);
       if (!deleted) {
         return res.status(404).json({ message: "Task not found" });
@@ -348,7 +348,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Activities routes - Protected with isAuthenticated
   app.get("/api/activities", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = getUserIdForQuery(req.user);
       const { limit } = req.query;
       const activities = await storage.getRecentActivities(
         limit ? parseInt(limit as string) : 10,
@@ -363,7 +363,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Dashboard metrics - Protected with isAuthenticated
   app.get("/api/dashboard/metrics", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = getUserIdForQuery(req.user);
       const contacts = await storage.getContacts(userId);
       const deals = await storage.getDeals(userId);
       const tasks = await storage.getTasks(userId);
@@ -393,7 +393,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Deal pipeline summary - Protected with isAuthenticated
   app.get("/api/dashboard/pipeline", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = getUserIdForQuery(req.user);
       const deals = await storage.getDeals(userId);
       const stages = ["lead", "qualified", "proposal", "negotiation", "closed_won"];
       

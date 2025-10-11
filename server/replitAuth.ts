@@ -148,6 +148,15 @@ export const isAuthenticated: RequestHandler = async (req, res, next) => {
 
   const now = Math.floor(Date.now() / 1000);
   if (now <= user.expires_at) {
+    // Refresh user role from database to ensure it's up to date
+    try {
+      const dbUser = await storage.getUser(user.claims.sub);
+      if (dbUser) {
+        user.role = dbUser.role || "salesperson";
+      }
+    } catch (error) {
+      console.error("Error refreshing user role:", error);
+    }
     return next();
   }
 
@@ -161,6 +170,11 @@ export const isAuthenticated: RequestHandler = async (req, res, next) => {
     const config = await getOidcConfig();
     const tokenResponse = await client.refreshTokenGrant(config, refreshToken);
     updateUserSession(user, tokenResponse);
+    // Also refresh role after token refresh
+    const dbUser = await storage.getUser(user.claims.sub);
+    if (dbUser) {
+      user.role = dbUser.role || "salesperson";
+    }
     return next();
   } catch (error) {
     res.status(401).json({ message: "Unauthorized" });
