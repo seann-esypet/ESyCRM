@@ -28,6 +28,7 @@ export interface IStorage {
   getContacts(userId: string): Promise<Contact[]>;
   getContact(id: string, userId: string): Promise<Contact | undefined>;
   createContact(contact: InsertContact, userId: string): Promise<Contact>;
+  bulkCreateContacts(contacts: Array<{ row: number, data: InsertContact }>, userId: string): Promise<{ successful: Contact[], failed: Array<{ row: number, error: string, data: any }> }>;
   updateContact(id: string, contact: Partial<InsertContact>, userId: string): Promise<Contact | undefined>;
   deleteContact(id: string, userId: string): Promise<boolean>;
   searchContacts(query: string, userId: string): Promise<Contact[]>;
@@ -102,6 +103,26 @@ export class DatabaseStorage implements IStorage {
     }, userId);
     
     return contact;
+  }
+
+  async bulkCreateContacts(contactsData: Array<{ row: number, data: InsertContact }>, userId: string): Promise<{ successful: Contact[], failed: Array<{ row: number, error: string, data: any }> }> {
+    const successful: Contact[] = [];
+    const failed: Array<{ row: number, error: string, data: any }> = [];
+    
+    for (const { row, data } of contactsData) {
+      try {
+        const contact = await this.createContact(data, userId);
+        successful.push(contact);
+      } catch (error) {
+        failed.push({
+          row,
+          error: error instanceof Error ? error.message : "Unknown error",
+          data
+        });
+      }
+    }
+    
+    return { successful, failed };
   }
 
   async updateContact(id: string, updateData: Partial<InsertContact>, userId: string): Promise<Contact | undefined> {

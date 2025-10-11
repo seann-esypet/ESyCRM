@@ -3,7 +3,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { setupAuth, isAuthenticated } from "./replitAuth";
-import { insertContactSchema, insertDealSchema, insertTaskSchema } from "@shared/schema";
+import { insertContactSchema, insertDealSchema, insertTaskSchema, type InsertContact } from "@shared/schema";
 import { z } from "zod";
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -90,6 +90,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(204).send();
     } catch (error) {
       res.status(500).json({ message: "Failed to delete contact" });
+    }
+  });
+
+  app.post("/api/contacts/import", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const { contacts: contactsData } = req.body;
+      
+      if (!Array.isArray(contactsData) || contactsData.length === 0) {
+        return res.status(400).json({ message: "Invalid import data. Expected an array of contacts." });
+      }
+      
+      // Validate each contact and preserve original row numbers
+      const validatedContacts: Array<{ row: number, data: InsertContact }> = [];
+      const validationErrors = [];
+      
+      for (let i = 0; i < contactsData.length; i++) {
+        try {
+          const validated = insertContactSchema.parse(contactsData[i]);
+          validatedContacts.push({ row: i + 1, data: validated });
+        } catch (error) {
+          if (error instanceof z.ZodError) {
+            validationErrors.push({
+              row: i + 1,
+              errors: error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', '),
+              data: contactsData[i]
+            });
+          }
+        }
+      }
+      
+      // Import validated contacts with original row numbers
+      const result = await storage.bulkCreateContacts(validatedContacts, userId);
+      
+      res.status(200).json({
+        total: contactsData.length,
+        successful: result.successful.length,
+        failed: result.failed.length + validationErrors.length,
+        contacts: result.successful,
+        errors: [...validationErrors, ...result.failed]
+      });
+    } catch (error) {
+      console.error("Error importing contacts:", error);
+      res.status(500).json({ message: "Failed to import contacts" });
     }
   });
 
