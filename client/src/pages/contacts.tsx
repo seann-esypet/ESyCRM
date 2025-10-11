@@ -3,12 +3,14 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import Header from "@/components/layout/header";
 import ContactList from "@/components/contacts/contact-list";
 import ContactForm from "@/components/contacts/contact-form";
+import ContactImport from "@/components/contacts/contact-import";
 import { queryClient } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { Contact } from "@shared/schema";
 
 export default function Contacts() {
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [isImportOpen, setIsImportOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedContact, setSelectedContact] = useState<Contact | undefined>();
 
@@ -62,6 +64,9 @@ export default function Contacts() {
         title="Contacts" 
         onSearch={setSearchQuery}
         onAddNew={() => setIsFormOpen(true)}
+        onImport={() => setIsImportOpen(true)}
+        showImportButton={true}
+        addButtonText="Add Contact"
       />
       
       <main className="flex-1 overflow-y-auto p-6 bg-muted/30" data-testid="contacts-content">
@@ -87,6 +92,11 @@ export default function Contacts() {
           />
         </DialogContent>
       </Dialog>
+
+      <ContactImport 
+        open={isImportOpen}
+        onOpenChange={setIsImportOpen}
+      />
     </>
   );
 }

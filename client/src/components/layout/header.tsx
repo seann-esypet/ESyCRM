@@ -1,20 +1,26 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Bell, Search } from "lucide-react";
+import { Plus, Bell, Search, Upload } from "lucide-react";
 
 interface HeaderProps {
   title: string;
   onSearch?: (query: string) => void;
   onAddNew?: () => void;
+  onImport?: () => void;
   showAddButton?: boolean;
+  showImportButton?: boolean;
+  addButtonText?: string;
 }
 
 export default function Header({ 
   title, 
   onSearch, 
-  onAddNew, 
-  showAddButton = true 
+  onAddNew,
+  onImport,
+  showAddButton = true,
+  showImportButton = false,
+  addButtonText = "Add New"
 }: HeaderProps) {
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -49,13 +55,23 @@ export default function Header({
           <Bell className="h-4 w-4 mr-2" />
           Notifications
         </Button>
+        {showImportButton && (
+          <Button 
+            variant="outline"
+            onClick={onImport}
+            data-testid="button-import"
+          >
+            <Upload className="h-4 w-4 mr-2" />
+            Import
+          </Button>
+        )}
         {showAddButton && (
           <Button 
             onClick={onAddNew}
             data-testid="add-new-button"
           >
             <Plus className="h-4 w-4 mr-2" />
-            Add New
+            {addButtonText}
           </Button>
         )}
       </div>
