@@ -11,6 +11,7 @@ interface HeaderProps {
   showAddButton?: boolean;
   showImportButton?: boolean;
   addButtonText?: string;
+  customActions?: React.ReactNode;
 }
 
 export default function Header({ 
@@ -20,7 +21,8 @@ export default function Header({
   onImport,
   showAddButton = true,
   showImportButton = false,
-  addButtonText = "Add New"
+  addButtonText = "Add New",
+  customActions
 }: HeaderProps) {
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -55,6 +57,7 @@ export default function Header({
           <Bell className="h-4 w-4 mr-2" />
           Notifications
         </Button>
+        {customActions}
         {showImportButton && (
           <Button 
             variant="outline"

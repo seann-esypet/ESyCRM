@@ -7,12 +7,16 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Edit, Trash2, Calendar, DollarSign, Handshake } from "lucide-react";
+import { Edit, Trash2, Calendar, DollarSign, Handshake, LayoutGrid, List } from "lucide-react";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { Deal, Contact } from "@shared/schema";
+
+type ViewType = "card" | "table";
 
 export default function Deals() {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [selectedDeal, setSelectedDeal] = useState<Deal | undefined>();
+  const [viewType, setViewType] = useState<ViewType>("card");
 
   const { data: deals, isLoading } = useQuery<Deal[]>({
     queryKey: ["/api/deals"],
@@ -121,6 +125,28 @@ export default function Deals() {
       <Header 
         title="Deals" 
         onAddNew={() => setIsFormOpen(true)}
+        customActions={
+          <div className="flex gap-1 border border-border rounded-md">
+            <Button
+              variant={viewType === "card" ? "secondary" : "ghost"}
+              size="sm"
+              onClick={() => setViewType("card")}
+              data-testid="view-card"
+              className="rounded-r-none"
+            >
+              <LayoutGrid className="h-4 w-4" />
+            </Button>
+            <Button
+              variant={viewType === "table" ? "secondary" : "ghost"}
+              size="sm"
+              onClick={() => setViewType("table")}
+              data-testid="view-table"
+              className="rounded-l-none"
+            >
+              <List className="h-4 w-4" />
+            </Button>
+          </div>
+        }
       />
       
       <main className="flex-1 overflow-y-auto p-6 bg-muted/30" data-testid="deals-content">
@@ -134,7 +160,7 @@ export default function Deals() {
               </p>
             </CardContent>
           </Card>
-        ) : (
+        ) : viewType === "card" ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {deals.map((deal) => (
               <Card 
@@ -210,6 +236,63 @@ export default function Deals() {
               </Card>
             ))}
           </div>
+        ) : (
+          <Card>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Deal Name</TableHead>
+                  <TableHead>Value</TableHead>
+                  <TableHead>Expected Close</TableHead>
+                  <TableHead>Stage</TableHead>
+                  <TableHead>Contact</TableHead>
+                  <TableHead>Probability</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {deals.map((deal) => (
+                  <TableRow key={deal.id} data-testid={`deal-row-${deal.id}`}>
+                    <TableCell className="font-medium">
+                      {deal.title}
+                    </TableCell>
+                    <TableCell>{formatCurrency(deal.value)}</TableCell>
+                    <TableCell>{formatDate(deal.expectedCloseDate)}</TableCell>
+                    <TableCell>
+                      <Badge className={getStageColor(deal.stage)}>
+                        {deal.stage.replace('_', ' ').toUpperCase()}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>{getContactName(deal.contactId)}</TableCell>
+                    <TableCell>
+                      {deal.probability !== null ? `${deal.probability}%` : "—"}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end space-x-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleEdit(deal)}
+                          data-testid={`edit-deal-${deal.id}`}
+                        >
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDelete(deal.id)}
+                          className="text-destructive hover:text-destructive"
+                          data-testid={`delete-deal-${deal.id}`}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Card>
         )}
       </main>
 
