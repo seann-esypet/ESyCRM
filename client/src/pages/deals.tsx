@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Edit, Trash2, Calendar, DollarSign, Handshake, LayoutGrid, List, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
+import { Edit, Trash2, Calendar, DollarSign, Handshake, LayoutGrid, List, ArrowUpDown, ArrowUp, ArrowDown, RotateCcw } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { Deal, Contact } from "@shared/schema";
 
@@ -217,25 +217,41 @@ export default function Deals() {
         title="Deals" 
         onAddNew={() => setIsFormOpen(true)}
         customActions={
-          <div className="flex gap-1 border border-border rounded-md">
-            <Button
-              variant={viewType === "card" ? "secondary" : "ghost"}
-              size="sm"
-              onClick={() => setViewType("card")}
-              data-testid="view-card"
-              className="rounded-r-none"
-            >
-              <LayoutGrid className="h-4 w-4" />
-            </Button>
-            <Button
-              variant={viewType === "table" ? "secondary" : "ghost"}
-              size="sm"
-              onClick={() => setViewType("table")}
-              data-testid="view-table"
-              className="rounded-l-none"
-            >
-              <List className="h-4 w-4" />
-            </Button>
+          <div className="flex gap-2">
+            {sortColumn && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setSortColumn(null);
+                  setSortDirection("asc");
+                }}
+                data-testid="reset-sort"
+              >
+                <RotateCcw className="h-4 w-4 mr-2" />
+                Reset Sort
+              </Button>
+            )}
+            <div className="flex gap-1 border border-border rounded-md">
+              <Button
+                variant={viewType === "card" ? "secondary" : "ghost"}
+                size="sm"
+                onClick={() => setViewType("card")}
+                data-testid="view-card"
+                className="rounded-r-none"
+              >
+                <LayoutGrid className="h-4 w-4" />
+              </Button>
+              <Button
+                variant={viewType === "table" ? "secondary" : "ghost"}
+                size="sm"
+                onClick={() => setViewType("table")}
+                data-testid="view-table"
+                className="rounded-l-none"
+              >
+                <List className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
         }
       />
