@@ -133,7 +133,7 @@ export default function DealForm({ deal, onSuccess, onCancel }: DealFormProps) {
                     } else if (value.includes("Plan 2")) {
                       form.setValue("value", "99");
                     } else if (value.includes("Plan 3")) {
-                      form.setValue("value", "150");
+                      form.setValue("value", "99");
                     }
                   }} 
                   defaultValue={field.value || ""}
@@ -146,7 +146,7 @@ export default function DealForm({ deal, onSuccess, onCancel }: DealFormProps) {
                   <SelectContent>
                     <SelectItem value="Plan 1 - $2/appoint">Plan 1 - $2/appoint</SelectItem>
                     <SelectItem value="Plan 2 - $99/mo">Plan 2 - $99/mo</SelectItem>
-                    <SelectItem value="Plan 3 - $150/mo + credit card">Plan 3 - $150/mo + credit card</SelectItem>
+                    <SelectItem value="Plan 3. $99 + Credit Card">Plan 3. $99 + Credit Card</SelectItem>
                   </SelectContent>
                 </Select>
                 <FormMessage />
