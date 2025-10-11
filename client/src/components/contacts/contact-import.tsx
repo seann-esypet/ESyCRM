@@ -9,7 +9,8 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Upload, FileSpreadsheet, CheckCircle2, XCircle, AlertCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import type { Contact } from "@shared/schema";
+import type { Contact, InsertContact } from "@shared/schema";
+import { BulkDuplicateResolutionDialog } from "./bulk-duplicate-resolution-dialog";
 
 interface ImportResult {
   total: number;
@@ -17,6 +18,12 @@ interface ImportResult {
   failed: number;
   contacts: Contact[];
   errors: Array<{ row: number; errors?: string; error?: string; data: any }>;
+}
+
+interface BulkDuplicateMatch {
+  row: number;
+  contact: InsertContact;
+  duplicates: Contact[];
 }
 
 interface ContactImportProps {
@@ -29,6 +36,9 @@ export default function ContactImport({ open, onOpenChange }: ContactImportProps
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState(0);
   const [result, setResult] = useState<ImportResult | null>(null);
+  const [parsedContacts, setParsedContacts] = useState<InsertContact[]>([]);
+  const [duplicateMatches, setDuplicateMatches] = useState<BulkDuplicateMatch[]>([]);
+  const [showDuplicateDialog, setShowDuplicateDialog] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -126,11 +136,25 @@ export default function ContactImport({ open, onOpenChange }: ContactImportProps
         status: (row.status || row.Status || "active").trim() || "active",
       }));
 
+      setParsedContacts(contacts);
       setProgress(50);
 
-      await importMutation.mutateAsync(contacts);
+      // Check for duplicates
+      const duplicateResponse = await apiRequest("POST", "/api/contacts/check-bulk-duplicates", { contacts });
+      const duplicateData: any = await duplicateResponse.json();
+      
+      setProgress(70);
 
-      setProgress(100);
+      if (duplicateData.duplicates && duplicateData.duplicates.length > 0) {
+        setDuplicateMatches(duplicateData.duplicates);
+        setShowDuplicateDialog(true);
+        setImporting(false);
+      } else {
+        // No duplicates, proceed with import
+        await importMutation.mutateAsync(contacts);
+        setProgress(100);
+        setImporting(false);
+      }
     } catch (error) {
       toast({
         title: "Import error",
@@ -138,6 +162,59 @@ export default function ContactImport({ open, onOpenChange }: ContactImportProps
         variant: "destructive",
       });
       setProgress(0);
+      setImporting(false);
+    }
+  };
+
+  const handleDuplicateResolution = async (resolutions: Array<{ row: number; action: 'skip' | 'add' | 'override'; overrideId?: string }>) => {
+    setImporting(true);
+    setProgress(75);
+
+    try {
+      const contactsToImport = [];
+      const overrideActions = [];
+
+      for (const resolution of resolutions) {
+        if (resolution.action === 'add') {
+          const contact = parsedContacts[resolution.row - 1];
+          contactsToImport.push(contact);
+        } else if (resolution.action === 'override' && resolution.overrideId) {
+          const contact = parsedContacts[resolution.row - 1];
+          overrideActions.push({ id: resolution.overrideId, contact });
+        }
+      }
+
+      // Import new contacts
+      if (contactsToImport.length > 0) {
+        await importMutation.mutateAsync(contactsToImport);
+      }
+
+      // Override existing contacts
+      for (const override of overrideActions) {
+        await apiRequest("PUT", `/api/contacts/${override.id}`, override.contact);
+      }
+
+      queryClient.invalidateQueries({ queryKey: ["/api/contacts"] });
+
+      toast({
+        title: "Import completed",
+        description: `Successfully processed ${contactsToImport.length + overrideActions.length} contacts.`,
+      });
+
+      setProgress(100);
+      setResult({
+        total: parsedContacts.length,
+        successful: contactsToImport.length + overrideActions.length,
+        failed: parsedContacts.length - (contactsToImport.length + overrideActions.length),
+        contacts: [],
+        errors: []
+      });
+    } catch (error) {
+      toast({
+        title: "Import error",
+        description: error instanceof Error ? error.message : "Failed to import contacts",
+        variant: "destructive",
+      });
     } finally {
       setImporting(false);
     }
@@ -297,6 +374,13 @@ export default function ContactImport({ open, onOpenChange }: ContactImportProps
           )}
         </div>
       </DialogContent>
+
+      <BulkDuplicateResolutionDialog
+        open={showDuplicateDialog}
+        onOpenChange={setShowDuplicateDialog}
+        duplicateMatches={duplicateMatches}
+        onResolve={handleDuplicateResolution}
+      />
     </Dialog>
   );
 }

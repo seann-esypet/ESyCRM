@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation } from "@tanstack/react-query";
@@ -9,6 +10,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { useToast } from "@/hooks/use-toast";
 import { insertContactSchema, type Contact, type InsertContact } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
+import { DuplicateResolutionDialog } from "./duplicate-resolution-dialog";
 
 interface ContactFormProps {
   contact?: Contact;
@@ -18,6 +20,9 @@ interface ContactFormProps {
 
 export default function ContactForm({ contact, onSuccess, onCancel }: ContactFormProps) {
   const { toast } = useToast();
+  const [duplicates, setDuplicates] = useState<Contact[]>([]);
+  const [showDuplicateDialog, setShowDuplicateDialog] = useState(false);
+  const [pendingContactData, setPendingContactData] = useState<InsertContact | null>(null);
   
   const form = useForm<InsertContact>({
     resolver: zodResolver(insertContactSchema),
@@ -30,6 +35,17 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
       jobTitle: contact?.jobTitle || "",
       notes: contact?.notes || "",
       status: contact?.status || "active",
+    },
+  });
+
+  const checkDuplicatesMutation = useMutation({
+    mutationFn: async (data: InsertContact) => {
+      const response = await apiRequest("POST", "/api/contacts/check-duplicates", { 
+        contact: data,
+        excludeId: contact?.id
+      });
+      const result: any = await response.json();
+      return result.duplicates as Contact[];
     },
   });
 
@@ -57,8 +73,58 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
     },
   });
 
-  const onSubmit = (data: InsertContact) => {
+  const createContact = (data: InsertContact) => {
     mutation.mutate(data);
+  };
+
+  const onSubmit = async (data: InsertContact) => {
+    if (contact) {
+      mutation.mutate(data);
+      return;
+    }
+
+    try {
+      const foundDuplicates = await checkDuplicatesMutation.mutateAsync(data);
+      
+      if (foundDuplicates && foundDuplicates.length > 0) {
+        setDuplicates(foundDuplicates);
+        setPendingContactData(data);
+        setShowDuplicateDialog(true);
+      } else {
+        createContact(data);
+      }
+    } catch (error) {
+      console.error("Error checking duplicates:", error);
+      toast({
+        title: "Error checking duplicates",
+        description: "Could not check for duplicates. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleAddAnyway = () => {
+    if (pendingContactData) {
+      createContact(pendingContactData);
+      setPendingContactData(null);
+    }
+  };
+
+  const handleOverride = async (contactId: string) => {
+    if (pendingContactData) {
+      const response = await apiRequest("PUT", `/api/contacts/${contactId}`, pendingContactData);
+      toast({
+        title: "Contact updated",
+        description: `${pendingContactData.firstName} ${pendingContactData.lastName} has been updated successfully.`,
+      });
+      setPendingContactData(null);
+      onSuccess();
+    }
+  };
+
+  const handleCancel = () => {
+    setPendingContactData(null);
+    setDuplicates([]);
   };
 
   return (
@@ -236,13 +302,25 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
           </Button>
           <Button 
             type="submit" 
-            disabled={mutation.isPending}
+            disabled={mutation.isPending || checkDuplicatesMutation.isPending}
             data-testid="button-submit"
           >
-            {mutation.isPending ? "Saving..." : contact ? "Update Contact" : "Create Contact"}
+            {mutation.isPending || checkDuplicatesMutation.isPending ? "Saving..." : contact ? "Update Contact" : "Create Contact"}
           </Button>
         </div>
       </form>
+
+      {pendingContactData && (
+        <DuplicateResolutionDialog
+          open={showDuplicateDialog}
+          onOpenChange={setShowDuplicateDialog}
+          duplicates={duplicates}
+          newContact={pendingContactData}
+          onAddAnyway={handleAddAnyway}
+          onOverride={handleOverride}
+          onCancel={handleCancel}
+        />
+      )}
     </Form>
   );
 }

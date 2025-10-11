@@ -93,6 +93,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post("/api/contacts/check-duplicates", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const contactData = insertContactSchema.parse(req.body.contact);
+      const excludeId = req.body.excludeId as string | undefined;
+      
+      const duplicates = await storage.findDuplicateContacts(contactData, userId, excludeId);
+      res.json({ duplicates });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid contact data", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to check duplicates" });
+    }
+  });
+
+  app.post("/api/contacts/check-bulk-duplicates", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const { contacts: contactsData } = req.body;
+      
+      if (!Array.isArray(contactsData) || contactsData.length === 0) {
+        return res.status(400).json({ message: "Invalid data. Expected an array of contacts." });
+      }
+      
+      const duplicateResults = [];
+      
+      for (let i = 0; i < contactsData.length; i++) {
+        try {
+          const validated = insertContactSchema.parse(contactsData[i]);
+          const duplicates = await storage.findDuplicateContacts(validated, userId);
+          
+          if (duplicates.length > 0) {
+            duplicateResults.push({
+              row: i + 1,
+              contact: validated,
+              duplicates
+            });
+          }
+        } catch (error) {
+          // Skip invalid contacts, they'll be handled in the actual import
+        }
+      }
+      
+      res.json({ duplicates: duplicateResults });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to check duplicates" });
+    }
+  });
+
   app.post("/api/contacts/import", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
