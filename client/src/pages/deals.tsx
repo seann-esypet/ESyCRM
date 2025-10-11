@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import Header from "@/components/layout/header";
 import DealForm from "@/components/deals/deal-form";
@@ -7,16 +7,20 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Edit, Trash2, Calendar, DollarSign, Handshake, LayoutGrid, List } from "lucide-react";
+import { Edit, Trash2, Calendar, DollarSign, Handshake, LayoutGrid, List, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { Deal, Contact } from "@shared/schema";
 
 type ViewType = "card" | "table";
+type SortColumn = "title" | "value" | "expectedCloseDate" | "stage" | "contact" | "probability";
+type SortDirection = "asc" | "desc";
 
 export default function Deals() {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [selectedDeal, setSelectedDeal] = useState<Deal | undefined>();
-  const [viewType, setViewType] = useState<ViewType>("card");
+  const [viewType, setViewType] = useState<ViewType>("table");
+  const [sortColumn, setSortColumn] = useState<SortColumn | null>(null);
+  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
 
   const { data: deals, isLoading } = useQuery<Deal[]>({
     queryKey: ["/api/deals"],
@@ -97,6 +101,93 @@ export default function Deals() {
     queryClient.invalidateQueries({ queryKey: ["/api/deals"] });
   };
 
+  const handleSort = (column: SortColumn) => {
+    if (sortColumn === column) {
+      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
+    } else {
+      setSortColumn(column);
+      setSortDirection("asc");
+    }
+  };
+
+  const isStageOpen = (stage: string) => {
+    return !["closed_won", "closed_lost"].includes(stage);
+  };
+
+  const sortedDeals = useMemo(() => {
+    if (!deals) return [];
+
+    let sorted = [...deals];
+
+    // Default sort: open deals first (by stage), then newest first (by createdAt)
+    if (!sortColumn) {
+      sorted.sort((a, b) => {
+        const aIsOpen = isStageOpen(a.stage);
+        const bIsOpen = isStageOpen(b.stage);
+        
+        if (aIsOpen !== bIsOpen) {
+          return aIsOpen ? -1 : 1; // Open deals first
+        }
+        
+        // Within the same category (open or closed), newest first
+        const aDate = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const bDate = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return bDate - aDate;
+      });
+      return sorted;
+    }
+
+    // Custom column sorting
+    sorted.sort((a, b) => {
+      let aValue: any;
+      let bValue: any;
+
+      switch (sortColumn) {
+        case "title":
+          aValue = a.title?.toLowerCase() || "";
+          bValue = b.title?.toLowerCase() || "";
+          break;
+        case "value":
+          aValue = parseFloat(a.value || "0");
+          bValue = parseFloat(b.value || "0");
+          break;
+        case "expectedCloseDate":
+          aValue = a.expectedCloseDate ? new Date(a.expectedCloseDate).getTime() : 0;
+          bValue = b.expectedCloseDate ? new Date(b.expectedCloseDate).getTime() : 0;
+          break;
+        case "stage":
+          aValue = a.stage?.toLowerCase() || "";
+          bValue = b.stage?.toLowerCase() || "";
+          break;
+        case "contact":
+          aValue = getContactName(a.contactId).toLowerCase();
+          bValue = getContactName(b.contactId).toLowerCase();
+          break;
+        case "probability":
+          aValue = a.probability ?? 0;
+          bValue = b.probability ?? 0;
+          break;
+        default:
+          return 0;
+      }
+
+      if (aValue < bValue) return sortDirection === "asc" ? -1 : 1;
+      if (aValue > bValue) return sortDirection === "asc" ? 1 : -1;
+      return 0;
+    });
+
+    return sorted;
+  }, [deals, sortColumn, sortDirection, contacts]);
+
+  const SortIcon = ({ column }: { column: SortColumn }) => {
+    if (sortColumn !== column) {
+      return <ArrowUpDown className="ml-2 h-4 w-4 text-muted-foreground" />;
+    }
+    return sortDirection === "asc" 
+      ? <ArrowUp className="ml-2 h-4 w-4" />
+      : <ArrowDown className="ml-2 h-4 w-4" />;
+  };
+
   if (isLoading) {
     return (
       <>
@@ -162,7 +253,7 @@ export default function Deals() {
           </Card>
         ) : viewType === "card" ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {deals.map((deal) => (
+            {sortedDeals.map((deal) => (
               <Card 
                 key={deal.id} 
                 className="hover:shadow-md transition-shadow"
@@ -241,17 +332,83 @@ export default function Deals() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Deal Name</TableHead>
-                  <TableHead>Value</TableHead>
-                  <TableHead>Expected Close</TableHead>
-                  <TableHead>Stage</TableHead>
-                  <TableHead>Contact</TableHead>
-                  <TableHead>Probability</TableHead>
+                  <TableHead>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 px-2 -ml-2"
+                      onClick={() => handleSort("title")}
+                      data-testid="sort-title"
+                    >
+                      Deal Name
+                      <SortIcon column="title" />
+                    </Button>
+                  </TableHead>
+                  <TableHead>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 px-2 -ml-2"
+                      onClick={() => handleSort("value")}
+                      data-testid="sort-value"
+                    >
+                      Value
+                      <SortIcon column="value" />
+                    </Button>
+                  </TableHead>
+                  <TableHead>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 px-2 -ml-2"
+                      onClick={() => handleSort("expectedCloseDate")}
+                      data-testid="sort-expectedCloseDate"
+                    >
+                      Expected Close
+                      <SortIcon column="expectedCloseDate" />
+                    </Button>
+                  </TableHead>
+                  <TableHead>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 px-2 -ml-2"
+                      onClick={() => handleSort("stage")}
+                      data-testid="sort-stage"
+                    >
+                      Stage
+                      <SortIcon column="stage" />
+                    </Button>
+                  </TableHead>
+                  <TableHead>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 px-2 -ml-2"
+                      onClick={() => handleSort("contact")}
+                      data-testid="sort-contact"
+                    >
+                      Contact
+                      <SortIcon column="contact" />
+                    </Button>
+                  </TableHead>
+                  <TableHead>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 px-2 -ml-2"
+                      onClick={() => handleSort("probability")}
+                      data-testid="sort-probability"
+                    >
+                      Probability
+                      <SortIcon column="probability" />
+                    </Button>
+                  </TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {deals.map((deal) => (
+                {sortedDeals.map((deal) => (
                   <TableRow key={deal.id} data-testid={`deal-row-${deal.id}`}>
                     <TableCell className="font-medium">
                       {deal.title}
