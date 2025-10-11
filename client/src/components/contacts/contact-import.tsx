@@ -116,14 +116,14 @@ export default function ContactImport({ open, onOpenChange }: ContactImportProps
       setProgress(30);
 
       const contacts = parsedData.map((row: any) => ({
-        firstName: row.firstName || row.first_name || row.FirstName || "",
-        lastName: row.lastName || row.last_name || row.LastName || "",
-        email: row.email || row.Email || null,
-        phone: row.phone || row.Phone || null,
-        company: row.company || row.Company || null,
-        jobTitle: row.jobTitle || row.job_title || row.JobTitle || null,
-        notes: row.notes || row.Notes || null,
-        status: row.status || row.Status || "active",
+        firstName: (row.firstName || row.first_name || row.FirstName || "").trim(),
+        lastName: (row.lastName || row.last_name || row.LastName || "").trim(),
+        email: (row.email || row.Email || "").trim() || null,
+        phone: (row.phone || row.Phone || "").trim() || null,
+        company: (row.company || row.Company || "").trim() || null,
+        jobTitle: (row.jobTitle || row.job_title || row.JobTitle || "").trim() || null,
+        notes: (row.notes || row.Notes || "").trim() || null,
+        status: (row.status || row.Status || "active").trim() || "active",
       }));
 
       setProgress(50);

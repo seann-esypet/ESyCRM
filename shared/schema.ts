@@ -81,6 +81,9 @@ export const insertContactSchema = createInsertSchema(contacts).omit({
   id: true,
   userId: true,
   lastContactDate: true,
+}).extend({
+  firstName: z.string().min(1, "First name is required"),
+  lastName: z.string().min(1, "Last name is required"),
 });
 
 export const insertDealSchema = createInsertSchema(deals).omit({

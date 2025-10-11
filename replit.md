@@ -7,6 +7,7 @@ CRM Tracker is a modern, multi-user Customer Relationship Management system buil
 **Key Features:**
 - **Multi-User Support**: Each salesperson gets their own secure portal with isolated data
 - **Contact Management**: Track customer information, companies, and relationships
+- **CSV/Excel Import**: Bulk upload contacts from CSV or Excel files with validation and error reporting
 - **Deal Pipeline**: Manage sales opportunities through customizable stages
 - **Task Management**: Organize follow-ups and action items with priorities and due dates
 - **Analytics Dashboard**: Real-time insights into sales performance and pipeline health
