@@ -123,16 +123,18 @@ export default function DealForm({ deal, onSuccess, onCancel }: DealFormProps) {
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Deal Value</FormLabel>
-                <FormControl>
-                  <Input 
-                    {...field} 
-                    value={field.value || ""}
-                    type="number"
-                    step="0.01"
-                    placeholder="25000.00"
-                    data-testid="input-value"
-                  />
-                </FormControl>
+                <Select onValueChange={field.onChange} defaultValue={field.value || ""}>
+                  <FormControl>
+                    <SelectTrigger data-testid="select-value">
+                      <SelectValue placeholder="Select a plan" />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent>
+                    <SelectItem value="Plan 1 - $2/appoint">Plan 1 - $2/appoint</SelectItem>
+                    <SelectItem value="Plan 2 - $99/mo">Plan 2 - $99/mo</SelectItem>
+                    <SelectItem value="Plan 3 - $150/mo + credit card">Plan 3 - $150/mo + credit card</SelectItem>
+                  </SelectContent>
+                </Select>
                 <FormMessage />
               </FormItem>
             )}
