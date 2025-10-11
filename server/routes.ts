@@ -417,6 +417,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Commission endpoints
+  // Admin: Approve/reject deal for commission
+  app.patch("/api/deals/:id/approve", isAdmin, async (req: any, res) => {
+    try {
+      const { approved } = req.body; // "approved" or "rejected"
+      const deal = await storage.updateDeal(req.params.id, { approved }, null);
+      
+      if (!deal) {
+        return res.status(404).json({ message: "Deal not found" });
+      }
+      
+      res.json(deal);
+    } catch (error) {
+      console.error("Error updating deal approval:", error);
+      res.status(500).json({ message: "Failed to update deal approval" });
+    }
+  });
+
+  // Get commission summary for authenticated user
+  app.get("/api/commissions", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user); // null for admin, userId for salesperson
+      const deals = await storage.getDeals(userId);
+      
+      // Only include closed won deals that are approved
+      const approvedDeals = deals.filter(
+        deal => deal.stage === "closed_won" && deal.approved === "approved"
+      );
+      
+      res.json(approvedDeals);
+    } catch (error) {
+      console.error("Error fetching commissions:", error);
+      res.status(500).json({ message: "Failed to fetch commissions" });
+    }
+  });
+
   // Admin reports - Salesperson rankings
   app.get("/api/admin/salesperson-rankings", isAdmin, async (req: any, res) => {
     try {
