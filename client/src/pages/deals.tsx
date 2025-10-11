@@ -84,6 +84,15 @@ export default function Deals() {
     return new Date(date).toLocaleDateString();
   };
 
+  const isDateExpired = (date: string | Date | null) => {
+    if (!date) return false;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const closeDate = new Date(date);
+    closeDate.setHours(0, 0, 0, 0);
+    return closeDate < today;
+  };
+
   const handleEdit = (deal: Deal) => {
     setSelectedDeal(deal);
     setIsFormOpen(true);
@@ -443,45 +452,52 @@ export default function Deals() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {sortedDeals.map((deal) => (
-                  <TableRow key={deal.id} data-testid={`deal-row-${deal.id}`}>
-                    <TableCell className="font-medium">
-                      {deal.title}
-                    </TableCell>
-                    <TableCell>{formatCurrency(deal.value)}</TableCell>
-                    <TableCell>{formatDate(deal.expectedCloseDate)}</TableCell>
-                    <TableCell>
-                      <Badge className={getStageColor(deal.stage)}>
-                        {deal.stage.replace('_', ' ').toUpperCase()}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>{getContactName(deal.contactId)}</TableCell>
-                    <TableCell>
-                      {deal.probability !== null ? `${deal.probability}%` : "—"}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end space-x-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleEdit(deal)}
-                          data-testid={`edit-deal-${deal.id}`}
-                        >
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleDelete(deal.id)}
-                          className="text-destructive hover:text-destructive"
-                          data-testid={`delete-deal-${deal.id}`}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {sortedDeals.map((deal) => {
+                  const isExpired = isDateExpired(deal.expectedCloseDate) && !["closed_won", "closed_lost"].includes(deal.stage);
+                  return (
+                    <TableRow 
+                      key={deal.id} 
+                      data-testid={`deal-row-${deal.id}`}
+                      className={isExpired ? "bg-[#E96161] hover:bg-[#E96161]/90" : ""}
+                    >
+                      <TableCell className="font-medium">
+                        {deal.title}
+                      </TableCell>
+                      <TableCell>{formatCurrency(deal.value)}</TableCell>
+                      <TableCell>{formatDate(deal.expectedCloseDate)}</TableCell>
+                      <TableCell>
+                        <Badge className={getStageColor(deal.stage)}>
+                          {deal.stage.replace('_', ' ').toUpperCase()}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>{getContactName(deal.contactId)}</TableCell>
+                      <TableCell>
+                        {deal.probability !== null ? `${deal.probability}%` : "—"}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end space-x-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleEdit(deal)}
+                            data-testid={`edit-deal-${deal.id}`}
+                          >
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleDelete(deal.id)}
+                            className="text-destructive hover:text-destructive"
+                            data-testid={`delete-deal-${deal.id}`}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </Card>
