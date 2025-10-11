@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import Header from "@/components/layout/header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { 
@@ -11,11 +11,16 @@ import {
   PieChart,
   Activity,
   Trophy,
-  Award
+  Award,
+  CheckCircle2
 } from "lucide-react";
 import type { Deal, Contact, Task, Activity as ActivityType, User } from "@shared/schema";
 import { useAuth } from "@/hooks/useAuth";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Checkbox } from "@/components/ui/checkbox";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { calculateCommission } from "@shared/utils";
 
 type SalespersonRanking = {
   userId: string;
@@ -30,11 +35,39 @@ type SalespersonRanking = {
 export default function Reports() {
   const { user } = useAuth();
   const isAdmin = (user as any)?.role === "admin";
+  const { toast } = useToast();
   
   // Admin-specific query for salesperson rankings
   const { data: rankings, isLoading: rankingsLoading } = useQuery<SalespersonRanking[]>({
     queryKey: ["/api/admin/salesperson-rankings"],
     enabled: isAdmin, // Only fetch if user is admin
+  });
+
+  // Admin: Fetch all deals for approval
+  const { data: adminDeals, isLoading: adminDealsLoading } = useQuery<Deal[]>({
+    queryKey: ["/api/deals"],
+    enabled: isAdmin,
+  });
+
+  // Mutation to approve/reject deals
+  const approveDealMutation = useMutation({
+    mutationFn: async ({ dealId, approved }: { dealId: string; approved: string }) => {
+      return apiRequest("PATCH", `/api/deals/${dealId}/approve`, { approved });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deals"] });
+      toast({
+        title: "Success",
+        description: "Deal approval status updated",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update deal approval",
+        variant: "destructive",
+      });
+    },
   });
 
   const { data: deals, isLoading: dealsLoading } = useQuery<Deal[]>({
@@ -263,6 +296,77 @@ export default function Reports() {
               </Table>
             </CardContent>
           </Card>
+
+          {/* Closed Deals Approval */}
+          {adminDeals && adminDeals.filter(d => d.stage === "closed_won").length > 0 && (
+            <Card className="mb-8" data-testid="deals-approval-table">
+              <CardHeader>
+                <CardTitle className="text-xl font-semibold flex items-center space-x-2">
+                  <CheckCircle2 className="h-6 w-6 text-green-500" />
+                  <span>Commission Approval</span>
+                </CardTitle>
+                <p className="text-sm text-muted-foreground mt-2">
+                  Approve closed deals to release commission payments
+                </p>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Deal Title</TableHead>
+                      <TableHead>Salesperson</TableHead>
+                      <TableHead>Plan</TableHead>
+                      <TableHead className="text-right">Commission</TableHead>
+                      <TableHead className="text-center">Status</TableHead>
+                      <TableHead className="text-center">Approve</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {adminDeals
+                      .filter(deal => deal.stage === "closed_won")
+                      .map((deal) => {
+                        const commission = calculateCommission(deal.value);
+                        return (
+                          <TableRow key={deal.id} data-testid={`approval-row-${deal.id}`}>
+                            <TableCell className="font-medium">{deal.title}</TableCell>
+                            <TableCell>{deal.userId}</TableCell>
+                            <TableCell>{deal.value || "N/A"}</TableCell>
+                            <TableCell className="text-right font-semibold">
+                              ${commission}
+                            </TableCell>
+                            <TableCell className="text-center">
+                              <span 
+                                className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                  deal.approved === "approved" 
+                                    ? "bg-green-500/10 text-green-600" 
+                                    : deal.approved === "rejected"
+                                    ? "bg-red-500/10 text-red-600"
+                                    : "bg-yellow-500/10 text-yellow-600"
+                                }`}
+                              >
+                                {deal.approved || "pending"}
+                              </span>
+                            </TableCell>
+                            <TableCell className="text-center">
+                              <Checkbox
+                                checked={deal.approved === "approved"}
+                                onCheckedChange={(checked) => {
+                                  approveDealMutation.mutate({
+                                    dealId: deal.id,
+                                    approved: checked ? "approved" : "pending",
+                                  });
+                                }}
+                                data-testid={`checkbox-approve-${deal.id}`}
+                              />
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Summary Cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
