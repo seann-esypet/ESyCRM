@@ -272,6 +272,7 @@ export class DatabaseStorage implements IStorage {
       demoCompletedDate: insertDeal.demoCompletedDate ? new Date(insertDeal.demoCompletedDate) : null,
       wonDate: insertDeal.wonDate ? new Date(insertDeal.wonDate) : null,
       contactId: insertDeal.contactId && insertDeal.contactId.trim() ? insertDeal.contactId : null,
+      stageChangedAt: new Date(), // Set initial timestamp when deal is created
     };
     
     const [deal] = await db
