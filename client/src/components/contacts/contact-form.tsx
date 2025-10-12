@@ -44,6 +44,7 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
       leadSource: contact?.leadSource || "",
       currentSoftware: contact?.currentSoftware || "",
       numberOfEmployees: contact?.numberOfEmployees || undefined,
+      numberOfLocations: contact?.numberOfLocations || undefined,
       notes: contact?.notes || "",
       status: contact?.status || "active",
     },
@@ -306,26 +307,26 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <FormField
-              control={form.control}
-              name="currentSoftware"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Current Software Used</FormLabel>
-                  <FormControl>
-                    <Input 
-                      {...field} 
-                      value={field.value || ""}
-                      placeholder="e.g., Salesforce, HubSpot, Custom CRM"
-                      data-testid="input-currentSoftware"
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+          <FormField
+            control={form.control}
+            name="currentSoftware"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Current Software Used</FormLabel>
+                <FormControl>
+                  <Input 
+                    {...field} 
+                    value={field.value || ""}
+                    placeholder="e.g., Salesforce, HubSpot, Custom CRM"
+                    data-testid="input-currentSoftware"
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
 
+          <div className="grid grid-cols-2 gap-4">
             <FormField
               control={form.control}
               name="numberOfEmployees"
@@ -340,6 +341,27 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
                       onChange={(e) => field.onChange(e.target.value ? parseInt(e.target.value) : undefined)}
                       placeholder="e.g., 5"
                       data-testid="input-numberOfEmployees"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="numberOfLocations"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel># of Locations</FormLabel>
+                  <FormControl>
+                    <Input 
+                      {...field} 
+                      type="number"
+                      value={field.value ?? ""}
+                      onChange={(e) => field.onChange(e.target.value ? parseInt(e.target.value) : undefined)}
+                      placeholder="e.g., 3"
+                      data-testid="input-numberOfLocations"
                     />
                   </FormControl>
                   <FormMessage />
