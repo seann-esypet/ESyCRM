@@ -275,7 +275,7 @@ export default function Deals() {
   if (isLoading) {
     return (
       <>
-        <Header title="Deals" onAddNew={() => setIsFormOpen(true)} />
+        <Header title="Pipeline" onAddNew={() => setIsFormOpen(true)} />
         <main className="flex-1 overflow-y-auto p-6 bg-muted/30">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {[...Array(6)].map((_, i) => (
@@ -298,7 +298,7 @@ export default function Deals() {
   return (
     <>
       <Header 
-        title="Deals" 
+        title="Pipeline" 
         onAddNew={() => setIsFormOpen(true)}
         customActions={
           <div className="flex gap-2">
