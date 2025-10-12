@@ -62,6 +62,7 @@ export const deals = pgTable("deals", {
   value: decimal("value", { precision: 10, scale: 2 }),
   plan: text("plan"), // Plan 1 - $2/appoint, Plan 2 - $99/mo, Plan 3 - $150/mo + credit card
   stage: text("stage").notNull().default("new_lead_unqualified"), // new_lead_unqualified, qualified_lead, contacted_left_message, contacted_spoke_to_decision_maker, onboarded_form_completed, demo_scheduled, demo_completed, decision_pending, won, lost
+  stageChangedAt: timestamp("stage_changed_at"),
   probability: integer("probability").default(0), // 0-100
   expectedCloseDate: timestamp("expected_close_date"),
   demoScheduledDate: timestamp("demo_scheduled_date"),
