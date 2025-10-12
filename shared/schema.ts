@@ -47,6 +47,8 @@ export const contacts = pgTable("contacts", {
   currentSoftware: text("current_software"),
   numberOfEmployees: integer("number_of_employees"),
   numberOfLocations: integer("number_of_locations"),
+  painPoints: text("pain_points"),
+  interestLevel: text("interest_level"), // Low, Medium, High
   notes: text("notes"),
   status: text("status").notNull().default("active"), // active, inactive
   lastContactDate: timestamp("last_contact_date"),

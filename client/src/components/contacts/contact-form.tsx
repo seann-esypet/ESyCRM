@@ -45,6 +45,8 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
       currentSoftware: contact?.currentSoftware || "",
       numberOfEmployees: contact?.numberOfEmployees || undefined,
       numberOfLocations: contact?.numberOfLocations || undefined,
+      painPoints: contact?.painPoints || "",
+      interestLevel: contact?.interestLevel || "",
       notes: contact?.notes || "",
       status: contact?.status || "active",
     },
@@ -479,7 +481,50 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
         </div>
 
         <div className="space-y-4 pt-2 border-t border-border">
-          <div className="grid grid-cols-2 gap-4">
+          <FormField
+            control={form.control}
+            name="painPoints"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Pain Points</FormLabel>
+                <FormControl>
+                  <Textarea 
+                    {...field} 
+                    value={field.value || ""}
+                    placeholder="Describe customer pain points, challenges, or concerns..."
+                    className="min-h-[100px]"
+                    data-testid="textarea-painPoints"
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <div className="grid grid-cols-3 gap-4">
+            <FormField
+              control={form.control}
+              name="interestLevel"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Interest Level</FormLabel>
+                  <Select onValueChange={field.onChange} defaultValue={field.value || ""}>
+                    <FormControl>
+                      <SelectTrigger data-testid="select-interestLevel">
+                        <SelectValue placeholder="Select interest level" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="Low">Low</SelectItem>
+                      <SelectItem value="Medium">Medium</SelectItem>
+                      <SelectItem value="High">High</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
             <FormField
               control={form.control}
               name="leadSource"
