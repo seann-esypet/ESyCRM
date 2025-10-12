@@ -146,6 +146,11 @@ export default function Deals() {
     return new Date(date).toLocaleDateString();
   };
 
+  const formatDateTime = (date: string | Date | null) => {
+    if (!date) return "—";
+    return new Date(date).toLocaleString();
+  };
+
   const isDateExpired = (date: string | Date | null) => {
     if (!date) return false;
     const today = new Date();
@@ -507,6 +512,7 @@ export default function Deals() {
                       <SortIcon column="stage" />
                     </Button>
                   </TableHead>
+                  <TableHead>Stage Changed</TableHead>
                   <TableHead>
                     <Button
                       variant="ghost"
@@ -573,6 +579,9 @@ export default function Deals() {
                             <SelectItem value="lost">Lost</SelectItem>
                           </SelectContent>
                         </Select>
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {formatDateTime(deal.stageChangedAt)}
                       </TableCell>
                       <TableCell>{getContactName(deal.contactId)}</TableCell>
                       <TableCell>
