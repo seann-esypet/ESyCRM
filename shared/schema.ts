@@ -61,9 +61,12 @@ export const deals = pgTable("deals", {
   contactId: varchar("contact_id").references(() => contacts.id),
   value: decimal("value", { precision: 10, scale: 2 }),
   plan: text("plan"), // Plan 1 - $2/appoint, Plan 2 - $99/mo, Plan 3 - $150/mo + credit card
-  stage: text("stage").notNull().default("lead"), // lead, qualified, proposal, negotiation, closed_won, closed_lost
+  stage: text("stage").notNull().default("new_lead_unqualified"), // new_lead_unqualified, qualified_lead, contacted_left_message, contacted_spoke_to_decision_maker, onboarded_form_completed, demo_scheduled, demo_completed, decision_pending, won, lost
   probability: integer("probability").default(0), // 0-100
   expectedCloseDate: timestamp("expected_close_date"),
+  demoScheduledDate: timestamp("demo_scheduled_date"),
+  demoCompletedDate: timestamp("demo_completed_date"),
+  wonDate: timestamp("won_date"),
   description: text("description"),
   approved: text("approved").default("pending"), // pending, approved, rejected - for commission approval by admin
   createdAt: timestamp("created_at").defaultNow(),
@@ -110,6 +113,9 @@ export const insertDealSchema = createInsertSchema(deals).omit({
 }).extend({
   value: z.string().optional().nullable(),
   expectedCloseDate: z.string().optional().nullable(),
+  demoScheduledDate: z.string().optional().nullable(),
+  demoCompletedDate: z.string().optional().nullable(),
+  wonDate: z.string().optional().nullable(),
 });
 
 export const insertTaskSchema = createInsertSchema(tasks).omit({
