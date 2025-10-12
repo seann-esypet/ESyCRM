@@ -1,6 +1,7 @@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -41,6 +42,26 @@ export default function DealForm({ deal, onSuccess, onCancel }: DealFormProps) {
   });
 
   const selectedStage = form.watch("stage");
+  const previousStageRef = useRef(selectedStage);
+
+  // Clear conditional date fields only when stage actually changes during this edit session
+  useEffect(() => {
+    const previousStage = previousStageRef.current;
+    
+    // Only clear if stage changed from the triggering stage to a different stage
+    if (previousStage === "demo_scheduled" && selectedStage !== "demo_scheduled") {
+      form.setValue("demoScheduledDate", "");
+    }
+    if (previousStage === "demo_completed" && selectedStage !== "demo_completed") {
+      form.setValue("demoCompletedDate", "");
+    }
+    if (previousStage === "won" && selectedStage !== "won") {
+      form.setValue("wonDate", "");
+    }
+    
+    // Update the ref for next comparison
+    previousStageRef.current = selectedStage;
+  }, [selectedStage, form]);
 
   const mutation = useMutation({
     mutationFn: async (data: InsertDeal) => {

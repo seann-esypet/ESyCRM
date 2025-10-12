@@ -103,15 +103,15 @@ export default function Reports() {
     if (!deals || !contacts || !tasks) return null;
 
     const totalRevenue = deals
-      .filter(deal => deal.stage === "closed_won")
+      .filter(deal => deal.stage === "won")
       .reduce((sum, deal) => sum + parseFloat(deal.value || "0"), 0);
 
     const totalPipeline = deals
-      .filter(deal => !["closed_won", "closed_lost"].includes(deal.stage))
+      .filter(deal => !["won", "lost"].includes(deal.stage))
       .reduce((sum, deal) => sum + parseFloat(deal.value || "0"), 0);
 
     const conversionRate = deals.length > 0 
-      ? (deals.filter(deal => deal.stage === "closed_won").length / deals.length) * 100 
+      ? (deals.filter(deal => deal.stage === "won").length / deals.length) * 100 
       : 0;
 
     const completedTasks = tasks.filter(task => task.status === "completed").length;
@@ -159,24 +159,32 @@ export default function Reports() {
 
   const getStageLabel = (stage: string) => {
     switch (stage) {
-      case "lead": return "Lead";
-      case "qualified": return "Qualified";
-      case "proposal": return "Proposal";
-      case "negotiation": return "Negotiation";
-      case "closed_won": return "Closed Won";
-      case "closed_lost": return "Closed Lost";
+      case "new_lead_unqualified": return "New Lead Unqualified";
+      case "qualified_lead": return "Qualified Lead";
+      case "contacted_left_message": return "Contacted (Left Message)";
+      case "contacted_spoke_to_decision_maker": return "Contacted (Spoke to Owner/Decision Maker)";
+      case "onboarded_form_completed": return "Onboarded Form Completed";
+      case "demo_scheduled": return "Demo Scheduled";
+      case "demo_completed": return "Demo Completed";
+      case "decision_pending": return "Decision Pending";
+      case "won": return "Won";
+      case "lost": return "Lost";
       default: return stage;
     }
   };
 
   const getStageColor = (stage: string) => {
     switch (stage) {
-      case "lead": return "bg-primary";
-      case "qualified": return "bg-accent";
-      case "proposal": return "bg-yellow-500";
-      case "negotiation": return "bg-orange-500";
-      case "closed_won": return "bg-green-500";
-      case "closed_lost": return "bg-red-500";
+      case "new_lead_unqualified": return "bg-blue-500";
+      case "qualified_lead": return "bg-green-500";
+      case "contacted_left_message": return "bg-cyan-500";
+      case "contacted_spoke_to_decision_maker": return "bg-teal-500";
+      case "onboarded_form_completed": return "bg-indigo-500";
+      case "demo_scheduled": return "bg-purple-500";
+      case "demo_completed": return "bg-yellow-500";
+      case "decision_pending": return "bg-orange-500";
+      case "won": return "bg-emerald-500";
+      case "lost": return "bg-red-500";
       default: return "bg-muted";
     }
   };

@@ -370,12 +370,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const tasks = await storage.getTasks(userId);
       
       const activeDeals = deals.filter(deal => 
-        !["closed_won", "closed_lost"].includes(deal.stage)
+        !["won", "lost"].includes(deal.stage)
       );
       
       const completedTasks = tasks.filter(task => task.status === "completed");
       const monthlyRevenue = deals
-        .filter(deal => deal.stage === "closed_won")
+        .filter(deal => deal.stage === "won")
         .reduce((sum, deal) => sum + parseFloat(deal.value || "0"), 0);
 
       const metrics = {
@@ -396,7 +396,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const userId = getUserIdForQuery(req.user);
       const deals = await storage.getDeals(userId);
-      const stages = ["lead", "qualified", "proposal", "negotiation", "closed_won"];
+      const stages = ["new_lead_unqualified", "qualified_lead", "contacted_left_message", "contacted_spoke_to_decision_maker", "onboarded_form_completed", "demo_scheduled", "demo_completed", "decision_pending", "won"];
       
       const pipeline = stages.map(stage => {
         const stageDeals = deals.filter(deal => deal.stage === stage);
@@ -441,9 +441,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = getUserIdForQuery(req.user); // null for admin, userId for salesperson
       const deals = await storage.getDeals(userId);
       
-      // Only include closed won deals that are approved
+      // Only include won deals that are approved
       const approvedDeals = deals.filter(
-        deal => deal.stage === "closed_won" && deal.approved === "approved"
+        deal => deal.stage === "won" && deal.approved === "approved"
       );
       
       res.json(approvedDeals);
@@ -465,7 +465,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .filter(user => user.role === "salesperson") // Only rank salespeople
         .map(user => {
           const userDeals = allDeals.filter(deal => deal.userId === user.id);
-          const wonDeals = userDeals.filter(deal => deal.stage === "closed_won");
+          const wonDeals = userDeals.filter(deal => deal.stage === "won");
           const totalDeals = userDeals.length;
           const totalValue = wonDeals.reduce((sum, deal) => sum + parseFloat(deal.value || "0"), 0);
           const winRate = totalDeals > 0 ? (wonDeals.length / totalDeals) * 100 : 0;
