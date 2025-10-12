@@ -30,19 +30,27 @@ export default function DealForm({ deal, onSuccess, onCancel }: DealFormProps) {
       contactId: deal?.contactId || "",
       value: deal?.value || "",
       plan: deal?.plan || "",
-      stage: deal?.stage || "lead",
+      stage: deal?.stage || "new_lead_unqualified",
       probability: deal?.probability || 0,
       expectedCloseDate: deal?.expectedCloseDate ? new Date(deal.expectedCloseDate).toISOString().split('T')[0] : "",
+      demoScheduledDate: deal?.demoScheduledDate ? new Date(deal.demoScheduledDate).toISOString().slice(0, 16) : "",
+      demoCompletedDate: deal?.demoCompletedDate ? new Date(deal.demoCompletedDate).toISOString().split('T')[0] : "",
+      wonDate: deal?.wonDate ? new Date(deal.wonDate).toISOString().split('T')[0] : "",
       description: deal?.description || "",
     },
   });
 
+  const selectedStage = form.watch("stage");
+
   const mutation = useMutation({
     mutationFn: async (data: InsertDeal) => {
-      // Convert expectedCloseDate to proper format
+      // Convert date fields to proper format
       const formData = {
         ...data,
         expectedCloseDate: data.expectedCloseDate && data.expectedCloseDate.trim() ? new Date(data.expectedCloseDate).toISOString() : null,
+        demoScheduledDate: data.demoScheduledDate && data.demoScheduledDate.trim() ? new Date(data.demoScheduledDate).toISOString() : null,
+        demoCompletedDate: data.demoCompletedDate && data.demoCompletedDate.trim() ? new Date(data.demoCompletedDate).toISOString() : null,
+        wonDate: data.wonDate && data.wonDate.trim() ? new Date(data.wonDate).toISOString() : null,
       };
 
       if (deal) {
@@ -161,7 +169,7 @@ export default function DealForm({ deal, onSuccess, onCancel }: DealFormProps) {
             name="stage"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Stage</FormLabel>
+                <FormLabel>Pipeline Stage</FormLabel>
                 <Select onValueChange={field.onChange} defaultValue={field.value}>
                   <FormControl>
                     <SelectTrigger data-testid="select-stage">
@@ -169,12 +177,16 @@ export default function DealForm({ deal, onSuccess, onCancel }: DealFormProps) {
                     </SelectTrigger>
                   </FormControl>
                   <SelectContent>
-                    <SelectItem value="lead">Lead</SelectItem>
-                    <SelectItem value="qualified">Qualified</SelectItem>
-                    <SelectItem value="proposal">Proposal</SelectItem>
-                    <SelectItem value="negotiation">Negotiation</SelectItem>
-                    <SelectItem value="closed_won">Closed Won</SelectItem>
-                    <SelectItem value="closed_lost">Closed Lost</SelectItem>
+                    <SelectItem value="new_lead_unqualified">New Lead Unqualified</SelectItem>
+                    <SelectItem value="qualified_lead">Qualified Lead</SelectItem>
+                    <SelectItem value="contacted_left_message">Contacted (Left Message)</SelectItem>
+                    <SelectItem value="contacted_spoke_to_decision_maker">Contacted (Spoke to Owner/Decision Maker)</SelectItem>
+                    <SelectItem value="onboarded_form_completed">Onboarded Form Completed</SelectItem>
+                    <SelectItem value="demo_scheduled">Demo Scheduled</SelectItem>
+                    <SelectItem value="demo_completed">Demo Completed</SelectItem>
+                    <SelectItem value="decision_pending">Decision Pending</SelectItem>
+                    <SelectItem value="won">Won</SelectItem>
+                    <SelectItem value="lost">Lost</SelectItem>
                   </SelectContent>
                 </Select>
                 <FormMessage />
@@ -224,6 +236,69 @@ export default function DealForm({ deal, onSuccess, onCancel }: DealFormProps) {
             </FormItem>
           )}
         />
+
+        {selectedStage === "demo_scheduled" && (
+          <FormField
+            control={form.control}
+            name="demoScheduledDate"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Demo Scheduled Date & Time</FormLabel>
+                <FormControl>
+                  <Input 
+                    {...field} 
+                    value={field.value || ""}
+                    type="datetime-local"
+                    data-testid="input-demoScheduledDate"
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        )}
+
+        {selectedStage === "demo_completed" && (
+          <FormField
+            control={form.control}
+            name="demoCompletedDate"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Demo Completed Date</FormLabel>
+                <FormControl>
+                  <Input 
+                    {...field} 
+                    value={field.value || ""}
+                    type="date"
+                    data-testid="input-demoCompletedDate"
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        )}
+
+        {selectedStage === "won" && (
+          <FormField
+            control={form.control}
+            name="wonDate"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Won Date</FormLabel>
+                <FormControl>
+                  <Input 
+                    {...field} 
+                    value={field.value || ""}
+                    type="date"
+                    data-testid="input-wonDate"
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        )}
 
         <FormField
           control={form.control}
