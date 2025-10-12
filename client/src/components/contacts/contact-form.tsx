@@ -42,6 +42,7 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
       secondaryFirstName: contact?.secondaryFirstName || "",
       secondaryLastName: contact?.secondaryLastName || "",
       leadSource: contact?.leadSource || "",
+      currentSoftware: contact?.currentSoftware || "",
       notes: contact?.notes || "",
       status: contact?.status || "active",
     },
@@ -303,6 +304,25 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
               )}
             />
           </div>
+
+          <FormField
+            control={form.control}
+            name="currentSoftware"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Current Software Used</FormLabel>
+                <FormControl>
+                  <Input 
+                    {...field} 
+                    value={field.value || ""}
+                    placeholder="e.g., Salesforce, HubSpot, Custom CRM"
+                    data-testid="input-currentSoftware"
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
         </div>
 
         <div className="space-y-4 pt-2 border-t border-border">
