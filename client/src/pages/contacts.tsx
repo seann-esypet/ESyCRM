@@ -4,16 +4,18 @@ import Header from "@/components/layout/header";
 import ContactList from "@/components/contacts/contact-list";
 import ContactForm from "@/components/contacts/contact-form";
 import ContactImport from "@/components/contacts/contact-import";
-import { queryClient } from "@/lib/queryClient";
+import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Download } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
+import { useToast } from "@/hooks/use-toast";
 import type { Contact } from "@shared/schema";
 
 export default function Contacts() {
   const { user } = useAuth();
-  const isAdmin = user?.role === "admin";
+  const isAdmin = (user as any)?.role === "admin";
+  const { toast } = useToast();
   
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
@@ -43,6 +45,26 @@ export default function Contacts() {
     },
   });
 
+  const statusChangeMutation = useMutation({
+    mutationFn: async ({ contactId, status }: { contactId: string; status: string }) => {
+      return apiRequest("PATCH", `/api/contacts/${contactId}`, { status });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/contacts"] });
+      toast({
+        title: "Status updated",
+        description: "Contact status has been updated successfully.",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update contact status",
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleEdit = (contact: Contact) => {
     setSelectedContact(contact);
     setIsFormOpen(true);
@@ -66,6 +88,10 @@ export default function Contacts() {
 
   const handleExport = () => {
     window.open('/api/export/contacts', '_blank');
+  };
+
+  const handleStatusChange = (contactId: string, newStatus: string) => {
+    statusChangeMutation.mutate({ contactId, status: newStatus });
   };
 
   return (
@@ -95,6 +121,7 @@ export default function Contacts() {
           isLoading={isLoading}
           onEdit={handleEdit}
           onDelete={handleDelete}
+          onStatusChange={handleStatusChange}
         />
       </main>
 

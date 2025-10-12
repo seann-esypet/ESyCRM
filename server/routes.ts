@@ -91,6 +91,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.patch("/api/contacts/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const contactData = insertContactSchema.partial().parse(req.body);
+      const contact = await storage.updateContact(req.params.id, contactData, userId);
+      if (!contact) {
+        return res.status(404).json({ message: "Contact not found" });
+      }
+      res.json(contact);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid contact data", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to update contact" });
+    }
+  });
+
   app.delete("/api/contacts/:id", isAuthenticated, async (req: any, res) => {
     try {
       const userId = getUserIdForQuery(req.user);

@@ -8,6 +8,7 @@ import {
   TableHeader, 
   TableRow 
 } from "@/components/ui/table";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Edit, Trash2, Mail, Phone, Users } from "lucide-react";
 import type { Contact } from "@shared/schema";
 
@@ -16,9 +17,10 @@ interface ContactListProps {
   isLoading: boolean;
   onEdit: (contact: Contact) => void;
   onDelete: (id: string) => void;
+  onStatusChange: (contactId: string, newStatus: string) => void;
 }
 
-export default function ContactList({ contacts, isLoading, onEdit, onDelete }: ContactListProps) {
+export default function ContactList({ contacts, isLoading, onEdit, onDelete, onStatusChange }: ContactListProps) {
   const formatDate = (date: string | Date | null) => {
     if (!date) return "Never";
     return new Date(date).toLocaleDateString();
@@ -117,13 +119,21 @@ export default function ContactList({ contacts, isLoading, onEdit, onDelete }: C
                 </TableCell>
                 <TableCell>{formatDate(contact.lastContactDate)}</TableCell>
                 <TableCell>
-                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                    contact.status === "active" 
-                      ? "bg-accent/10 text-accent" 
-                      : "bg-muted text-muted-foreground"
-                  }`}>
-                    {contact.status}
-                  </span>
+                  <Select 
+                    value={contact.status} 
+                    onValueChange={(value) => onStatusChange(contact.id, value)}
+                  >
+                    <SelectTrigger 
+                      className="w-[110px]" 
+                      data-testid={`status-select-${contact.id}`}
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="active">Active</SelectItem>
+                      <SelectItem value="inactive">Inactive</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end space-x-2">
