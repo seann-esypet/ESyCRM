@@ -488,6 +488,7 @@ export default function Deals() {
                       <SortIcon column="value" />
                     </Button>
                   </TableHead>
+                  <TableHead>Plan</TableHead>
                   <TableHead>
                     <Button
                       variant="ghost"
@@ -553,6 +554,7 @@ export default function Deals() {
                         {deal.title}
                       </TableCell>
                       <TableCell>{formatCurrency(deal.value)}</TableCell>
+                      <TableCell>{deal.plan || "—"}</TableCell>
                       <TableCell>{formatDate(deal.expectedCloseDate)}</TableCell>
                       <TableCell>
                         <Select
