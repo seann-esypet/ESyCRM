@@ -274,6 +274,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.patch("/api/deals/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const dealData = insertDealSchema.partial().parse(req.body);
+      const deal = await storage.updateDeal(req.params.id, dealData, userId);
+      if (!deal) {
+        return res.status(404).json({ message: "Deal not found" });
+      }
+      res.json(deal);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid deal data", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to update deal" });
+    }
+  });
+
   app.delete("/api/deals/:id", isAuthenticated, async (req: any, res) => {
     try {
       const userId = getUserIdForQuery(req.user);

@@ -2,14 +2,16 @@ import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import Header from "@/components/layout/header";
 import DealForm from "@/components/deals/deal-form";
-import { queryClient } from "@/lib/queryClient";
+import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Edit, Trash2, Calendar, DollarSign, Handshake, LayoutGrid, List, ArrowUpDown, ArrowUp, ArrowDown, RotateCcw, Download } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/hooks/useAuth";
+import { useToast } from "@/hooks/use-toast";
 import type { Deal, Contact } from "@shared/schema";
 
 type ViewType = "card" | "table";
@@ -19,6 +21,7 @@ type SortDirection = "asc" | "desc";
 export default function Deals() {
   const { user } = useAuth();
   const isAdmin = (user as any)?.role === "admin";
+  const { toast } = useToast();
   
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [selectedDeal, setSelectedDeal] = useState<Deal | undefined>();
@@ -46,10 +49,61 @@ export default function Deals() {
     },
   });
 
+  const stageChangeMutation = useMutation({
+    mutationFn: async ({ id, stage }: { id: string; stage: string }) => {
+      return apiRequest("PATCH", `/api/deals/${id}`, { stage });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deals"] });
+      toast({
+        title: "Stage updated",
+        description: "Deal stage has been updated successfully.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update deal stage",
+        variant: "destructive",
+      });
+    },
+  });
+
   const getContactName = (contactId: string | null) => {
     if (!contactId || !contacts) return "No contact";
     const contact = contacts.find(c => c.id === contactId);
     return contact ? `${contact.firstName} ${contact.lastName}` : "Unknown contact";
+  };
+
+  const getStageLabel = (stage: string) => {
+    switch (stage) {
+      case "new_lead_unqualified":
+        return "New Lead Unqualified";
+      case "qualified_lead":
+        return "Qualified Lead";
+      case "contacted_left_message":
+        return "Contacted (Left Message)";
+      case "contacted_spoke_to_decision_maker":
+        return "Contacted (Spoke to Owner/Decision Maker)";
+      case "onboarded_form_completed":
+        return "Onboarded Form Completed";
+      case "demo_scheduled":
+        return "Demo Scheduled";
+      case "demo_completed":
+        return "Demo Completed";
+      case "decision_pending":
+        return "Decision Pending";
+      case "won":
+        return "Won";
+      case "lost":
+        return "Lost";
+      default:
+        return stage.replace('_', ' ').toUpperCase();
+    }
+  };
+
+  const handleStageChange = (dealId: string, newStage: string) => {
+    stageChangeMutation.mutate({ id: dealId, stage: newStage });
   };
 
   const getStageColor = (stage: string) => {
@@ -353,9 +407,30 @@ export default function Deals() {
                     </div>
 
                     <div>
-                      <Badge className={getStageColor(deal.stage)}>
-                        {deal.stage.replace('_', ' ').toUpperCase()}
-                      </Badge>
+                      <Select
+                        value={deal.stage}
+                        onValueChange={(value) => handleStageChange(deal.id, value)}
+                        disabled={stageChangeMutation.isPending}
+                      >
+                        <SelectTrigger 
+                          className={`w-full ${getStageColor(deal.stage)}`}
+                          data-testid={`select-stage-card-${deal.id}`}
+                        >
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="new_lead_unqualified">New Lead Unqualified</SelectItem>
+                          <SelectItem value="qualified_lead">Qualified Lead</SelectItem>
+                          <SelectItem value="contacted_left_message">Contacted (Left Message)</SelectItem>
+                          <SelectItem value="contacted_spoke_to_decision_maker">Contacted (Spoke to Owner/Decision Maker)</SelectItem>
+                          <SelectItem value="onboarded_form_completed">Onboarded Form Completed</SelectItem>
+                          <SelectItem value="demo_scheduled">Demo Scheduled</SelectItem>
+                          <SelectItem value="demo_completed">Demo Completed</SelectItem>
+                          <SelectItem value="decision_pending">Decision Pending</SelectItem>
+                          <SelectItem value="won">Won</SelectItem>
+                          <SelectItem value="lost">Lost</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
 
                     <div className="pt-2 border-t border-border">
@@ -474,9 +549,30 @@ export default function Deals() {
                       <TableCell>{formatCurrency(deal.value)}</TableCell>
                       <TableCell>{formatDate(deal.expectedCloseDate)}</TableCell>
                       <TableCell>
-                        <Badge className={getStageColor(deal.stage)}>
-                          {deal.stage.replace('_', ' ').toUpperCase()}
-                        </Badge>
+                        <Select
+                          value={deal.stage}
+                          onValueChange={(value) => handleStageChange(deal.id, value)}
+                          disabled={stageChangeMutation.isPending}
+                        >
+                          <SelectTrigger 
+                            className={`w-[200px] ${getStageColor(deal.stage)}`}
+                            data-testid={`select-stage-${deal.id}`}
+                          >
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="new_lead_unqualified">New Lead Unqualified</SelectItem>
+                            <SelectItem value="qualified_lead">Qualified Lead</SelectItem>
+                            <SelectItem value="contacted_left_message">Contacted (Left Message)</SelectItem>
+                            <SelectItem value="contacted_spoke_to_decision_maker">Contacted (Spoke to Owner/Decision Maker)</SelectItem>
+                            <SelectItem value="onboarded_form_completed">Onboarded Form Completed</SelectItem>
+                            <SelectItem value="demo_scheduled">Demo Scheduled</SelectItem>
+                            <SelectItem value="demo_completed">Demo Completed</SelectItem>
+                            <SelectItem value="decision_pending">Decision Pending</SelectItem>
+                            <SelectItem value="won">Won</SelectItem>
+                            <SelectItem value="lost">Lost</SelectItem>
+                          </SelectContent>
+                        </Select>
                       </TableCell>
                       <TableCell>{getContactName(deal.contactId)}</TableCell>
                       <TableCell>
