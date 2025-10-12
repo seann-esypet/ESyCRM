@@ -263,11 +263,14 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createDeal(insertDeal: InsertDeal, userId: string): Promise<Deal> {
-    const dealData = {
+    const dealData: any = {
       ...insertDeal,
       userId,
       value: insertDeal.value && insertDeal.value.trim() ? insertDeal.value : null,
       expectedCloseDate: insertDeal.expectedCloseDate ? new Date(insertDeal.expectedCloseDate) : null,
+      demoScheduledDate: insertDeal.demoScheduledDate ? new Date(insertDeal.demoScheduledDate) : null,
+      demoCompletedDate: insertDeal.demoCompletedDate ? new Date(insertDeal.demoCompletedDate) : null,
+      wonDate: insertDeal.wonDate ? new Date(insertDeal.wonDate) : null,
       contactId: insertDeal.contactId && insertDeal.contactId.trim() ? insertDeal.contactId : null,
     };
     
@@ -291,12 +294,20 @@ export class DatabaseStorage implements IStorage {
     const existing = await this.getDeal(id, userId);
     if (!existing) return undefined;
 
-    const dealUpdateData = {
+    const dealUpdateData: any = {
       ...updateData,
       value: updateData.value !== undefined ? (updateData.value && updateData.value.trim() ? updateData.value : null) : undefined,
       expectedCloseDate: updateData.expectedCloseDate ? new Date(updateData.expectedCloseDate) : undefined,
+      demoScheduledDate: updateData.demoScheduledDate ? new Date(updateData.demoScheduledDate) : undefined,
+      demoCompletedDate: updateData.demoCompletedDate ? new Date(updateData.demoCompletedDate) : undefined,
+      wonDate: updateData.wonDate ? new Date(updateData.wonDate) : undefined,
       contactId: updateData.contactId !== undefined ? (updateData.contactId && updateData.contactId.trim() ? updateData.contactId : null) : undefined,
     };
+
+    // Set stageChangedAt timestamp if stage is being changed
+    if (updateData.stage && updateData.stage !== existing.stage) {
+      dealUpdateData.stageChangedAt = new Date();
+    }
 
     const whereClause = userId === null 
       ? eq(deals.id, id)
