@@ -43,6 +43,7 @@ export const contacts = pgTable("contacts", {
   instagramHandle: text("instagram_handle"),
   secondaryFirstName: text("secondary_first_name"),
   secondaryLastName: text("secondary_last_name"),
+  leadSource: text("lead_source"), // Inbound, Outbound, Cold Call, Facebook Ad, Referral, Event, EsyPet Website Form, Google Search
   notes: text("notes"),
   status: text("status").notNull().default("active"), // active, inactive
   lastContactDate: timestamp("last_contact_date"),
