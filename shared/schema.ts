@@ -98,6 +98,33 @@ export const activities = pgTable("activities", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const emailSequences = pgTable("email_sequences", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  sequenceNumber: integer("sequence_number").notNull(), // 1-5
+  subject: text("subject").notNull(),
+  body: text("body").notNull(), // Email content with placeholders like [Contact_First_Name], [Sales_Person]
+  scheduledDate: timestamp("scheduled_date"), // Only for sequence 1
+  scheduledTime: text("scheduled_time"), // Only for sequence 1, e.g., "09:00"
+  daysAfterNoReply: integer("days_after_no_reply"), // For sequences 2-5
+  isActive: text("is_active").notNull().default("true"), // true, false
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const emailSequenceLogs = pgTable("email_sequence_logs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  contactId: varchar("contact_id").notNull().references(() => contacts.id),
+  sequenceId: varchar("sequence_id").notNull().references(() => emailSequences.id),
+  sequenceNumber: integer("sequence_number").notNull(), // 1-5
+  sentAt: timestamp("sent_at"),
+  status: text("status").notNull().default("pending"), // pending, sent, failed, replied
+  emailResponseReceived: text("email_response_received").default("false"), // true, false
+  lastCheckedAt: timestamp("last_checked_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 export const insertContactSchema = createInsertSchema(contacts).omit({
   id: true,
   userId: true,
@@ -134,6 +161,25 @@ export const insertActivitySchema = createInsertSchema(activities).omit({
   createdAt: true,
 });
 
+export const insertEmailSequenceSchema = createInsertSchema(emailSequences).omit({
+  id: true,
+  userId: true,
+  createdAt: true,
+  updatedAt: true,
+}).extend({
+  subject: z.string().min(1, "Subject is required"),
+  body: z.string().min(1, "Email body is required"),
+  scheduledDate: z.string().optional().nullable(),
+  scheduledTime: z.string().optional().nullable(),
+  daysAfterNoReply: z.number().optional().nullable(),
+});
+
+export const insertEmailSequenceLogSchema = createInsertSchema(emailSequenceLogs).omit({
+  id: true,
+  userId: true,
+  createdAt: true,
+});
+
 export type Contact = typeof contacts.$inferSelect;
 export type InsertContact = z.infer<typeof insertContactSchema>;
 export type Deal = typeof deals.$inferSelect;
@@ -142,5 +188,9 @@ export type Task = typeof tasks.$inferSelect;
 export type InsertTask = z.infer<typeof insertTaskSchema>;
 export type Activity = typeof activities.$inferSelect;
 export type InsertActivity = z.infer<typeof insertActivitySchema>;
+export type EmailSequence = typeof emailSequences.$inferSelect;
+export type InsertEmailSequence = z.infer<typeof insertEmailSequenceSchema>;
+export type EmailSequenceLog = typeof emailSequenceLogs.$inferSelect;
+export type InsertEmailSequenceLog = z.infer<typeof insertEmailSequenceLogSchema>;
 export type User = typeof users.$inferSelect;
 export type UpsertUser = typeof users.$inferInsert;

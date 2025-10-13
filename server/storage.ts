@@ -10,11 +10,17 @@ import {
   type InsertActivity,
   type User,
   type UpsertUser,
+  type EmailSequence,
+  type InsertEmailSequence,
+  type EmailSequenceLog,
+  type InsertEmailSequenceLog,
   users,
   contacts,
   deals,
   tasks,
-  activities
+  activities,
+  emailSequences,
+  emailSequenceLogs
 } from "@shared/schema";
 import { normalizePhoneNumber, normalizeName, normalizeEmail } from "@shared/utils";
 import { db } from "./db";
@@ -57,6 +63,18 @@ export interface IStorage {
   getActivities(userId: string | null): Promise<Activity[]>;
   createActivity(activity: InsertActivity, userId: string): Promise<Activity>;
   getRecentActivities(limit: number, userId: string | null): Promise<Activity[]>;
+
+  // Email Sequences (userId can be null for admins to get all data)
+  getEmailSequences(userId: string | null): Promise<EmailSequence[]>;
+  getEmailSequence(id: string, userId: string | null): Promise<EmailSequence | undefined>;
+  createEmailSequence(sequence: InsertEmailSequence, userId: string): Promise<EmailSequence>;
+  updateEmailSequence(id: string, sequence: Partial<InsertEmailSequence>, userId: string | null): Promise<EmailSequence | undefined>;
+  deleteEmailSequence(id: string, userId: string | null): Promise<boolean>;
+  
+  // Email Sequence Logs
+  getEmailSequenceLogs(userId: string | null, contactId?: string): Promise<EmailSequenceLog[]>;
+  createEmailSequenceLog(log: InsertEmailSequenceLog, userId: string): Promise<EmailSequenceLog>;
+  updateEmailSequenceLog(id: string, log: Partial<InsertEmailSequenceLog>, userId: string | null): Promise<EmailSequenceLog | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -502,6 +520,125 @@ export class DatabaseStorage implements IStorage {
       .where(eq(activities.userId, userId))
       .orderBy(desc(activities.createdAt))
       .limit(limit);
+  }
+
+  // Email Sequences
+  async getEmailSequences(userId: string | null): Promise<EmailSequence[]> {
+    if (userId === null) {
+      // Admin: get all sequences
+      return await db.select().from(emailSequences);
+    }
+    return await db.select().from(emailSequences)
+      .where(eq(emailSequences.userId, userId))
+      .orderBy(emailSequences.sequenceNumber);
+  }
+
+  async getEmailSequence(id: string, userId: string | null): Promise<EmailSequence | undefined> {
+    if (userId === null) {
+      // Admin: get any sequence by ID
+      const [sequence] = await db.select().from(emailSequences).where(eq(emailSequences.id, id));
+      return sequence;
+    }
+    const [sequence] = await db.select().from(emailSequences)
+      .where(and(eq(emailSequences.id, id), eq(emailSequences.userId, userId)));
+    return sequence;
+  }
+
+  async createEmailSequence(insertSequence: InsertEmailSequence, userId: string): Promise<EmailSequence> {
+    const sequenceData: any = {
+      ...insertSequence,
+      userId,
+      scheduledDate: insertSequence.scheduledDate && insertSequence.scheduledDate.trim() 
+        ? new Date(insertSequence.scheduledDate) 
+        : null,
+    };
+
+    const [sequence] = await db
+      .insert(emailSequences)
+      .values(sequenceData)
+      .returning();
+    
+    return sequence;
+  }
+
+  async updateEmailSequence(id: string, updateData: Partial<InsertEmailSequence>, userId: string | null): Promise<EmailSequence | undefined> {
+    const sequenceUpdateData: any = {
+      ...updateData,
+      scheduledDate: updateData.scheduledDate !== undefined 
+        ? (updateData.scheduledDate && updateData.scheduledDate.trim() ? new Date(updateData.scheduledDate) : null)
+        : undefined,
+      updatedAt: new Date(),
+    };
+
+    const whereClause = userId === null 
+      ? eq(emailSequences.id, id)
+      : and(eq(emailSequences.id, id), eq(emailSequences.userId, userId));
+
+    const [updated] = await db
+      .update(emailSequences)
+      .set(sequenceUpdateData)
+      .where(whereClause)
+      .returning();
+    
+    return updated;
+  }
+
+  async deleteEmailSequence(id: string, userId: string | null): Promise<boolean> {
+    const whereClause = userId === null 
+      ? eq(emailSequences.id, id)
+      : and(eq(emailSequences.id, id), eq(emailSequences.userId, userId));
+    
+    const result = await db.delete(emailSequences).where(whereClause);
+    return result.rowCount ? result.rowCount > 0 : false;
+  }
+
+  // Email Sequence Logs
+  async getEmailSequenceLogs(userId: string | null, contactId?: string): Promise<EmailSequenceLog[]> {
+    if (userId === null) {
+      // Admin: get all logs or filtered by contact
+      if (contactId) {
+        return await db.select().from(emailSequenceLogs)
+          .where(eq(emailSequenceLogs.contactId, contactId))
+          .orderBy(desc(emailSequenceLogs.createdAt));
+      }
+      return await db.select().from(emailSequenceLogs)
+        .orderBy(desc(emailSequenceLogs.createdAt));
+    }
+    
+    // Salesperson: get their logs or filtered by contact
+    if (contactId) {
+      return await db.select().from(emailSequenceLogs)
+        .where(and(
+          eq(emailSequenceLogs.userId, userId),
+          eq(emailSequenceLogs.contactId, contactId)
+        ))
+        .orderBy(desc(emailSequenceLogs.createdAt));
+    }
+    return await db.select().from(emailSequenceLogs)
+      .where(eq(emailSequenceLogs.userId, userId))
+      .orderBy(desc(emailSequenceLogs.createdAt));
+  }
+
+  async createEmailSequenceLog(insertLog: InsertEmailSequenceLog, userId: string): Promise<EmailSequenceLog> {
+    const [log] = await db
+      .insert(emailSequenceLogs)
+      .values({ ...insertLog, userId })
+      .returning();
+    return log;
+  }
+
+  async updateEmailSequenceLog(id: string, updateData: Partial<InsertEmailSequenceLog>, userId: string | null): Promise<EmailSequenceLog | undefined> {
+    const whereClause = userId === null 
+      ? eq(emailSequenceLogs.id, id)
+      : and(eq(emailSequenceLogs.id, id), eq(emailSequenceLogs.userId, userId));
+
+    const [updated] = await db
+      .update(emailSequenceLogs)
+      .set(updateData)
+      .where(whereClause)
+      .returning();
+    
+    return updated;
   }
 }
 

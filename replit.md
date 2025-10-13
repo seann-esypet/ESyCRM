@@ -15,6 +15,12 @@ CRM Tracker is a modern, multi-user Customer Relationship Management system buil
   - **Multiple Views**: Switch between detailed card view and compact table view
   - **Smart Sorting**: Sortable columns with default ordering (open deals first, newest first)
 - **Task Management**: Organize follow-ups and action items with priorities and due dates
+- **Email Sequences**: Automated email campaigns for qualified leads (requires Reserved VM deployment)
+  - **5-Sequence System**: Create up to 5 automated email sequences per salesperson
+  - **Smart Scheduling**: Sequence 1 sends on scheduled date/time, sequences 2-5 send after no reply
+  - **Template Variables**: Dynamic content with [Contact_First_Name] and [Sales_Person] placeholders
+  - **SendGrid Integration**: Professional email delivery with branded domain support
+  - **Activity Tracking**: Monitor email sends, responses, and sequence status per contact
 - **Analytics Dashboard**: Real-time insights into sales performance and pipeline health
   - **Salesperson View**: Personal metrics (revenue, pipeline, conversion rate, task completion)
   - **Admin View**: Salesperson rankings by deals closed, total value, and win rate
@@ -56,6 +62,8 @@ Preferred communication style: Simple, everyday language.
 - **Deals**: Sales opportunities with pipeline stages and value tracking
 - **Tasks**: Action items with priorities, due dates, and completion status
 - **Activities**: Audit trail for all system actions and interactions
+- **Email Sequences**: Automated email campaign templates with scheduling rules (5 sequences per user)
+- **Email Sequence Logs**: Tracking of sent emails, delivery status, and response monitoring
 
 ### Authentication and Authorization
 - **Authentication Provider**: Replit Auth (OpenID Connect) with support for Google, GitHub, X, Apple, and email/password login
@@ -78,6 +86,7 @@ Preferred communication style: Simple, everyday language.
   - `SESSION_SECRET`: Secret key for session encryption (auto-provided by Replit)
   - `REPLIT_DOMAINS`: Comma-separated list of deployment domains (auto-provided)
   - `DATABASE_URL`: PostgreSQL connection string (auto-provided)
+  - `SENDGRID_API_KEY`: SendGrid API key for email sequences (optional, user-provided)
 
 ### Development and Build Process
 - **Type Safety**: Comprehensive TypeScript coverage across client, server, and shared code
@@ -129,6 +138,10 @@ Preferred communication style: Simple, everyday language.
 - **clsx** and **tailwind-merge**: Utility functions for conditional CSS classes
 - **date-fns**: Date utility library for formatting and manipulation
 - **nanoid**: Secure URL-friendly unique string ID generator
+
+### Email Integration
+- **@sendgrid/mail**: SendGrid email service integration for automated sequences
+- **Email Scheduler**: Background job processor for automated email sequences (runs hourly on Reserved VM)
 
 ### Development-Specific Dependencies
 - **@replit/vite-plugin-runtime-error-modal**: Development error overlay

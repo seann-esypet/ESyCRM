@@ -3,7 +3,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { setupAuth, isAuthenticated, isAdmin } from "./replitAuth";
-import { insertContactSchema, insertDealSchema, insertTaskSchema, type InsertContact } from "@shared/schema";
+import { insertContactSchema, insertDealSchema, insertTaskSchema, insertEmailSequenceSchema, type InsertContact } from "@shared/schema";
 import { z } from "zod";
 import Papa from "papaparse";
 
@@ -484,6 +484,92 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching commissions:", error);
       res.status(500).json({ message: "Failed to fetch commissions" });
+    }
+  });
+
+  // Email Sequences routes - All protected with isAuthenticated
+  app.get("/api/email-sequences", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const sequences = await storage.getEmailSequences(userId);
+      res.json(sequences);
+    } catch (error) {
+      console.error("Error fetching email sequences:", error);
+      res.status(500).json({ message: "Failed to fetch email sequences" });
+    }
+  });
+
+  app.get("/api/email-sequences/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const sequence = await storage.getEmailSequence(req.params.id, userId);
+      if (!sequence) {
+        return res.status(404).json({ message: "Email sequence not found" });
+      }
+      res.json(sequence);
+    } catch (error) {
+      console.error("Error fetching email sequence:", error);
+      res.status(500).json({ message: "Failed to fetch email sequence" });
+    }
+  });
+
+  app.post("/api/email-sequences", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const sequenceData = insertEmailSequenceSchema.parse(req.body);
+      const sequence = await storage.createEmailSequence(sequenceData, userId);
+      res.status(201).json(sequence);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid email sequence data", errors: error.errors });
+      }
+      console.error("Error creating email sequence:", error);
+      res.status(500).json({ message: "Failed to create email sequence" });
+    }
+  });
+
+  app.patch("/api/email-sequences/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const sequenceData = insertEmailSequenceSchema.partial().parse(req.body);
+      const sequence = await storage.updateEmailSequence(req.params.id, sequenceData, userId);
+      if (!sequence) {
+        return res.status(404).json({ message: "Email sequence not found" });
+      }
+      res.json(sequence);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid email sequence data", errors: error.errors });
+      }
+      console.error("Error updating email sequence:", error);
+      res.status(500).json({ message: "Failed to update email sequence" });
+    }
+  });
+
+  app.delete("/api/email-sequences/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const deleted = await storage.deleteEmailSequence(req.params.id, userId);
+      if (!deleted) {
+        return res.status(404).json({ message: "Email sequence not found" });
+      }
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting email sequence:", error);
+      res.status(500).json({ message: "Failed to delete email sequence" });
+    }
+  });
+
+  // Email Sequence Logs routes
+  app.get("/api/email-sequence-logs", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const { contactId } = req.query;
+      const logs = await storage.getEmailSequenceLogs(userId, contactId as string | undefined);
+      res.json(logs);
+    } catch (error) {
+      console.error("Error fetching email sequence logs:", error);
+      res.status(500).json({ message: "Failed to fetch email sequence logs" });
     }
   });
 
