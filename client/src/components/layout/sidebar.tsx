@@ -10,6 +10,7 @@ import {
   TrendingUp,
   DollarSign,
   Mail,
+  Inbox as InboxIcon,
   LogOut
 } from "lucide-react";
 
@@ -19,6 +20,7 @@ const navigation = [
   { name: "Pipeline", href: "/deals", icon: Handshake },
   { name: "Tasks", href: "/tasks", icon: CheckSquare },
   { name: "Email Sequences", href: "/email-sequences", icon: Mail },
+  { name: "Inbox", href: "/inbox", icon: InboxIcon },
   { name: "Commissions", href: "/commissions", icon: DollarSign },
   { name: "Reports", href: "/reports", icon: TrendingUp },
 ];

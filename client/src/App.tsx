@@ -13,6 +13,7 @@ import Tasks from "@/pages/tasks";
 import Reports from "@/pages/reports";
 import Commissions from "@/pages/commissions";
 import EmailSequences from "@/pages/email-sequences";
+import Inbox from "@/pages/inbox";
 import Sidebar from "@/components/layout/sidebar";
 
 // From Replit Auth blueprint - Conditional routing based on auth state
@@ -35,6 +36,7 @@ function Router() {
           <Route path="/deals" component={Deals} />
           <Route path="/tasks" component={Tasks} />
           <Route path="/email-sequences" component={EmailSequences} />
+          <Route path="/inbox" component={Inbox} />
           <Route path="/commissions" component={Commissions} />
           <Route path="/reports" component={Reports} />
           <Route component={NotFound} />

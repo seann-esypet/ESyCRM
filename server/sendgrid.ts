@@ -34,13 +34,15 @@ export async function sendEmail({
   subject,
   body,
   fromEmail = "noreply@esypet.com",
-  fromName = "EsyPet CRM"
+  fromName = "EsyPet CRM",
+  replyTo
 }: {
   to: string;
   subject: string;
   body: string;
   fromEmail?: string;
   fromName?: string;
+  replyTo?: string;
 }): Promise<{ success: boolean; error?: string }> {
   if (!SENDGRID_API_KEY) {
     console.error("SendGrid API key not configured");
@@ -52,7 +54,7 @@ export async function sendEmail({
   }
 
   try {
-    const msg = {
+    const msg: any = {
       to,
       from: {
         email: fromEmail,
@@ -62,6 +64,11 @@ export async function sendEmail({
       text: body,
       html: body.replace(/\n/g, '<br>'),
     };
+
+    // Add reply-to if provided
+    if (replyTo) {
+      msg.replyTo = replyTo;
+    }
 
     await sgMail.send(msg);
     console.log(`Email sent successfully to ${to}`);
@@ -94,12 +101,17 @@ export async function sendSequenceEmail({
   const body = replaceTemplateVariables(sequence.body, contact, salesperson);
 
   const salespersonName = `${salesperson.firstName || ''} ${salesperson.lastName || ''}`.trim() || salesperson.email || 'Sales Team';
+  
+  // Use workEmail if available, otherwise fall back to regular email
+  const fromEmail = salesperson.workEmail || salesperson.email || "noreply@esypet.com";
+  const replyToEmail = salesperson.workEmail || salesperson.email || undefined;
 
   return await sendEmail({
     to: contact.email,
     subject,
     body,
-    fromEmail: salesperson.email || "noreply@esypet.com",
+    fromEmail,
     fromName: salespersonName,
+    replyTo: replyToEmail,
   });
 }
