@@ -4,16 +4,23 @@ import Header from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Card } from "@/components/ui/card";
-import { Mail, Edit, CheckCircle, XCircle } from "lucide-react";
-import type { EmailSequence } from "@shared/schema";
+import { Mail, Edit, CheckCircle, XCircle, Users, Plus } from "lucide-react";
+import type { EmailSequence, EmailSequenceLog } from "@shared/schema";
 import EmailSequenceForm from "@/components/email-sequences/email-sequence-form";
+import AddContactsToSequenceDialog from "@/components/email-sequences/add-contacts-to-sequence-dialog";
 
 export default function EmailSequences() {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [selectedSequence, setSelectedSequence] = useState<EmailSequence | undefined>();
+  const [isAddContactsOpen, setIsAddContactsOpen] = useState(false);
+  const [sequenceForContacts, setSequenceForContacts] = useState<EmailSequence | undefined>();
 
   const { data: sequences, isLoading } = useQuery<EmailSequence[]>({
     queryKey: ["/api/email-sequences"],
+  });
+
+  const { data: logs, isLoading: isLogsLoading, isError: isLogsError } = useQuery<EmailSequenceLog[]>({
+    queryKey: ["/api/email-sequence-logs"],
   });
 
   const handleEdit = (sequence: EmailSequence) => {
@@ -26,6 +33,11 @@ export default function EmailSequences() {
     setSelectedSequence(undefined);
   };
 
+  const handleAddContacts = (sequence: EmailSequence) => {
+    setSequenceForContacts(sequence);
+    setIsAddContactsOpen(true);
+  };
+
   // Map sequences by number for display
   const sequenceMap = new Map<number, EmailSequence>();
   sequences?.forEach(seq => {
@@ -34,6 +46,16 @@ export default function EmailSequences() {
 
   // Generate all 5 sequences (existing or empty)
   const allSequences = [1, 2, 3, 4, 5].map(num => sequenceMap.get(num));
+
+  // Count queued contacts per sequence (pending + processing)
+  const getQueueCount = (sequenceId: string | undefined) => {
+    if (!sequenceId) return null;
+    if (!logs) return null;
+    return logs.filter(log => 
+      log.sequenceId === sequenceId && 
+      (log.status === "pending" || log.status === "processing")
+    ).length;
+  };
 
   return (
     <>
@@ -53,13 +75,14 @@ export default function EmailSequences() {
                     <th className="text-left px-6 py-4 text-sm font-semibold text-foreground">Subject</th>
                     <th className="text-left px-6 py-4 text-sm font-semibold text-foreground">Schedule Rule</th>
                     <th className="text-left px-6 py-4 text-sm font-semibold text-foreground">Status</th>
+                    <th className="text-left px-6 py-4 text-sm font-semibold text-foreground">Queue</th>
                     <th className="text-right px-6 py-4 text-sm font-semibold text-foreground">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
                   {isLoading ? (
                     <tr>
-                      <td colSpan={5} className="px-6 py-12 text-center text-muted-foreground">
+                      <td colSpan={6} className="px-6 py-12 text-center text-muted-foreground">
                         Loading sequences...
                       </td>
                     </tr>
@@ -117,23 +140,54 @@ export default function EmailSequences() {
                               </div>
                             )}
                           </td>
+                          <td className="px-6 py-4">
+                            {sequence ? (
+                              <div className="flex items-center space-x-2">
+                                <Users className="h-4 w-4 text-muted-foreground" />
+                                <span className="text-sm font-medium" data-testid={`queue-count-${sequenceNumber}`}>
+                                  {isLogsLoading ? (
+                                    "Loading..."
+                                  ) : isLogsError ? (
+                                    <span className="text-destructive">Error</span>
+                                  ) : (
+                                    `${getQueueCount(sequence.id) ?? 0} queued`
+                                  )}
+                                </span>
+                              </div>
+                            ) : (
+                              <span className="text-sm text-muted-foreground">-</span>
+                            )}
+                          </td>
                           <td className="px-6 py-4 text-right">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => {
-                                if (sequence) {
-                                  handleEdit(sequence);
-                                } else {
-                                  setSelectedSequence({ sequenceNumber } as EmailSequence);
-                                  setIsFormOpen(true);
-                                }
-                              }}
-                              data-testid={`button-edit-${sequenceNumber}`}
-                            >
-                              <Edit className="h-4 w-4 mr-2" />
-                              {sequence ? "Edit" : "Configure"}
-                            </Button>
+                            <div className="flex items-center justify-end space-x-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  if (sequence) {
+                                    handleEdit(sequence);
+                                  } else {
+                                    setSelectedSequence({ sequenceNumber } as EmailSequence);
+                                    setIsFormOpen(true);
+                                  }
+                                }}
+                                data-testid={`button-edit-${sequenceNumber}`}
+                              >
+                                <Edit className="h-4 w-4 mr-2" />
+                                {sequence ? "Edit" : "Configure"}
+                              </Button>
+                              {sequence && sequence.isActive === "true" && (
+                                <Button
+                                  variant="default"
+                                  size="sm"
+                                  onClick={() => handleAddContacts(sequence)}
+                                  data-testid={`button-add-contacts-${sequenceNumber}`}
+                                >
+                                  <Plus className="h-4 w-4 mr-2" />
+                                  Add Contacts
+                                </Button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       );
@@ -171,6 +225,14 @@ export default function EmailSequences() {
           />
         </DialogContent>
       </Dialog>
+
+      {sequenceForContacts && (
+        <AddContactsToSequenceDialog
+          sequence={sequenceForContacts}
+          open={isAddContactsOpen}
+          onOpenChange={setIsAddContactsOpen}
+        />
+      )}
     </>
   );
 }
