@@ -11,6 +11,7 @@ import {
   DollarSign,
   Mail,
   Inbox as InboxIcon,
+  Settings as SettingsIcon,
   LogOut
 } from "lucide-react";
 
@@ -23,6 +24,7 @@ const navigation = [
   { name: "Inbox", href: "/inbox", icon: InboxIcon },
   { name: "Commissions", href: "/commissions", icon: DollarSign },
   { name: "Reports", href: "/reports", icon: TrendingUp },
+  { name: "Settings", href: "/settings", icon: SettingsIcon },
 ];
 
 export default function Sidebar() {

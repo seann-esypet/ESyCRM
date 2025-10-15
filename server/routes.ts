@@ -33,6 +33,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.patch('/api/user/profile', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const profileSchema = z.object({
+        workEmail: z.string().email().optional().or(z.literal("")),
+      });
+      const profileData = profileSchema.parse(req.body);
+      const updatedUser = await storage.updateUserProfile(userId, profileData);
+      if (!updatedUser) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      res.json(updatedUser);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid profile data", errors: error.errors });
+      }
+      console.error("Error updating profile:", error);
+      res.status(500).json({ message: "Failed to update profile" });
+    }
+  });
+
   // Contacts routes - All protected with isAuthenticated
   app.get("/api/contacts", isAuthenticated, async (req: any, res) => {
     try {

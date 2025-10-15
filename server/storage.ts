@@ -36,6 +36,7 @@ export interface IStorage {
   // User operations - From Replit Auth blueprint
   getUser(id: string): Promise<User | undefined>;
   upsertUser(user: UpsertUser): Promise<User>;
+  updateUserProfile(id: string, profile: Partial<Pick<User, 'workEmail'>>): Promise<User | undefined>;
   getAllUsers(): Promise<User[]>;
   
   // Contact Groups (userId can be null for admins to get all data)
@@ -123,6 +124,18 @@ export class DatabaseStorage implements IStorage {
 
   async getAllUsers(): Promise<User[]> {
     return await db.select().from(users);
+  }
+
+  async updateUserProfile(id: string, profile: Partial<Pick<User, 'workEmail'>>): Promise<User | undefined> {
+    const [updated] = await db
+      .update(users)
+      .set({
+        ...profile,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, id))
+      .returning();
+    return updated;
   }
 
   // Contact Groups
