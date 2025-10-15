@@ -43,7 +43,7 @@ export default function Sidebar() {
           <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
             <Users className="h-4 w-4 text-primary-foreground" />
           </div>
-          <h1 className="text-xl font-bold text-foreground">CRM Tracker</h1>
+          <h1 className="text-xl font-bold text-foreground">ESyCRM</h1>
         </div>
       </div>
 

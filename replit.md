@@ -1,8 +1,8 @@
-# CRM Tracker
+# ESyCRM
 
 ## Overview
 
-CRM Tracker is a modern, multi-user Customer Relationship Management system built with a full-stack TypeScript architecture. The application provides comprehensive contact management, deal tracking, task organization, and business analytics features with secure user authentication and complete data isolation.
+ESyCRM is a modern, multi-user Customer Relationship Management system built with a full-stack TypeScript architecture. The application provides comprehensive contact management, deal tracking, task organization, and business analytics features with secure user authentication and complete data isolation.
 
 **Key Features:**
 - **Role-Based Access Control**: Multi-user system with two distinct roles

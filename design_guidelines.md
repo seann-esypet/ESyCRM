@@ -1,4 +1,4 @@
-# CRM Tracker Design Guidelines
+# ESyCRM Design Guidelines
 
 ## Design Approach: Design System (Linear + Pipedrive Hybrid)
 
