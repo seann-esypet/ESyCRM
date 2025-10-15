@@ -676,6 +676,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post("/api/email-sequence-logs/bulk", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user); // null for admin, user ID for salesperson
+      const { sequenceId, contactIds } = req.body;
+      
+      if (!sequenceId || typeof sequenceId !== 'string') {
+        return res.status(400).json({ message: "Invalid sequenceId" });
+      }
+      
+      if (!Array.isArray(contactIds) || contactIds.length === 0) {
+        return res.status(400).json({ message: "Invalid contactIds. Expected a non-empty array." });
+      }
+      
+      const result = await storage.bulkCreateEmailSequenceLogs(sequenceId, contactIds, userId);
+      
+      res.status(201).json({
+        total: contactIds.length,
+        successful: result.successful.length,
+        failed: result.failed.length,
+        logs: result.successful,
+        errors: result.failed
+      });
+    } catch (error) {
+      console.error("Error adding contacts to email sequence:", error);
+      res.status(500).json({ message: "Failed to add contacts to email sequence" });
+    }
+  });
+
   // Admin reports - Salesperson rankings
   app.get("/api/admin/salesperson-rankings", isAdmin, async (req: any, res) => {
     try {

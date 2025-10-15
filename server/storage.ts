@@ -84,6 +84,7 @@ export interface IStorage {
   // Email Sequence Logs
   getEmailSequenceLogs(userId: string | null, contactId?: string): Promise<EmailSequenceLog[]>;
   createEmailSequenceLog(log: InsertEmailSequenceLog, userId: string): Promise<EmailSequenceLog>;
+  bulkCreateEmailSequenceLogs(sequenceId: string, contactIds: string[], userId: string | null): Promise<{ successful: EmailSequenceLog[], failed: Array<{ contactId: string, error: string }> }>;
   updateEmailSequenceLog(id: string, log: Partial<InsertEmailSequenceLog>, userId: string | null): Promise<EmailSequenceLog | undefined>;
 }
 
@@ -710,6 +711,79 @@ export class DatabaseStorage implements IStorage {
       .values({ ...insertLog, userId })
       .returning();
     return log;
+  }
+
+  async bulkCreateEmailSequenceLogs(sequenceId: string, contactIds: string[], userId: string | null): Promise<{ successful: EmailSequenceLog[], failed: Array<{ contactId: string, error: string }> }> {
+    const successful: EmailSequenceLog[] = [];
+    const failed: Array<{ contactId: string, error: string }> = [];
+    
+    // First verify the sequence exists (and belongs to the user if not admin)
+    const sequence = await this.getEmailSequence(sequenceId, userId);
+    if (!sequence) {
+      // If sequence doesn't exist or doesn't belong to user, fail all
+      return {
+        successful: [],
+        failed: contactIds.map(contactId => ({
+          contactId,
+          error: "Email sequence not found or you don't have access to it"
+        }))
+      };
+    }
+    
+    // Use the sequence's userId for creating logs (the owner of the sequence)
+    const sequenceOwnerId = sequence.userId;
+    
+    for (const contactId of contactIds) {
+      try {
+        // Verify contact exists (and belongs to the user if not admin)
+        const contact = await this.getContact(contactId, userId);
+        if (!contact) {
+          failed.push({
+            contactId,
+            error: "Contact not found or you don't have access to it"
+          });
+          continue;
+        }
+        
+        // Check if this contact is already in the queue for this sequence
+        const existingLogs = await db.select().from(emailSequenceLogs)
+          .where(and(
+            eq(emailSequenceLogs.contactId, contactId),
+            eq(emailSequenceLogs.sequenceId, sequenceId)
+          ));
+        
+        if (existingLogs.length > 0) {
+          failed.push({
+            contactId,
+            error: "Contact is already in this email sequence"
+          });
+          continue;
+        }
+        
+        // Create log entry with status "pending"
+        // Use the sequence owner's ID for the log
+        const [log] = await db
+          .insert(emailSequenceLogs)
+          .values({
+            contactId,
+            sequenceId,
+            sequenceNumber: sequence.sequenceNumber,
+            status: "pending",
+            emailResponseReceived: "false",
+            userId: sequenceOwnerId
+          })
+          .returning();
+        
+        successful.push(log);
+      } catch (error) {
+        failed.push({
+          contactId,
+          error: error instanceof Error ? error.message : "Unknown error"
+        });
+      }
+    }
+    
+    return { successful, failed };
   }
 
   async updateEmailSequenceLog(id: string, updateData: Partial<InsertEmailSequenceLog>, userId: string | null): Promise<EmailSequenceLog | undefined> {
