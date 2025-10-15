@@ -25,6 +25,12 @@ CRM Tracker is a modern, multi-user Customer Relationship Management system buil
   - **Template Variables**: Dynamic content with [Contact_First_Name] and [Sales_Person] placeholders
   - **SendGrid Integration**: Professional email delivery with branded domain support
   - **Activity Tracking**: Monitor email sends, responses, and sequence status per contact with queue visibility
+- **Inbox System**: Email reply management with role-based access
+  - **Individual Email Addresses**: Each salesperson uses their professional email (e.g., john@esypet.com) for sequences
+  - **Reply Tracking**: Incoming replies automatically routed to salesperson's inbox via SendGrid Inbound Parse
+  - **Message Management**: Read/unread status, delete functionality, and contact linking
+  - **Admin Access**: Administrators can view all salesperson inboxes for oversight
+  - **Security Note**: Webhook accepts emails only from known contacts; consider adding SendGrid signature verification for production
 - **Analytics Dashboard**: Real-time insights into sales performance and pipeline health
   - **Salesperson View**: Personal metrics (revenue, pipeline, conversion rate, task completion)
   - **Admin View**: Salesperson rankings by deals closed, total value, and win rate
@@ -62,6 +68,7 @@ Preferred communication style: Simple, everyday language.
 - **Schema Definition**: Centralized schema definitions in `shared/schema.ts` with Zod validation
 
 ### Key Data Models
+- **Users**: User accounts with role (salesperson/admin), OAuth profile, and optional professional email address (workEmail) for sending sequences
 - **Contacts**: Customer information with personal and business details, optional group assignment
 - **Contact Groups**: Organize contacts into named groups/campaigns for targeted outreach
 - **Deals**: Sales opportunities with pipeline stages and value tracking
@@ -69,6 +76,7 @@ Preferred communication style: Simple, everyday language.
 - **Activities**: Audit trail for all system actions and interactions
 - **Email Sequences**: Automated email campaign templates with scheduling rules (5 sequences per user)
 - **Email Sequence Logs**: Queue system tracking (pending → processing → sent/failed), with delivery status and response monitoring
+- **Inbox Messages**: Received email replies from contacts, linked to sender contact and salesperson owner
 
 ### Authentication and Authorization
 - **Authentication Provider**: Replit Auth (OpenID Connect) with support for Google, GitHub, X, Apple, and email/password login
