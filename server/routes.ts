@@ -174,10 +174,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/contacts/import", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
-      const { contacts: contactsData } = req.body;
+      const { contacts: contactsData, groupId, newGroupName } = req.body;
       
       if (!Array.isArray(contactsData) || contactsData.length === 0) {
         return res.status(400).json({ message: "Invalid import data. Expected an array of contacts." });
+      }
+      
+      // Handle group assignment: either use existing groupId or create a new group
+      let assignedGroupId: string | null = null;
+      
+      if (newGroupName !== undefined) {
+        // newGroupName was provided, validate and create group
+        if (typeof newGroupName !== 'string' || !newGroupName.trim()) {
+          return res.status(400).json({ message: "Invalid newGroupName. Must be a non-empty string." });
+        }
+        
+        try {
+          const newGroup = await storage.createContactGroup({ name: newGroupName.trim() }, userId);
+          assignedGroupId = newGroup.id;
+        } catch (error) {
+          return res.status(400).json({ message: "Failed to create new group", error: error instanceof Error ? error.message : "Unknown error" });
+        }
+      } else if (groupId !== undefined) {
+        // groupId was provided, validate it
+        if (typeof groupId !== 'string' || !groupId.trim()) {
+          return res.status(400).json({ message: "Invalid groupId. Must be a valid group identifier." });
+        }
+        
+        // Verify the group exists and belongs to the user
+        const group = await storage.getContactGroup(groupId, userId);
+        if (!group) {
+          return res.status(404).json({ message: "Group not found or you don't have access to it" });
+        }
+        assignedGroupId = groupId;
       }
       
       // Validate each contact and preserve original row numbers
@@ -186,7 +215,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       for (let i = 0; i < contactsData.length; i++) {
         try {
-          const validated = insertContactSchema.parse(contactsData[i]);
+          // Add groupId to contact data if provided
+          const contactWithGroup = assignedGroupId 
+            ? { ...contactsData[i], groupId: assignedGroupId }
+            : contactsData[i];
+          
+          const validated = insertContactSchema.parse(contactWithGroup);
           validatedContacts.push({ row: i + 1, data: validated });
         } catch (error) {
           if (error instanceof z.ZodError) {
@@ -207,7 +241,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         successful: result.successful.length,
         failed: result.failed.length + validationErrors.length,
         contacts: result.successful,
-        errors: [...validationErrors, ...result.failed]
+        errors: [...validationErrors, ...result.failed],
+        groupId: assignedGroupId // Return the assigned groupId
       });
     } catch (error) {
       console.error("Error importing contacts:", error);
