@@ -16,6 +16,8 @@ import {
   type InsertEmailSequence,
   type EmailSequenceLog,
   type InsertEmailSequenceLog,
+  type InboxMessage,
+  type InsertInboxMessage,
   users,
   contacts,
   contactGroups,
@@ -23,7 +25,8 @@ import {
   tasks,
   activities,
   emailSequences,
-  emailSequenceLogs
+  emailSequenceLogs,
+  inboxMessages
 } from "@shared/schema";
 import { normalizePhoneNumber, normalizeName, normalizeEmail } from "@shared/utils";
 import { db } from "./db";
@@ -86,6 +89,14 @@ export interface IStorage {
   createEmailSequenceLog(log: InsertEmailSequenceLog, userId: string): Promise<EmailSequenceLog>;
   bulkCreateEmailSequenceLogs(sequenceId: string, contactIds: string[], userId: string | null): Promise<{ successful: EmailSequenceLog[], failed: Array<{ contactId: string, error: string }> }>;
   updateEmailSequenceLog(id: string, log: Partial<InsertEmailSequenceLog>, userId: string | null): Promise<EmailSequenceLog | undefined>;
+  
+  // Inbox Messages (userId can be null for admins to get all data)
+  getInboxMessages(userId: string | null): Promise<InboxMessage[]>;
+  getInboxMessage(id: string, userId: string | null): Promise<InboxMessage | undefined>;
+  createInboxMessage(message: InsertInboxMessage, userId: string): Promise<InboxMessage>;
+  updateInboxMessage(id: string, message: Partial<InsertInboxMessage>, userId: string | null): Promise<InboxMessage | undefined>;
+  deleteInboxMessage(id: string, userId: string | null): Promise<boolean>;
+  getUnreadCount(userId: string | null): Promise<number>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -798,6 +809,76 @@ export class DatabaseStorage implements IStorage {
       .returning();
     
     return updated;
+  }
+
+  // Inbox Messages
+  async getInboxMessages(userId: string | null): Promise<InboxMessage[]> {
+    if (userId === null) {
+      // Admin: get all inbox messages
+      return await db.select().from(inboxMessages).orderBy(desc(inboxMessages.receivedAt));
+    }
+    return await db.select().from(inboxMessages)
+      .where(eq(inboxMessages.userId, userId))
+      .orderBy(desc(inboxMessages.receivedAt));
+  }
+
+  async getInboxMessage(id: string, userId: string | null): Promise<InboxMessage | undefined> {
+    if (userId === null) {
+      // Admin: get any message by ID
+      const [message] = await db.select().from(inboxMessages).where(eq(inboxMessages.id, id));
+      return message;
+    }
+    const [message] = await db.select().from(inboxMessages)
+      .where(and(eq(inboxMessages.id, id), eq(inboxMessages.userId, userId)));
+    return message;
+  }
+
+  async createInboxMessage(insertMessage: InsertInboxMessage, userId: string): Promise<InboxMessage> {
+    const [message] = await db
+      .insert(inboxMessages)
+      .values({ ...insertMessage, userId })
+      .returning();
+    return message;
+  }
+
+  async updateInboxMessage(id: string, updateData: Partial<InsertInboxMessage>, userId: string | null): Promise<InboxMessage | undefined> {
+    const whereClause = userId === null
+      ? eq(inboxMessages.id, id)
+      : and(eq(inboxMessages.id, id), eq(inboxMessages.userId, userId));
+
+    const [updated] = await db
+      .update(inboxMessages)
+      .set(updateData)
+      .where(whereClause)
+      .returning();
+    
+    return updated;
+  }
+
+  async deleteInboxMessage(id: string, userId: string | null): Promise<boolean> {
+    const whereClause = userId === null
+      ? eq(inboxMessages.id, id)
+      : and(eq(inboxMessages.id, id), eq(inboxMessages.userId, userId));
+
+    const result = await db
+      .delete(inboxMessages)
+      .where(whereClause)
+      .returning();
+    
+    return result.length > 0;
+  }
+
+  async getUnreadCount(userId: string | null): Promise<number> {
+    const whereClause = userId === null
+      ? eq(inboxMessages.isRead, "false")
+      : and(eq(inboxMessages.userId, userId), eq(inboxMessages.isRead, "false"));
+
+    const [result] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(inboxMessages)
+      .where(whereClause);
+    
+    return result?.count || 0;
   }
 }
 

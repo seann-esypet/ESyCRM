@@ -787,6 +787,112 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Inbox routes - All protected with isAuthenticated
+  app.get("/api/inbox", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const messages = await storage.getInboxMessages(userId);
+      res.json(messages);
+    } catch (error) {
+      console.error("Error fetching inbox messages:", error);
+      res.status(500).json({ message: "Failed to fetch inbox messages" });
+    }
+  });
+
+  app.get("/api/inbox/unread-count", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const count = await storage.getUnreadCount(userId);
+      res.json({ count });
+    } catch (error) {
+      console.error("Error fetching unread count:", error);
+      res.status(500).json({ message: "Failed to fetch unread count" });
+    }
+  });
+
+  app.get("/api/inbox/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const message = await storage.getInboxMessage(req.params.id, userId);
+      if (!message) {
+        return res.status(404).json({ message: "Message not found" });
+      }
+      res.json(message);
+    } catch (error) {
+      console.error("Error fetching inbox message:", error);
+      res.status(500).json({ message: "Failed to fetch inbox message" });
+    }
+  });
+
+  app.patch("/api/inbox/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const message = await storage.updateInboxMessage(req.params.id, req.body, userId);
+      if (!message) {
+        return res.status(404).json({ message: "Message not found" });
+      }
+      res.json(message);
+    } catch (error) {
+      console.error("Error updating inbox message:", error);
+      res.status(500).json({ message: "Failed to update inbox message" });
+    }
+  });
+
+  app.delete("/api/inbox/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const deleted = await storage.deleteInboxMessage(req.params.id, userId);
+      if (!deleted) {
+        return res.status(404).json({ message: "Message not found" });
+      }
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting inbox message:", error);
+      res.status(500).json({ message: "Failed to delete inbox message" });
+    }
+  });
+
+  // SendGrid inbound parse webhook - PUBLIC endpoint (no authentication)
+  app.post("/api/webhooks/sendgrid/inbound", async (req: any, res) => {
+    try {
+      // SendGrid sends webhook data as form-urlencoded or multipart
+      const from = req.body.from || "";
+      const to = req.body.to || "";
+      const subject = req.body.subject || "";
+      const text = req.body.text || "";
+      const html = req.body.html || "";
+      
+      // Extract email address from "Name <email@domain.com>" format
+      const fromEmail = from.match(/<(.+?)>/) ? from.match(/<(.+?)>/)[1] : from;
+      
+      // Try to find the contact by email
+      const contacts = await storage.getContacts(null); // Get all contacts (admin view)
+      const contact = contacts.find(c => c.email?.toLowerCase() === fromEmail.toLowerCase());
+      
+      if (!contact) {
+        console.log(`Inbox: Received email from unknown sender: ${fromEmail}`);
+        return res.status(200).send("OK"); // Acknowledge receipt but don't create message
+      }
+      
+      // Create inbox message for the contact's owner (salesperson)
+      await storage.createInboxMessage({
+        contactId: contact.id,
+        emailSequenceLogId: null, // We can enhance this later to link to specific sequences
+        from: from,
+        subject: subject,
+        bodyText: text,
+        bodyHtml: html,
+        isRead: "false"
+      }, contact.userId);
+      
+      console.log(`Inbox: Created message from ${fromEmail} for user ${contact.userId}`);
+      res.status(200).send("OK");
+    } catch (error) {
+      console.error("Error processing inbound email:", error);
+      res.status(500).json({ message: "Failed to process inbound email" });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
