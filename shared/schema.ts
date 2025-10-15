@@ -26,9 +26,18 @@ export const users = pgTable("users", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+export const contactGroups = pgTable("contact_groups", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  name: text("name").notNull(),
+  description: text("description"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 export const contacts = pgTable("contacts", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id),
+  groupId: varchar("group_id").references(() => contactGroups.id),
   firstName: text("first_name").notNull(),
   lastName: text("last_name").notNull(),
   email: text("email"),
@@ -125,6 +134,14 @@ export const emailSequenceLogs = pgTable("email_sequence_logs", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const insertContactGroupSchema = createInsertSchema(contactGroups).omit({
+  id: true,
+  userId: true,
+  createdAt: true,
+}).extend({
+  name: z.string().min(1, "Group name is required"),
+});
+
 export const insertContactSchema = createInsertSchema(contacts).omit({
   id: true,
   userId: true,
@@ -180,6 +197,8 @@ export const insertEmailSequenceLogSchema = createInsertSchema(emailSequenceLogs
   createdAt: true,
 });
 
+export type ContactGroup = typeof contactGroups.$inferSelect;
+export type InsertContactGroup = z.infer<typeof insertContactGroupSchema>;
 export type Contact = typeof contacts.$inferSelect;
 export type InsertContact = z.infer<typeof insertContactSchema>;
 export type Deal = typeof deals.$inferSelect;
