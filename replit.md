@@ -35,6 +35,9 @@ CRM Tracker is a modern, multi-user Customer Relationship Management system buil
   - **Salesperson View**: Personal metrics (revenue, pipeline, conversion rate, task completion)
   - **Admin View**: Salesperson rankings by deals closed, total value, and win rate
 - **Admin Data Export**: CSV export functionality for contacts, deals, and tasks (admin-only)
+- **Profile Settings**: Personal settings management for salespeople
+  - **Work Email Configuration**: Set professional email address (e.g., john@esypet.com) used as sender for email sequences
+  - **Account Information**: View Replit account details and user role
 - **Secure Authentication**: Login with Google, GitHub, or email/password via Replit Auth
 
 The system follows a monorepo structure with shared TypeScript schemas and utilities, ensuring type safety across the entire application stack. Data access is automatically controlled based on user role: salespeople see only their own data, while administrators have full system visibility.
