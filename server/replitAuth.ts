@@ -85,13 +85,14 @@ export async function setupAuth(app: Express) {
   ) => {
     const user: any = {};
     updateUserSession(user, tokens);
-    const dbUser = await upsertUser(tokens.claims());
+    const claims = tokens.claims();
+    const dbUser = await upsertUser(claims);
     if (dbUser) {
       user.role = dbUser.role || "salesperson";
       user.userId = dbUser.id;
     } else {
       user.role = "salesperson";
-      user.userId = tokens.claims()["sub"];
+      user.userId = claims?.["sub"];
     }
     verified(null, user);
   };
