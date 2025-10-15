@@ -21,7 +21,7 @@ CRM Tracker is a modern, multi-user Customer Relationship Management system buil
   - **Queue System**: Add multiple contacts to sequences via bulk selection, tracks pending/processing/sent status
   - **Rate Limiting**: Sends max 1 email per 5 minutes (12/hour) to maintain sender reputation and avoid spam
   - **Smart Scheduling**: Sequence 1 sends on scheduled date/time, sequences 2-5 send after no reply
-  - **Stale Log Recovery**: Automatically resets stuck processing logs after 10 minutes (handles process crashes)
+  - **Stale Log Recovery**: Automatically resets stuck processing logs after 90 minutes using dedicated processingStartedAt timestamp (handles process crashes)
   - **Template Variables**: Dynamic content with [Contact_First_Name] and [Sales_Person] placeholders
   - **SendGrid Integration**: Professional email delivery with branded domain support
   - **Activity Tracking**: Monitor email sends, responses, and sequence status per contact with queue visibility
