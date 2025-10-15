@@ -128,7 +128,7 @@ export const emailSequenceLogs = pgTable("email_sequence_logs", {
   sequenceId: varchar("sequence_id").notNull().references(() => emailSequences.id),
   sequenceNumber: integer("sequence_number").notNull(), // 1-5
   sentAt: timestamp("sent_at"),
-  status: text("status").notNull().default("pending"), // pending, sent, failed, replied
+  status: text("status").notNull().default("pending"), // pending, processing, sent, failed, replied
   emailResponseReceived: text("email_response_received").default("false"), // true, false
   lastCheckedAt: timestamp("last_checked_at"),
   createdAt: timestamp("created_at").defaultNow(),

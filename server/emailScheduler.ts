@@ -76,8 +76,12 @@ function shouldSendFollowUpSequence(
   return daysSincePrevious >= (sequence.daysAfterNoReply || 0);
 }
 
+// Global lock to prevent concurrent scheduler runs
+let isProcessing = false;
+
 /**
- * Process email sequences for all qualified leads
+ * Process email sequences from the queue with rate limiting
+ * Sends max 12 emails per hour (1 email every 5 minutes)
  */
 export async function processEmailSequences(): Promise<{
   processed: number;
@@ -85,6 +89,13 @@ export async function processEmailSequences(): Promise<{
   failed: number;
   errors: string[];
 }> {
+  // Prevent concurrent runs
+  if (isProcessing) {
+    console.log("Email sequence processing already in progress, skipping this run");
+    return { processed: 0, sent: 0, failed: 0, errors: [] };
+  }
+  
+  isProcessing = true;
   console.log("Starting email sequence processing...");
   
   const stats = {
@@ -95,93 +106,120 @@ export async function processEmailSequences(): Promise<{
   };
 
   try {
-    // Get all contacts with "qualified_lead" status
-    // Note: We need to get all contacts (admin view) to process all users' sequences
-    const allContacts = await storage.getContacts(null);
-    const qualifiedLeads = allContacts.filter(contact => {
-      // Check if contact is in a deal with qualified_lead stage or later
-      // For now, we'll assume contacts are qualified if they have email
-      // You may want to add a specific field or check deals
-      return contact.email && contact.status === "active";
-    });
+    // Get all pending and processing email sequence logs (queue)
+    // Use admin view (null) to process all users' sequences
+    const allLogs = await storage.getEmailSequenceLogs(null);
+    
+    // Reset stale "processing" logs back to "pending" 
+    // (logs stuck in processing for >10 minutes, likely due to process crash)
+    const STALE_PROCESSING_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
+    const now = new Date();
+    
+    for (const log of allLogs.filter(l => l.status === "processing")) {
+      const createdAt = log.createdAt ? new Date(log.createdAt) : new Date(0);
+      const ageMs = now.getTime() - createdAt.getTime();
+      
+      if (ageMs > STALE_PROCESSING_THRESHOLD_MS) {
+        console.log(`Resetting stale processing log ${log.id} back to pending`);
+        await storage.updateEmailSequenceLog(log.id, { status: "pending" }, null);
+      }
+    }
+    
+    // Get fresh list after resetting stale logs
+    const refreshedLogs = await storage.getEmailSequenceLogs(null);
+    const pendingLogs = refreshedLogs
+      .filter(log => log.status === "pending")
+      .sort((a, b) => {
+        const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return aTime - bTime;
+      }); // FIFO
 
-    console.log(`Found ${qualifiedLeads.length} qualified leads to process`);
+    console.log(`Found ${pendingLogs.length} pending emails in queue`);
 
-    for (const contact of qualifiedLeads) {
+    // Rate limiting: max 12 emails per hour (1 every 5 minutes)
+    const MAX_EMAILS_PER_RUN = 12;
+    const DELAY_BETWEEN_EMAILS_MS = 5 * 60 * 1000; // 5 minutes
+
+    for (const log of pendingLogs.slice(0, MAX_EMAILS_PER_RUN)) {
       stats.processed++;
+      
+      try {
+        // Mark as processing immediately to prevent duplicate sends
+        await storage.updateEmailSequenceLog(log.id, { status: "processing" }, null);
+      } catch (error) {
+        console.error(`Failed to mark log ${log.id} as processing:`, error);
+        stats.errors.push(`Failed to mark log ${log.id} as processing`);
+        continue;
+      }
 
       try {
-        // Get the user's (salesperson's) email sequences
-        const userSequences = await storage.getEmailSequences(contact.userId);
-        
-        // Filter for active sequences only
-        const activeSequences = userSequences.filter(seq => seq.isActive === "true");
-        
-        if (activeSequences.length === 0) {
+        // Get the contact
+        const contact = await storage.getContact(log.contactId, null);
+        if (!contact || !contact.email) {
+          stats.errors.push(`Contact ${log.contactId} not found or has no email`);
+          await storage.updateEmailSequenceLog(log.id, { status: "failed" }, null);
+          stats.failed++;
           continue;
         }
 
-        // Get existing logs for this contact
-        const existingLogs = await storage.getEmailSequenceLogs(contact.userId, contact.id);
+        // Get the sequence
+        const sequence = await storage.getEmailSequence(log.sequenceId, null);
+        if (!sequence) {
+          stats.errors.push(`Sequence ${log.sequenceId} not found`);
+          await storage.updateEmailSequenceLog(log.id, { status: "failed" }, null);
+          stats.failed++;
+          continue;
+        }
 
-        // Get the user (salesperson) details
-        const salesperson = await storage.getUser(contact.userId);
+        // Get the salesperson
+        const salesperson = await storage.getUser(log.userId);
         if (!salesperson) {
-          stats.errors.push(`Salesperson not found for contact ${contact.id}`);
+          stats.errors.push(`Salesperson ${log.userId} not found`);
+          await storage.updateEmailSequenceLog(log.id, { status: "failed" }, null);
+          stats.failed++;
           continue;
         }
 
-        // Check each sequence (1-5) in order
-        for (const sequence of activeSequences.sort((a, b) => a.sequenceNumber - b.sequenceNumber)) {
-          let shouldSend = false;
+        // Send the email
+        const result = await sendSequenceEmail({
+          contact,
+          salesperson,
+          sequence,
+        });
 
-          if (sequence.sequenceNumber === 1) {
-            shouldSend = shouldSendSequence1(sequence, existingLogs);
-          } else {
-            shouldSend = shouldSendFollowUpSequence(sequence.sequenceNumber, sequence, existingLogs);
-          }
+        // Update log status
+        if (result.success) {
+          await storage.updateEmailSequenceLog(
+            log.id,
+            {
+              status: "sent",
+              sentAt: new Date(),
+            },
+            null
+          );
+          stats.sent++;
+          console.log(`Sent Sequence ${sequence.sequenceNumber} to ${contact.email}`);
+        } else {
+          await storage.updateEmailSequenceLog(
+            log.id,
+            { status: "failed" },
+            null
+          );
+          stats.failed++;
+          stats.errors.push(`Failed to send to ${contact.email}: ${result.error}`);
+        }
 
-          if (shouldSend) {
-            // Send the email
-            const result = await sendSequenceEmail({
-              contact,
-              salesperson,
-              sequence,
-            });
-
-            // Log the send attempt
-            if (result.success) {
-              await storage.createEmailSequenceLog({
-                contactId: contact.id,
-                sequenceId: sequence.id,
-                sequenceNumber: sequence.sequenceNumber,
-                sentAt: new Date(),
-                status: "sent",
-                emailResponseReceived: "false",
-              }, contact.userId);
-
-              stats.sent++;
-              console.log(`Sent Sequence ${sequence.sequenceNumber} to ${contact.email}`);
-            } else {
-              await storage.createEmailSequenceLog({
-                contactId: contact.id,
-                sequenceId: sequence.id,
-                sequenceNumber: sequence.sequenceNumber,
-                status: "failed",
-                emailResponseReceived: "false",
-              }, contact.userId);
-
-              stats.failed++;
-              stats.errors.push(`Failed to send Sequence ${sequence.sequenceNumber} to ${contact.email}: ${result.error}`);
-            }
-
-            // Only send one sequence per contact per run
-            break;
-          }
+        // Rate limiting: wait 5 minutes before next email
+        // Only wait if there are more emails to send
+        if (stats.processed < Math.min(pendingLogs.length, MAX_EMAILS_PER_RUN)) {
+          console.log(`Waiting 5 minutes before next email (rate limiting)...`);
+          await new Promise(resolve => setTimeout(resolve, DELAY_BETWEEN_EMAILS_MS));
         }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "Unknown error";
-        stats.errors.push(`Error processing contact ${contact.id}: ${errorMessage}`);
+        stats.errors.push(`Error processing log ${log.id}: ${errorMessage}`);
+        await storage.updateEmailSequenceLog(log.id, { status: "failed" }, null);
         stats.failed++;
       }
     }
@@ -191,6 +229,9 @@ export async function processEmailSequences(): Promise<{
   } catch (error) {
     console.error("Fatal error in email sequence processing:", error);
     throw error;
+  } finally {
+    // Release the lock
+    isProcessing = false;
   }
 }
 
