@@ -135,6 +135,20 @@ export const emailSequenceLogs = pgTable("email_sequence_logs", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const inboxMessages = pgTable("inbox_messages", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  contactId: varchar("contact_id").references(() => contacts.id),
+  emailSequenceLogId: varchar("email_sequence_log_id").references(() => emailSequenceLogs.id),
+  from: text("from").notNull(),
+  subject: text("subject").notNull(),
+  bodyText: text("body_text"),
+  bodyHtml: text("body_html"),
+  isRead: text("is_read").notNull().default("false"), // true, false
+  receivedAt: timestamp("received_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 export const insertContactGroupSchema = createInsertSchema(contactGroups).omit({
   id: true,
   userId: true,
@@ -198,6 +212,13 @@ export const insertEmailSequenceLogSchema = createInsertSchema(emailSequenceLogs
   createdAt: true,
 });
 
+export const insertInboxMessageSchema = createInsertSchema(inboxMessages).omit({
+  id: true,
+  userId: true,
+  createdAt: true,
+  receivedAt: true,
+});
+
 export type ContactGroup = typeof contactGroups.$inferSelect;
 export type InsertContactGroup = z.infer<typeof insertContactGroupSchema>;
 export type Contact = typeof contacts.$inferSelect;
@@ -212,5 +233,7 @@ export type EmailSequence = typeof emailSequences.$inferSelect;
 export type InsertEmailSequence = z.infer<typeof insertEmailSequenceSchema>;
 export type EmailSequenceLog = typeof emailSequenceLogs.$inferSelect;
 export type InsertEmailSequenceLog = z.infer<typeof insertEmailSequenceLogSchema>;
+export type InboxMessage = typeof inboxMessages.$inferSelect;
+export type InsertInboxMessage = z.infer<typeof insertInboxMessageSchema>;
 export type User = typeof users.$inferSelect;
 export type UpsertUser = typeof users.$inferInsert;
