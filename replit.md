@@ -11,16 +11,20 @@ CRM Tracker is a modern, multi-user Customer Relationship Management system buil
 - **Contact Management**: Track customer information, companies, and relationships with duplicate detection
   - **Duplicate Detection**: Automatically identifies duplicates by normalized phone number, email, or first+last name combination
   - **CSV/Excel Import**: Bulk upload contacts from CSV or Excel files with validation, error reporting, and duplicate resolution
+  - **Contact Groups/Campaigns**: Organize contacts into groups for targeted outreach with CSV import support
 - **Deal Pipeline**: Manage sales opportunities through customizable stages
   - **Multiple Views**: Switch between detailed card view and compact table view
   - **Smart Sorting**: Sortable columns with default ordering (open deals first, newest first)
 - **Task Management**: Organize follow-ups and action items with priorities and due dates
-- **Email Sequences**: Automated email campaigns for qualified leads (requires Reserved VM deployment)
+- **Email Sequences**: Automated email campaigns with queue system and rate limiting (requires Reserved VM deployment)
   - **5-Sequence System**: Create up to 5 automated email sequences per salesperson
+  - **Queue System**: Add multiple contacts to sequences via bulk selection, tracks pending/processing/sent status
+  - **Rate Limiting**: Sends max 1 email per 5 minutes (12/hour) to maintain sender reputation and avoid spam
   - **Smart Scheduling**: Sequence 1 sends on scheduled date/time, sequences 2-5 send after no reply
+  - **Stale Log Recovery**: Automatically resets stuck processing logs after 10 minutes (handles process crashes)
   - **Template Variables**: Dynamic content with [Contact_First_Name] and [Sales_Person] placeholders
   - **SendGrid Integration**: Professional email delivery with branded domain support
-  - **Activity Tracking**: Monitor email sends, responses, and sequence status per contact
+  - **Activity Tracking**: Monitor email sends, responses, and sequence status per contact with queue visibility
 - **Analytics Dashboard**: Real-time insights into sales performance and pipeline health
   - **Salesperson View**: Personal metrics (revenue, pipeline, conversion rate, task completion)
   - **Admin View**: Salesperson rankings by deals closed, total value, and win rate
@@ -58,12 +62,13 @@ Preferred communication style: Simple, everyday language.
 - **Schema Definition**: Centralized schema definitions in `shared/schema.ts` with Zod validation
 
 ### Key Data Models
-- **Contacts**: Customer information with personal and business details
+- **Contacts**: Customer information with personal and business details, optional group assignment
+- **Contact Groups**: Organize contacts into named groups/campaigns for targeted outreach
 - **Deals**: Sales opportunities with pipeline stages and value tracking
 - **Tasks**: Action items with priorities, due dates, and completion status
 - **Activities**: Audit trail for all system actions and interactions
 - **Email Sequences**: Automated email campaign templates with scheduling rules (5 sequences per user)
-- **Email Sequence Logs**: Tracking of sent emails, delivery status, and response monitoring
+- **Email Sequence Logs**: Queue system tracking (pending → processing → sent/failed), with delivery status and response monitoring
 
 ### Authentication and Authorization
 - **Authentication Provider**: Replit Auth (OpenID Connect) with support for Google, GitHub, X, Apple, and email/password login

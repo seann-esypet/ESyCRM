@@ -111,17 +111,19 @@ export async function processEmailSequences(): Promise<{
     const allLogs = await storage.getEmailSequenceLogs(null);
     
     // Reset stale "processing" logs back to "pending" 
-    // (logs stuck in processing for >10 minutes, likely due to process crash)
-    const STALE_PROCESSING_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
+    // (logs stuck in processing for >90 minutes, likely due to process crash)
+    // Threshold is 90 min because a full scheduler run can take ~60 min (12 emails * 5 min each)
+    const STALE_PROCESSING_THRESHOLD_MS = 90 * 60 * 1000; // 90 minutes
     const now = new Date();
     
     for (const log of allLogs.filter(l => l.status === "processing")) {
-      const createdAt = log.createdAt ? new Date(log.createdAt) : new Date(0);
-      const ageMs = now.getTime() - createdAt.getTime();
+      // Use processingStartedAt if available, otherwise fall back to createdAt
+      const processingStarted = log.processingStartedAt ? new Date(log.processingStartedAt) : (log.createdAt ? new Date(log.createdAt) : new Date(0));
+      const ageMs = now.getTime() - processingStarted.getTime();
       
       if (ageMs > STALE_PROCESSING_THRESHOLD_MS) {
-        console.log(`Resetting stale processing log ${log.id} back to pending`);
-        await storage.updateEmailSequenceLog(log.id, { status: "pending" }, null);
+        console.log(`Resetting stale processing log ${log.id} back to pending (stuck for ${Math.round(ageMs / 60000)} minutes)`);
+        await storage.updateEmailSequenceLog(log.id, { status: "pending", processingStartedAt: null }, null);
       }
     }
     
@@ -146,7 +148,11 @@ export async function processEmailSequences(): Promise<{
       
       try {
         // Mark as processing immediately to prevent duplicate sends
-        await storage.updateEmailSequenceLog(log.id, { status: "processing" }, null);
+        // Set processingStartedAt to track when processing began (for stale detection)
+        await storage.updateEmailSequenceLog(log.id, { 
+          status: "processing",
+          processingStartedAt: new Date()
+        }, null);
       } catch (error) {
         console.error(`Failed to mark log ${log.id} as processing:`, error);
         stats.errors.push(`Failed to mark log ${log.id} as processing`);

@@ -131,6 +131,7 @@ export const emailSequenceLogs = pgTable("email_sequence_logs", {
   status: text("status").notNull().default("pending"), // pending, processing, sent, failed, replied
   emailResponseReceived: text("email_response_received").default("false"), // true, false
   lastCheckedAt: timestamp("last_checked_at"),
+  processingStartedAt: timestamp("processing_started_at"), // Track when log transitions to "processing"
   createdAt: timestamp("created_at").defaultNow(),
 });
 
