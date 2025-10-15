@@ -1,7 +1,9 @@
 // From Replit Auth and Database blueprints
 import { 
   type Contact, 
-  type InsertContact, 
+  type InsertContact,
+  type ContactGroup,
+  type InsertContactGroup,
   type Deal, 
   type InsertDeal, 
   type Task, 
@@ -16,6 +18,7 @@ import {
   type InsertEmailSequenceLog,
   users,
   contacts,
+  contactGroups,
   deals,
   tasks,
   activities,
@@ -31,6 +34,13 @@ export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   upsertUser(user: UpsertUser): Promise<User>;
   getAllUsers(): Promise<User[]>;
+  
+  // Contact Groups (userId can be null for admins to get all data)
+  getContactGroups(userId: string | null): Promise<ContactGroup[]>;
+  getContactGroup(id: string, userId: string | null): Promise<ContactGroup | undefined>;
+  createContactGroup(group: InsertContactGroup, userId: string): Promise<ContactGroup>;
+  updateContactGroup(id: string, group: Partial<InsertContactGroup>, userId: string | null): Promise<ContactGroup | undefined>;
+  deleteContactGroup(id: string, userId: string | null): Promise<boolean>;
   
   // Contacts (userId can be null for admins to get all data)
   getContacts(userId: string | null): Promise<Contact[]>;
@@ -101,6 +111,81 @@ export class DatabaseStorage implements IStorage {
 
   async getAllUsers(): Promise<User[]> {
     return await db.select().from(users);
+  }
+
+  // Contact Groups
+  async getContactGroups(userId: string | null): Promise<ContactGroup[]> {
+    if (userId === null) {
+      // Admin: get all groups
+      return await db.select().from(contactGroups);
+    }
+    return await db.select().from(contactGroups).where(eq(contactGroups.userId, userId));
+  }
+
+  async getContactGroup(id: string, userId: string | null): Promise<ContactGroup | undefined> {
+    if (userId === null) {
+      // Admin: get any group by ID
+      const [group] = await db.select().from(contactGroups).where(eq(contactGroups.id, id));
+      return group;
+    }
+    const [group] = await db.select().from(contactGroups)
+      .where(and(eq(contactGroups.id, id), eq(contactGroups.userId, userId)));
+    return group;
+  }
+
+  async createContactGroup(insertGroup: InsertContactGroup, userId: string): Promise<ContactGroup> {
+    const [group] = await db
+      .insert(contactGroups)
+      .values({ ...insertGroup, userId })
+      .returning();
+    return group;
+  }
+
+  async updateContactGroup(id: string, updateData: Partial<InsertContactGroup>, userId: string | null): Promise<ContactGroup | undefined> {
+    if (userId === null) {
+      // Admin: update any group
+      const [updated] = await db
+        .update(contactGroups)
+        .set(updateData)
+        .where(eq(contactGroups.id, id))
+        .returning();
+      return updated;
+    }
+    const [updated] = await db
+      .update(contactGroups)
+      .set(updateData)
+      .where(and(eq(contactGroups.id, id), eq(contactGroups.userId, userId)))
+      .returning();
+    return updated;
+  }
+
+  async deleteContactGroup(id: string, userId: string | null): Promise<boolean> {
+    if (userId === null) {
+      // Admin: clear groupId for all contacts in this group, then delete group
+      await db.update(contacts)
+        .set({ groupId: null })
+        .where(eq(contacts.groupId, id));
+      
+      const result = await db.delete(contactGroups).where(eq(contactGroups.id, id));
+      return result.rowCount ? result.rowCount > 0 : false;
+    }
+    
+    // Salesperson: verify ownership first, then clear groupId only for user's contacts, then delete
+    const [group] = await db.select().from(contactGroups)
+      .where(and(eq(contactGroups.id, id), eq(contactGroups.userId, userId)));
+    
+    if (!group) {
+      return false; // Group not found or user doesn't own it
+    }
+    
+    // Only clear groupId for contacts owned by this user
+    await db.update(contacts)
+      .set({ groupId: null })
+      .where(and(eq(contacts.groupId, id), eq(contacts.userId, userId)));
+    
+    const result = await db.delete(contactGroups)
+      .where(and(eq(contactGroups.id, id), eq(contactGroups.userId, userId)));
+    return result.rowCount ? result.rowCount > 0 : false;
   }
 
   // Contacts

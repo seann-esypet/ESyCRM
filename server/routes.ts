@@ -3,7 +3,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { setupAuth, isAuthenticated, isAdmin } from "./replitAuth";
-import { insertContactSchema, insertDealSchema, insertTaskSchema, insertEmailSequenceSchema, type InsertContact } from "@shared/schema";
+import { insertContactSchema, insertContactGroupSchema, insertDealSchema, insertTaskSchema, insertEmailSequenceSchema, type InsertContact } from "@shared/schema";
 import { z } from "zod";
 import Papa from "papaparse";
 
@@ -212,6 +212,74 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error importing contacts:", error);
       res.status(500).json({ message: "Failed to import contacts" });
+    }
+  });
+
+  // Contact Groups routes - All protected with isAuthenticated
+  app.get("/api/contact-groups", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const groups = await storage.getContactGroups(userId);
+      res.json(groups);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch contact groups" });
+    }
+  });
+
+  app.get("/api/contact-groups/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const group = await storage.getContactGroup(req.params.id, userId);
+      if (!group) {
+        return res.status(404).json({ message: "Contact group not found" });
+      }
+      res.json(group);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch contact group" });
+    }
+  });
+
+  app.post("/api/contact-groups", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const groupData = insertContactGroupSchema.parse(req.body);
+      const group = await storage.createContactGroup(groupData, userId);
+      res.status(201).json(group);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid group data", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to create contact group" });
+    }
+  });
+
+  app.put("/api/contact-groups/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const groupData = insertContactGroupSchema.partial().parse(req.body);
+      const group = await storage.updateContactGroup(req.params.id, groupData, userId);
+      if (!group) {
+        return res.status(404).json({ message: "Contact group not found" });
+      }
+      res.json(group);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid group data", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to update contact group" });
+    }
+  });
+
+  app.delete("/api/contact-groups/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const deleted = await storage.deleteContactGroup(req.params.id, userId);
+      if (!deleted) {
+        return res.status(404).json({ message: "Contact group not found" });
+      }
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ message: "Failed to delete contact group" });
     }
   });
 
