@@ -37,11 +37,13 @@ ESyCRM is a modern, multi-user Customer Relationship Management system built wit
 - **Admin Data Export**: CSV export functionality for contacts, deals, and tasks (admin-only)
 - **Admin User Management**: Manage system users and their roles (admin-only)
   - **User List**: View all users in the system with their details
+  - **Create New Users**: Admins can manually create new salesperson/admin accounts with email, first name, and last name
+  - **Automatic ID Reconciliation**: When manually-created users first log in via Replit Auth, their temporary ID is automatically updated to their real auth ID while preserving all data and foreign key relationships (uses ON UPDATE CASCADE)
   - **Role Management**: Change user roles between salesperson and admin
   - **Self-Protection**: Admins cannot change their own role (enforced server-side)
 - **Profile Settings**: Personal settings management for salespeople
+  - **Editable Account Information**: Users can update their first name, last name, and work email
   - **Work Email Configuration**: Set professional email address (e.g., john@esypet.com) used as sender for email sequences
-  - **Account Information**: View Replit account details and user role
 - **Secure Authentication**: Login with Google, GitHub, or email/password via Replit Auth
 
 The system follows a monorepo structure with shared TypeScript schemas and utilities, ensuring type safety across the entire application stack. Data access is automatically controlled based on user role: salespeople see only their own data, while administrators have full system visibility.
