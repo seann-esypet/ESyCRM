@@ -16,7 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { Users, Shield, UserCog, Plus, Loader2 } from "lucide-react";
+import { Users, Shield, UserCog, Plus, Loader2, Copy, Check } from "lucide-react";
 import { format } from "date-fns";
 
 const createUserSchema = z.object({
@@ -45,6 +45,9 @@ export default function AdminUsers() {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  const [isOnboardingDialogOpen, setIsOnboardingDialogOpen] = useState(false);
+  const [newUserEmail, setNewUserEmail] = useState("");
+  const [copied, setCopied] = useState(false);
 
   const { data: users, isLoading, isError, error } = useQuery<User[]>({
     queryKey: ["/api/admin/users"],
@@ -97,16 +100,15 @@ export default function AdminUsers() {
   const createUserMutation = useMutation({
     mutationFn: async (data: CreateUserFormData) => {
       const response = await apiRequest("POST", "/api/admin/users", data);
-      return response.json();
+      return { ...await response.json(), submittedEmail: data.email };
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
-      toast({
-        title: "User created",
-        description: "New user has been added successfully.",
-      });
       setIsCreateDialogOpen(false);
       createForm.reset();
+      setNewUserEmail(data.submittedEmail);
+      setIsOnboardingDialogOpen(true);
+      setCopied(false);
     },
     onError: (error: Error) => {
       toast({
@@ -540,6 +542,68 @@ export default function AdminUsers() {
           )}
         </CardContent>
       </Card>
+
+      {/* Onboarding Instructions Dialog */}
+      <Dialog open={isOnboardingDialogOpen} onOpenChange={setIsOnboardingDialogOpen}>
+        <DialogContent className="sm:max-w-lg" data-testid="dialog-onboarding-instructions">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Check className="h-5 w-5 text-green-500" />
+              User Created Successfully
+            </DialogTitle>
+            <DialogDescription>
+              Send these instructions to your new user so they can log in.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="bg-muted p-4 rounded-lg text-sm space-y-2">
+              <p className="font-medium">Instructions for {newUserEmail}:</p>
+              <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
+                <li>Go to <span className="font-medium text-foreground">{window.location.origin}</span></li>
+                <li>Click "Log in" and choose "Continue with email"</li>
+                <li>Enter your email: <span className="font-medium text-foreground">{newUserEmail}</span></li>
+                <li>You'll receive an email from Replit to set your password</li>
+                <li>Complete the setup and log in</li>
+              </ol>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                className="flex-1"
+                data-testid="button-copy-instructions"
+                onClick={() => {
+                  const instructions = `Welcome! Here's how to access your account:\n\n1. Go to ${window.location.origin}\n2. Click "Log in" and choose "Continue with email"\n3. Enter your email: ${newUserEmail}\n4. You'll receive an email from Replit to set your password\n5. Complete the setup and log in`;
+                  navigator.clipboard.writeText(instructions);
+                  setCopied(true);
+                  toast({
+                    title: "Copied!",
+                    description: "Instructions copied to clipboard.",
+                  });
+                }}
+              >
+                {copied ? (
+                  <>
+                    <Check className="h-4 w-4 mr-2" />
+                    Copied
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-4 w-4 mr-2" />
+                    Copy Instructions
+                  </>
+                )}
+              </Button>
+              <Button
+                className="flex-1"
+                data-testid="button-close-onboarding"
+                onClick={() => setIsOnboardingDialogOpen(false)}
+              >
+                Done
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
