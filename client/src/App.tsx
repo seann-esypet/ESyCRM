@@ -15,6 +15,7 @@ import Commissions from "@/pages/commissions";
 import EmailSequences from "@/pages/email-sequences";
 import Inbox from "@/pages/inbox";
 import Settings from "@/pages/settings";
+import AdminUsers from "@/pages/admin-users";
 import Sidebar from "@/components/layout/sidebar";
 
 // From Replit Auth blueprint - Conditional routing based on auth state
@@ -41,6 +42,7 @@ function Router() {
           <Route path="/commissions" component={Commissions} />
           <Route path="/reports" component={Reports} />
           <Route path="/settings" component={Settings} />
+          <Route path="/admin/users" component={AdminUsers} />
           <Route component={NotFound} />
         </Switch>
       </div>

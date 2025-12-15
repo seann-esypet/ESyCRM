@@ -38,6 +38,7 @@ export interface IStorage {
   upsertUser(user: UpsertUser): Promise<User>;
   updateUserProfile(id: string, profile: Partial<Pick<User, 'workEmail'>>): Promise<User | undefined>;
   getAllUsers(): Promise<User[]>;
+  updateUserRole(id: string, role: string): Promise<User | undefined>;
   
   // Contact Groups (userId can be null for admins to get all data)
   getContactGroups(userId: string | null): Promise<ContactGroup[]>;
@@ -131,6 +132,18 @@ export class DatabaseStorage implements IStorage {
       .update(users)
       .set({
         ...profile,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, id))
+      .returning();
+    return updated;
+  }
+
+  async updateUserRole(id: string, role: string): Promise<User | undefined> {
+    const [updated] = await db
+      .update(users)
+      .set({
+        role,
         updatedAt: new Date(),
       })
       .where(eq(users.id, id))

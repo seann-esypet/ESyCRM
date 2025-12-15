@@ -12,7 +12,8 @@ import {
   Mail,
   Inbox as InboxIcon,
   Settings as SettingsIcon,
-  LogOut
+  LogOut,
+  UserCog
 } from "lucide-react";
 
 const navigation = [
@@ -25,6 +26,10 @@ const navigation = [
   { name: "Commissions", href: "/commissions", icon: DollarSign },
   { name: "Reports", href: "/reports", icon: TrendingUp },
   { name: "Settings", href: "/settings", icon: SettingsIcon },
+];
+
+const adminNavigation = [
+  { name: "Users", href: "/admin/users", icon: UserCog },
 ];
 
 export default function Sidebar() {
@@ -70,6 +75,37 @@ export default function Sidebar() {
             </Link>
           );
         })}
+        
+        {user?.role === "admin" && (
+          <>
+            <div className="pt-4 pb-2">
+              <p className="px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                Admin
+              </p>
+            </div>
+            {adminNavigation.map((item) => {
+              const Icon = item.icon;
+              const isActive = location === item.href;
+              
+              return (
+                <Link
+                  key={item.name}
+                  href={item.href}
+                  className={cn(
+                    "flex items-center space-x-3 px-3 py-2 rounded-md transition-colors font-medium",
+                    isActive
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                  )}
+                  data-testid={`nav-${item.name.toLowerCase()}`}
+                >
+                  <Icon className="h-5 w-5" />
+                  <span>{item.name}</span>
+                </Link>
+              );
+            })}
+          </>
+        )}
       </nav>
 
       {/* User Profile */}
