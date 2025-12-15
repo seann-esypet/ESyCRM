@@ -14,6 +14,7 @@ import { Loader2 } from "lucide-react";
 const profileSchema = z.object({
   firstName: z.string().optional(),
   lastName: z.string().optional(),
+  phone: z.string().optional(),
   workEmail: z.string().email("Please enter a valid email address").optional().or(z.literal("")),
 });
 
@@ -28,6 +29,7 @@ export default function Settings() {
     workEmail?: string;
     firstName?: string;
     lastName?: string;
+    phone?: string;
     role: string;
   }>({
     queryKey: ["/api/auth/user"],
@@ -38,6 +40,7 @@ export default function Settings() {
     defaultValues: {
       firstName: "",
       lastName: "",
+      phone: "",
       workEmail: "",
     },
   });
@@ -47,6 +50,7 @@ export default function Settings() {
       form.reset({
         firstName: user.firstName || "",
         lastName: user.lastName || "",
+        phone: user.phone || "",
         workEmail: user.workEmail || "",
       });
     }
@@ -139,6 +143,23 @@ export default function Settings() {
                   <label className="text-sm font-medium">Role</label>
                   <p className="text-sm text-muted-foreground capitalize" data-testid="text-account-role">{user?.role}</p>
                 </div>
+                <FormField
+                  control={form.control}
+                  name="phone"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Phone</FormLabel>
+                      <FormControl>
+                        <Input 
+                          placeholder="(555) 123-4567" 
+                          {...field} 
+                          data-testid="input-phone"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
                 <FormField
                   control={form.control}
                   name="workEmail"

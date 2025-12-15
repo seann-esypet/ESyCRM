@@ -21,6 +21,7 @@ export const users = pgTable("users", {
   workEmail: varchar("work_email"), // Professional email for sending sequences (e.g., john@esypet.com)
   firstName: varchar("first_name"),
   lastName: varchar("last_name"),
+  phone: varchar("phone"),
   profileImageUrl: varchar("profile_image_url"),
   role: text("role").notNull().default("salesperson"), // salesperson, admin
   createdAt: timestamp("created_at").defaultNow(),

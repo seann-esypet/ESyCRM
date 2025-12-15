@@ -40,6 +40,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         workEmail: z.string().email().optional().or(z.literal("")),
         firstName: z.string().optional(),
         lastName: z.string().optional(),
+        phone: z.string().optional(),
       });
       const profileData = profileSchema.parse(req.body);
       const updatedUser = await storage.updateUserProfile(userId, profileData);
@@ -101,6 +102,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         email: z.string().email(),
         firstName: z.string().optional(),
         lastName: z.string().optional(),
+        phone: z.string().optional(),
         role: z.enum(["salesperson", "admin"]).optional(),
       });
       const userData = createUserSchema.parse(req.body);
@@ -118,6 +120,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       console.error("Error creating user:", error);
       res.status(500).json({ message: "Failed to create user" });
+    }
+  });
+
+  app.patch('/api/admin/users/:id', isAdmin, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const updateUserSchema = z.object({
+        email: z.string().email().optional(),
+        firstName: z.string().optional(),
+        lastName: z.string().optional(),
+        phone: z.string().optional(),
+        workEmail: z.string().email().optional().nullable(),
+        role: z.enum(["salesperson", "admin"]).optional(),
+      });
+      const userData = updateUserSchema.parse(req.body);
+      
+      // Check if email is being changed and if it conflicts with another user
+      if (userData.email) {
+        const existingUser = await storage.getUserByEmail(userData.email);
+        if (existingUser && existingUser.id !== id) {
+          return res.status(400).json({ message: "A user with this email already exists" });
+        }
+      }
+      
+      const updatedUser = await storage.updateUserAdmin(id, {
+        ...userData,
+        workEmail: userData.workEmail === null ? undefined : userData.workEmail,
+      });
+      if (!updatedUser) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      res.json(updatedUser);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid user data", errors: error.errors });
+      }
+      console.error("Error updating user:", error);
+      res.status(500).json({ message: "Failed to update user" });
     }
   });
 

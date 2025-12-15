@@ -23,26 +23,52 @@ const createUserSchema = z.object({
   email: z.string().email("Please enter a valid email address"),
   firstName: z.string().optional(),
   lastName: z.string().optional(),
+  phone: z.string().optional(),
+  role: z.enum(["salesperson", "admin"]),
+});
+
+const editUserSchema = z.object({
+  email: z.string().email("Please enter a valid email address"),
+  firstName: z.string().optional(),
+  lastName: z.string().optional(),
+  phone: z.string().optional(),
+  workEmail: z.string().email("Please enter a valid email address").optional().or(z.literal("")),
   role: z.enum(["salesperson", "admin"]),
 });
 
 type CreateUserFormData = z.infer<typeof createUserSchema>;
+type EditUserFormData = z.infer<typeof editUserSchema>;
 
 export default function AdminUsers() {
   const { user: currentUser } = useAuth();
   const { toast } = useToast();
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [selectedUser, setSelectedUser] = useState<User | null>(null);
 
   const { data: users, isLoading, isError, error } = useQuery<User[]>({
     queryKey: ["/api/admin/users"],
   });
 
-  const form = useForm<CreateUserFormData>({
+  const createForm = useForm<CreateUserFormData>({
     resolver: zodResolver(createUserSchema),
     defaultValues: {
       email: "",
       firstName: "",
       lastName: "",
+      phone: "",
+      role: "salesperson",
+    },
+  });
+
+  const editForm = useForm<EditUserFormData>({
+    resolver: zodResolver(editUserSchema),
+    defaultValues: {
+      email: "",
+      firstName: "",
+      lastName: "",
+      phone: "",
+      workEmail: "",
       role: "salesperson",
     },
   });
@@ -79,13 +105,39 @@ export default function AdminUsers() {
         title: "User created",
         description: "New user has been added successfully.",
       });
-      setIsDialogOpen(false);
-      form.reset();
+      setIsCreateDialogOpen(false);
+      createForm.reset();
     },
     onError: (error: Error) => {
       toast({
         title: "Error",
         description: error.message || "Failed to create user",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const updateUserMutation = useMutation({
+    mutationFn: async ({ userId, data }: { userId: string; data: EditUserFormData }) => {
+      const response = await apiRequest("PATCH", `/api/admin/users/${userId}`, {
+        ...data,
+        workEmail: data.workEmail || null,
+      });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      toast({
+        title: "User updated",
+        description: "User information has been updated successfully.",
+      });
+      setIsEditDialogOpen(false);
+      setSelectedUser(null);
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update user",
         variant: "destructive",
       });
     },
@@ -103,8 +155,27 @@ export default function AdminUsers() {
     updateRoleMutation.mutate({ userId, role: newRole });
   };
 
-  const onSubmit = (data: CreateUserFormData) => {
+  const onCreateSubmit = (data: CreateUserFormData) => {
     createUserMutation.mutate(data);
+  };
+
+  const onEditSubmit = (data: EditUserFormData) => {
+    if (selectedUser) {
+      updateUserMutation.mutate({ userId: selectedUser.id, data });
+    }
+  };
+
+  const openEditDialog = (user: User) => {
+    setSelectedUser(user);
+    editForm.reset({
+      email: user.email || "",
+      firstName: user.firstName || "",
+      lastName: user.lastName || "",
+      phone: user.phone || "",
+      workEmail: user.workEmail || "",
+      role: (user.role as "salesperson" | "admin") || "salesperson",
+    });
+    setIsEditDialogOpen(true);
   };
 
   if (currentUser?.role !== "admin") {
@@ -132,7 +203,7 @@ export default function AdminUsers() {
           </h1>
           <p className="text-muted-foreground mt-1">Manage system users and their roles</p>
         </div>
-        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+        <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
           <DialogTrigger asChild>
             <Button data-testid="button-add-user">
               <Plus className="h-4 w-4 mr-2" />
@@ -146,10 +217,10 @@ export default function AdminUsers() {
                 Create a new user account. They will be able to log in using Replit Auth.
               </DialogDescription>
             </DialogHeader>
-            <Form {...form}>
-              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            <Form {...createForm}>
+              <form onSubmit={createForm.handleSubmit(onCreateSubmit)} className="space-y-4">
                 <FormField
-                  control={form.control}
+                  control={createForm.control}
                   name="email"
                   render={({ field }) => (
                     <FormItem>
@@ -163,7 +234,7 @@ export default function AdminUsers() {
                 />
                 <div className="grid grid-cols-2 gap-4">
                   <FormField
-                    control={form.control}
+                    control={createForm.control}
                     name="firstName"
                     render={({ field }) => (
                       <FormItem>
@@ -176,7 +247,7 @@ export default function AdminUsers() {
                     )}
                   />
                   <FormField
-                    control={form.control}
+                    control={createForm.control}
                     name="lastName"
                     render={({ field }) => (
                       <FormItem>
@@ -190,7 +261,20 @@ export default function AdminUsers() {
                   />
                 </div>
                 <FormField
-                  control={form.control}
+                  control={createForm.control}
+                  name="phone"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Phone</FormLabel>
+                      <FormControl>
+                        <Input placeholder="(555) 123-4567" {...field} data-testid="input-new-user-phone" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={createForm.control}
                   name="role"
                   render={({ field }) => (
                     <FormItem>
@@ -211,7 +295,7 @@ export default function AdminUsers() {
                   )}
                 />
                 <div className="flex justify-end gap-2">
-                  <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>
+                  <Button type="button" variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
                     Cancel
                   </Button>
                   <Button type="submit" disabled={createUserMutation.isPending} data-testid="button-create-user">
@@ -225,6 +309,126 @@ export default function AdminUsers() {
         </Dialog>
       </div>
 
+      {/* Edit User Dialog */}
+      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit User</DialogTitle>
+            <DialogDescription>
+              Update user information and settings.
+            </DialogDescription>
+          </DialogHeader>
+          <Form {...editForm}>
+            <form onSubmit={editForm.handleSubmit(onEditSubmit)} className="space-y-4">
+              <FormField
+                control={editForm.control}
+                name="email"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Email *</FormLabel>
+                    <FormControl>
+                      <Input placeholder="user@example.com" {...field} data-testid="input-edit-user-email" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={editForm.control}
+                  name="firstName"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>First Name</FormLabel>
+                      <FormControl>
+                        <Input placeholder="John" {...field} data-testid="input-edit-user-firstname" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={editForm.control}
+                  name="lastName"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Last Name</FormLabel>
+                      <FormControl>
+                        <Input placeholder="Doe" {...field} data-testid="input-edit-user-lastname" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+              <FormField
+                control={editForm.control}
+                name="phone"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Phone</FormLabel>
+                    <FormControl>
+                      <Input placeholder="(555) 123-4567" {...field} data-testid="input-edit-user-phone" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={editForm.control}
+                name="workEmail"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Work Email (for sending sequences)</FormLabel>
+                    <FormControl>
+                      <Input placeholder="john@company.com" {...field} data-testid="input-edit-user-workemail" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={editForm.control}
+                name="role"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Role</FormLabel>
+                    <Select 
+                      onValueChange={field.onChange} 
+                      value={field.value}
+                      disabled={selectedUser?.id === currentUser?.id}
+                    >
+                      <FormControl>
+                        <SelectTrigger data-testid="select-edit-user-role">
+                          <SelectValue placeholder="Select a role" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="salesperson">Salesperson</SelectItem>
+                        <SelectItem value="admin">Admin</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {selectedUser?.id === currentUser?.id && (
+                      <p className="text-xs text-muted-foreground">You cannot change your own role</p>
+                    )}
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <div className="flex justify-end gap-2">
+                <Button type="button" variant="outline" onClick={() => setIsEditDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={updateUserMutation.isPending} data-testid="button-update-user">
+                  {updateUserMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Save Changes
+                </Button>
+              </div>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
+
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -232,7 +436,7 @@ export default function AdminUsers() {
             All Users
           </CardTitle>
           <CardDescription>
-            View all users in the system and manage their roles
+            View all users in the system and manage their roles. Click on a user's name to edit their information.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -256,6 +460,7 @@ export default function AdminUsers() {
                 <TableRow>
                   <TableHead>User</TableHead>
                   <TableHead>Email</TableHead>
+                  <TableHead>Phone</TableHead>
                   <TableHead>Role</TableHead>
                   <TableHead>Joined</TableHead>
                 </TableRow>
@@ -277,19 +482,26 @@ export default function AdminUsers() {
                           </div>
                         )}
                         <div>
-                          <p className="font-medium" data-testid={`text-user-name-${user.id}`}>
+                          <button
+                            onClick={() => openEditDialog(user)}
+                            className="font-medium text-primary hover:underline cursor-pointer text-left"
+                            data-testid={`link-user-name-${user.id}`}
+                          >
                             {user.firstName && user.lastName
                               ? `${user.firstName} ${user.lastName}`
                               : user.email || "Unknown User"}
-                          </p>
+                          </button>
                           {user.id === currentUser?.id && (
-                            <Badge variant="secondary" className="text-xs">You</Badge>
+                            <Badge variant="secondary" className="text-xs ml-2">You</Badge>
                           )}
                         </div>
                       </div>
                     </TableCell>
                     <TableCell data-testid={`text-user-email-${user.id}`}>
                       {user.email || "-"}
+                    </TableCell>
+                    <TableCell data-testid={`text-user-phone-${user.id}`}>
+                      {user.phone || "-"}
                     </TableCell>
                     <TableCell>
                       <Select
@@ -318,7 +530,7 @@ export default function AdminUsers() {
                 ))}
                 {users?.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
+                    <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
                       No users found
                     </TableCell>
                   </TableRow>

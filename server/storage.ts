@@ -37,8 +37,9 @@ export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
   upsertUser(user: UpsertUser): Promise<User>;
-  createUser(userData: { email: string; firstName?: string; lastName?: string; role?: string }): Promise<User>;
-  updateUserProfile(id: string, profile: Partial<Pick<User, 'workEmail' | 'firstName' | 'lastName'>>): Promise<User | undefined>;
+  createUser(userData: { email: string; firstName?: string; lastName?: string; phone?: string; role?: string }): Promise<User>;
+  updateUserProfile(id: string, profile: Partial<Pick<User, 'workEmail' | 'firstName' | 'lastName' | 'phone'>>): Promise<User | undefined>;
+  updateUserAdmin(id: string, userData: { email?: string; firstName?: string; lastName?: string; phone?: string; workEmail?: string; role?: string }): Promise<User | undefined>;
   getAllUsers(): Promise<User[]>;
   updateUserRole(id: string, role: string): Promise<User | undefined>;
   
@@ -155,7 +156,7 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
-  async createUser(userData: { email: string; firstName?: string; lastName?: string; role?: string }): Promise<User> {
+  async createUser(userData: { email: string; firstName?: string; lastName?: string; phone?: string; role?: string }): Promise<User> {
     const id = `manual_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const [user] = await db
       .insert(users)
@@ -164,6 +165,7 @@ export class DatabaseStorage implements IStorage {
         email: userData.email,
         firstName: userData.firstName || null,
         lastName: userData.lastName || null,
+        phone: userData.phone || null,
         role: userData.role || "salesperson",
       })
       .returning();
@@ -174,11 +176,23 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(users);
   }
 
-  async updateUserProfile(id: string, profile: Partial<Pick<User, 'workEmail' | 'firstName' | 'lastName'>>): Promise<User | undefined> {
+  async updateUserProfile(id: string, profile: Partial<Pick<User, 'workEmail' | 'firstName' | 'lastName' | 'phone'>>): Promise<User | undefined> {
     const [updated] = await db
       .update(users)
       .set({
         ...profile,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, id))
+      .returning();
+    return updated;
+  }
+
+  async updateUserAdmin(id: string, userData: { email?: string; firstName?: string; lastName?: string; phone?: string; workEmail?: string; role?: string }): Promise<User | undefined> {
+    const [updated] = await db
+      .update(users)
+      .set({
+        ...userData,
         updatedAt: new Date(),
       })
       .where(eq(users.id, id))
