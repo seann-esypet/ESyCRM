@@ -35,6 +35,10 @@ ESyCRM is a modern, multi-user Customer Relationship Management system built wit
   - **Salesperson View**: Personal metrics (revenue, pipeline, conversion rate, task completion)
   - **Admin View**: Salesperson rankings by deals closed, total value, and win rate
 - **Admin Data Export**: CSV export functionality for contacts, deals, and tasks (admin-only)
+- **Admin User Management**: Manage system users and their roles (admin-only)
+  - **User List**: View all users in the system with their details
+  - **Role Management**: Change user roles between salesperson and admin
+  - **Self-Protection**: Admins cannot change their own role (enforced server-side)
 - **Profile Settings**: Personal settings management for salespeople
   - **Work Email Configuration**: Set professional email address (e.g., john@esypet.com) used as sender for email sequences
   - **Account Information**: View Replit account details and user role
