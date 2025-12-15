@@ -29,7 +29,7 @@ export const users = pgTable("users", {
 
 export const contactGroups = pgTable("contact_groups", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").notNull().references(() => users.id),
+  userId: varchar("user_id").notNull().references(() => users.id, { onUpdate: "cascade" }),
   name: text("name").notNull(),
   description: text("description"),
   createdAt: timestamp("created_at").defaultNow(),
@@ -37,7 +37,7 @@ export const contactGroups = pgTable("contact_groups", {
 
 export const contacts = pgTable("contacts", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").notNull().references(() => users.id),
+  userId: varchar("user_id").notNull().references(() => users.id, { onUpdate: "cascade" }),
   groupId: varchar("group_id").references(() => contactGroups.id),
   firstName: text("first_name").notNull(),
   lastName: text("last_name").notNull(),
@@ -66,7 +66,7 @@ export const contacts = pgTable("contacts", {
 
 export const deals = pgTable("deals", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").notNull().references(() => users.id),
+  userId: varchar("user_id").notNull().references(() => users.id, { onUpdate: "cascade" }),
   title: text("title").notNull(),
   contactId: varchar("contact_id").references(() => contacts.id),
   value: decimal("value", { precision: 10, scale: 2 }),
@@ -85,7 +85,7 @@ export const deals = pgTable("deals", {
 
 export const tasks = pgTable("tasks", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").notNull().references(() => users.id),
+  userId: varchar("user_id").notNull().references(() => users.id, { onUpdate: "cascade" }),
   title: text("title").notNull(),
   description: text("description"),
   contactId: varchar("contact_id").references(() => contacts.id),
@@ -99,7 +99,7 @@ export const tasks = pgTable("tasks", {
 
 export const activities = pgTable("activities", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").notNull().references(() => users.id),
+  userId: varchar("user_id").notNull().references(() => users.id, { onUpdate: "cascade" }),
   type: text("type").notNull(), // contact_added, deal_created, task_completed, etc.
   description: text("description").notNull(),
   contactId: varchar("contact_id").references(() => contacts.id),
@@ -110,7 +110,7 @@ export const activities = pgTable("activities", {
 
 export const emailSequences = pgTable("email_sequences", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").notNull().references(() => users.id),
+  userId: varchar("user_id").notNull().references(() => users.id, { onUpdate: "cascade" }),
   sequenceNumber: integer("sequence_number").notNull(), // 1-5
   subject: text("subject").notNull(),
   body: text("body").notNull(), // Email content with placeholders like [Contact_First_Name], [Sales_Person]
@@ -124,7 +124,7 @@ export const emailSequences = pgTable("email_sequences", {
 
 export const emailSequenceLogs = pgTable("email_sequence_logs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").notNull().references(() => users.id),
+  userId: varchar("user_id").notNull().references(() => users.id, { onUpdate: "cascade" }),
   contactId: varchar("contact_id").notNull().references(() => contacts.id),
   sequenceId: varchar("sequence_id").notNull().references(() => emailSequences.id),
   sequenceNumber: integer("sequence_number").notNull(), // 1-5
@@ -138,7 +138,7 @@ export const emailSequenceLogs = pgTable("email_sequence_logs", {
 
 export const inboxMessages = pgTable("inbox_messages", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").notNull().references(() => users.id),
+  userId: varchar("user_id").notNull().references(() => users.id, { onUpdate: "cascade" }),
   contactId: varchar("contact_id").references(() => contacts.id),
   emailSequenceLogId: varchar("email_sequence_log_id").references(() => emailSequenceLogs.id),
   from: text("from").notNull(),

@@ -12,6 +12,8 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Loader2 } from "lucide-react";
 
 const profileSchema = z.object({
+  firstName: z.string().optional(),
+  lastName: z.string().optional(),
   workEmail: z.string().email("Please enter a valid email address").optional().or(z.literal("")),
 });
 
@@ -34,14 +36,17 @@ export default function Settings() {
   const form = useForm<ProfileFormData>({
     resolver: zodResolver(profileSchema),
     defaultValues: {
+      firstName: "",
+      lastName: "",
       workEmail: "",
     },
   });
 
-  // Update form when user data loads
   useEffect(() => {
     if (user) {
       form.reset({
+        firstName: user.firstName || "",
+        lastName: user.lastName || "",
         workEmail: user.workEmail || "",
       });
     }
@@ -55,7 +60,7 @@ export default function Settings() {
       queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
       toast({
         title: "Profile updated",
-        description: "Your work email has been updated successfully.",
+        description: "Your profile has been updated successfully.",
       });
     },
     onError: (error: Error) => {
@@ -92,38 +97,48 @@ export default function Settings() {
         <Card data-testid="card-account-info">
           <CardHeader>
             <CardTitle>Account Information</CardTitle>
-            <CardDescription>Your Replit account details</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <label className="text-sm font-medium">Email</label>
-              <p className="text-sm text-muted-foreground" data-testid="text-account-email">{user?.email}</p>
-            </div>
-            <div>
-              <label className="text-sm font-medium">Name</label>
-              <p className="text-sm text-muted-foreground" data-testid="text-account-name">
-                {user?.firstName && user?.lastName 
-                  ? `${user.firstName} ${user.lastName}` 
-                  : user?.firstName || user?.lastName || "Not set"}
-              </p>
-            </div>
-            <div>
-              <label className="text-sm font-medium">Role</label>
-              <p className="text-sm text-muted-foreground capitalize" data-testid="text-account-role">{user?.role}</p>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card data-testid="card-email-settings">
-          <CardHeader>
-            <CardTitle>Email Settings</CardTitle>
-            <CardDescription>
-              Configure your professional email address for sending email sequences
-            </CardDescription>
+            <CardDescription>Update your personal information</CardDescription>
           </CardHeader>
           <CardContent>
             <Form {...form}>
               <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                <div>
+                  <label className="text-sm font-medium">Email</label>
+                  <p className="text-sm text-muted-foreground" data-testid="text-account-email">{user?.email}</p>
+                  <p className="text-xs text-muted-foreground mt-1">Email is managed by your Replit account</p>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="firstName"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>First Name</FormLabel>
+                        <FormControl>
+                          <Input placeholder="John" {...field} data-testid="input-firstname" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="lastName"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Last Name</FormLabel>
+                        <FormControl>
+                          <Input placeholder="Doe" {...field} data-testid="input-lastname" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Role</label>
+                  <p className="text-sm text-muted-foreground capitalize" data-testid="text-account-role">{user?.role}</p>
+                </div>
                 <FormField
                   control={form.control}
                   name="workEmail"

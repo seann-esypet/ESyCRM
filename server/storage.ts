@@ -35,8 +35,10 @@ import { eq, desc, and, sql, gte, lte, or, ne } from "drizzle-orm";
 export interface IStorage {
   // User operations - From Replit Auth blueprint
   getUser(id: string): Promise<User | undefined>;
+  getUserByEmail(email: string): Promise<User | undefined>;
   upsertUser(user: UpsertUser): Promise<User>;
-  updateUserProfile(id: string, profile: Partial<Pick<User, 'workEmail'>>): Promise<User | undefined>;
+  createUser(userData: { email: string; firstName?: string; lastName?: string; role?: string }): Promise<User>;
+  updateUserProfile(id: string, profile: Partial<Pick<User, 'workEmail' | 'firstName' | 'lastName'>>): Promise<User | undefined>;
   getAllUsers(): Promise<User[]>;
   updateUserRole(id: string, role: string): Promise<User | undefined>;
   
@@ -108,7 +110,37 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.email, email));
+    return user;
+  }
+
   async upsertUser(userData: UpsertUser): Promise<User> {
+    if (userData.email) {
+      const existingByEmail = await this.getUserByEmail(userData.email);
+      if (existingByEmail && existingByEmail.id !== userData.id) {
+        // Manual user exists with different ID - need to migrate to auth ID
+        // Use raw SQL to update PK since ON UPDATE CASCADE is in place
+        const oldId = existingByEmail.id;
+        const newId = userData.id!;
+        
+        // Update user ID - foreign keys will cascade automatically due to ON UPDATE CASCADE
+        await db.execute(sql`
+          UPDATE users 
+          SET id = ${newId},
+              first_name = COALESCE(${userData.firstName ?? null}, first_name),
+              last_name = COALESCE(${userData.lastName ?? null}, last_name),
+              profile_image_url = COALESCE(${userData.profileImageUrl ?? null}, profile_image_url),
+              updated_at = NOW()
+          WHERE id = ${oldId}
+        `);
+        
+        // Fetch and return the updated user
+        const [updatedUser] = await db.select().from(users).where(eq(users.id, newId));
+        return updatedUser;
+      }
+    }
+    
     const [user] = await db
       .insert(users)
       .values(userData)
@@ -123,11 +155,26 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
+  async createUser(userData: { email: string; firstName?: string; lastName?: string; role?: string }): Promise<User> {
+    const id = `manual_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const [user] = await db
+      .insert(users)
+      .values({
+        id,
+        email: userData.email,
+        firstName: userData.firstName || null,
+        lastName: userData.lastName || null,
+        role: userData.role || "salesperson",
+      })
+      .returning();
+    return user;
+  }
+
   async getAllUsers(): Promise<User[]> {
     return await db.select().from(users);
   }
 
-  async updateUserProfile(id: string, profile: Partial<Pick<User, 'workEmail'>>): Promise<User | undefined> {
+  async updateUserProfile(id: string, profile: Partial<Pick<User, 'workEmail' | 'firstName' | 'lastName'>>): Promise<User | undefined> {
     const [updated] = await db
       .update(users)
       .set({

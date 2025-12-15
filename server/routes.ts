@@ -38,6 +38,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = req.user.claims.sub;
       const profileSchema = z.object({
         workEmail: z.string().email().optional().or(z.literal("")),
+        firstName: z.string().optional(),
+        lastName: z.string().optional(),
       });
       const profileData = profileSchema.parse(req.body);
       const updatedUser = await storage.updateUserProfile(userId, profileData);
@@ -90,6 +92,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       console.error("Error updating user role:", error);
       res.status(500).json({ message: "Failed to update user role" });
+    }
+  });
+
+  app.post('/api/admin/users', isAdmin, async (req: any, res) => {
+    try {
+      const createUserSchema = z.object({
+        email: z.string().email(),
+        firstName: z.string().optional(),
+        lastName: z.string().optional(),
+        role: z.enum(["salesperson", "admin"]).optional(),
+      });
+      const userData = createUserSchema.parse(req.body);
+      
+      const existingUser = await storage.getUserByEmail(userData.email);
+      if (existingUser) {
+        return res.status(400).json({ message: "A user with this email already exists" });
+      }
+      
+      const newUser = await storage.createUser(userData);
+      res.status(201).json(newUser);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid user data", errors: error.errors });
+      }
+      console.error("Error creating user:", error);
+      res.status(500).json({ message: "Failed to create user" });
     }
   });
 
