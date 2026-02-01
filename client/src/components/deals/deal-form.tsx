@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
 import { insertDealSchema, type Deal, type InsertDeal, type Contact } from "@shared/schema";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 
 interface DealFormProps {
   deal?: Deal;
@@ -86,6 +86,8 @@ export default function DealForm({ deal, onSuccess, onCancel }: DealFormProps) {
       if (!deal && contactId) {
         try {
           await apiRequest("PATCH", `/api/contacts/${contactId}`, { status: "pipeline" });
+          // Refresh contacts list to show updated status
+          queryClient.invalidateQueries({ queryKey: ["/api/contacts"] });
         } catch (e) {
           // Silently ignore - deal creation succeeded
         }
