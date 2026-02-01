@@ -329,6 +329,7 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
                   <SelectContent>
                     <SelectItem value="Yes">Yes</SelectItem>
                     <SelectItem value="No">No</SelectItem>
+                    <SelectItem value="Unknown">Unknown</SelectItem>
                   </SelectContent>
                 </Select>
                 <FormMessage />
