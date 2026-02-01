@@ -67,6 +67,7 @@ export default function LeadDiscovery() {
   const [showNewJobDialog, setShowNewJobDialog] = useState(false);
   const [showSettingsDialog, setShowSettingsDialog] = useState(false);
   const [selectedJob, setSelectedJob] = useState<LeadDiscoveryJob | null>(null);
+  const [activeTab, setActiveTab] = useState("jobs");
   const [selectedResults, setSelectedResults] = useState<string[]>([]);
   
   const [newJobState, setNewJobState] = useState("");
@@ -362,7 +363,7 @@ export default function LeadDiscovery() {
           </Card>
         )}
 
-        <Tabs defaultValue="jobs" className="space-y-4">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
           <div className="flex justify-between items-center">
             <TabsList>
               <TabsTrigger value="jobs" data-testid="tab-jobs">Search Jobs</TabsTrigger>
@@ -488,7 +489,10 @@ export default function LeadDiscovery() {
                         <Button 
                           variant="outline" 
                           size="sm"
-                          onClick={() => setSelectedJob(job)}
+                          onClick={() => {
+                            setSelectedJob(job);
+                            setActiveTab("results");
+                          }}
                           data-testid={`btn-view-results-${job.id}`}
                         >
                           <Eye className="h-4 w-4 mr-1" />
