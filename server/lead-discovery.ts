@@ -47,7 +47,7 @@ export async function getSerpUsageStatus(): Promise<{
   };
 }
 
-export async function canRunDiscovery(userId: string, numZips: number): Promise<{
+export async function canRunDiscovery(userId: string, numZips: number, skipDailyCheck = false): Promise<{
   allowed: boolean;
   reason?: string;
 }> {
@@ -58,17 +58,19 @@ export async function canRunDiscovery(userId: string, numZips: number): Promise<
     return { allowed: false, reason: "SERP quota reached – upgrade required" };
   }
   
-  // Check max ZIPs per run
-  const maxZips = status.config.maxZipsPerRun || 3;
-  if (numZips > maxZips) {
-    return { allowed: false, reason: `Maximum ${maxZips} ZIP codes allowed per run` };
-  }
-  
-  // Check runs per day
-  const runsToday = await storage.getRunsToday(userId);
-  const maxRunsPerDay = status.config.maxRunsPerDay || 1;
-  if (runsToday >= maxRunsPerDay) {
-    return { allowed: false, reason: `Maximum ${maxRunsPerDay} run(s) per day reached` };
+  // Check max ZIPs per run (only at job creation)
+  if (!skipDailyCheck) {
+    const maxZips = status.config.maxZipsPerRun || 3;
+    if (numZips > maxZips) {
+      return { allowed: false, reason: `Maximum ${maxZips} ZIP codes allowed per run` };
+    }
+    
+    // Check runs per day (only at job creation)
+    const runsToday = await storage.getRunsToday(userId);
+    const maxRunsPerDay = status.config.maxRunsPerDay || 1;
+    if (runsToday >= maxRunsPerDay) {
+      return { allowed: false, reason: `Maximum ${maxRunsPerDay} run(s) per day reached` };
+    }
   }
   
   // Check hourly rate limit
@@ -462,8 +464,8 @@ export async function runLeadDiscoveryJob(jobId: string, userId: string): Promis
         break;
       }
 
-      // Check guardrails before each ZIP
-      const canRun = await canRunDiscovery(userId, 1);
+      // Check quota and hourly limits during execution (skip daily check since job already started)
+      const canRun = await canRunDiscovery(userId, 1, true);
       if (!canRun.allowed) {
         console.log(`Stopping job: ${canRun.reason}`);
         await storage.updateLeadDiscoveryJob(jobId, {
