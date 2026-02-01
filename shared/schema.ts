@@ -52,6 +52,7 @@ export const contacts = pgTable("contacts", {
   usesSoftware: text("uses_software"), // Yes, No, Unknown
   hasWebsite: text("has_website"), // Yes, No, Unknown
   websiteUrl: text("website_url"),
+  contactRequestFormUrl: text("contact_request_form_url"),
   facebookUrl: text("facebook_url"),
   instagramHandle: text("instagram_handle"),
   secondaryFirstName: text("secondary_first_name"),

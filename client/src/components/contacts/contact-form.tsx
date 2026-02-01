@@ -39,6 +39,7 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
       usesSoftware: contact?.usesSoftware || "",
       hasWebsite: contact?.hasWebsite || "",
       websiteUrl: contact?.websiteUrl || "",
+      contactRequestFormUrl: contact?.contactRequestFormUrl || "",
       facebookUrl: contact?.facebookUrl || "",
       instagramHandle: contact?.instagramHandle || "",
       secondaryFirstName: contact?.secondaryFirstName || "",
@@ -462,6 +463,25 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
                       value={field.value || ""}
                       placeholder="https://www.example.com"
                       data-testid="input-websiteUrl"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="contactRequestFormUrl"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Contact Request Form URL</FormLabel>
+                  <FormControl>
+                    <Input 
+                      {...field} 
+                      value={field.value || ""}
+                      placeholder="https://www.example.com/contact"
+                      data-testid="input-contactRequestFormUrl"
                     />
                   </FormControl>
                   <FormMessage />
