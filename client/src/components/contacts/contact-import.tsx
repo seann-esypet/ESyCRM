@@ -134,8 +134,11 @@ export default function ContactImport({ open, onOpenChange }: ContactImportProps
         jobTitle: (row.jobTitle || row.job_title || row.JobTitle || "").trim() || null,
         usesSoftware: (row["Currently uses software"] || row.usesSoftware || row.uses_software || "").trim() || null,
         currentSoftware: (row["Software Used"] || row.currentSoftware || row.current_software || "").trim() || null,
-        bookingSoftwareUrl: (row["Booking Software URL"] || row.bookingSoftwareUrl || row.booking_software_url || row.Source || row.source_url || "").trim() || null,
-        leadSource: (row.source || row.leadSource || row.lead_source || row.Source || "").trim() || null,
+        bookingSoftwareUrl: (row["Booking Software URL"] || row.bookingSoftwareUrl || row.booking_software_url || "").trim() || null,
+        hasWebsite: (row["Has Web Site"] || row.hasWebsite || row.has_website || "").trim() || null,
+        websiteUrl: (row["Web Site Address"] || row.websiteUrl || row.website_url || "").trim() || null,
+        contactRequestFormUrl: (row["Contact Request Form URL"] || row.contactRequestFormUrl || row.contact_request_form_url || "").trim() || null,
+        leadSource: (row.source || row.leadSource || row.lead_source || "").trim() || null,
         notes: (row.notes || row.Notes || "").trim() || null,
         status: (row.status || row.Status || "active").trim() || "active",
       }));
