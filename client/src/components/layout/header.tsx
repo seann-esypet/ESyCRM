@@ -32,16 +32,16 @@ export default function Header({
   };
 
   return (
-    <header className="bg-card border-b border-border px-6 py-4 flex items-center justify-between" data-testid="header">
-      <div className="flex items-center space-x-4">
-        <h2 className="text-2xl font-bold text-foreground" data-testid="page-title">
+    <header className="bg-card border-b border-border px-6 py-4 flex items-center justify-between gap-4 min-w-0" data-testid="header">
+      <div className="flex items-center space-x-4 min-w-0 flex-shrink">
+        <h2 className="text-2xl font-bold text-foreground whitespace-nowrap" data-testid="page-title">
           {title}
         </h2>
-        <div className="relative">
+        <div className="relative hidden lg:block">
           <Input
             type="text"
-            placeholder="Search contacts, deals, or tasks..."
-            className="w-80 pl-10"
+            placeholder="Search..."
+            className="w-48 xl:w-64 pl-10"
             value={searchQuery}
             onChange={(e) => handleSearchChange(e.target.value)}
             data-testid="search-input"
@@ -49,7 +49,7 @@ export default function Header({
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
         </div>
       </div>
-      <div className="flex items-center space-x-3">
+      <div className="flex items-center space-x-2 flex-shrink-0">
         <Button 
           variant="secondary" 
           data-testid="notifications-button"
