@@ -176,6 +176,7 @@ export default function DealForm({ deal, onSuccess, onCancel }: DealFormProps) {
                     <SelectItem value="Plan 1 - $2/appoint">Plan 1 - $2/appoint</SelectItem>
                     <SelectItem value="Plan 2 - $99/mo">Plan 2 - $99/mo</SelectItem>
                     <SelectItem value="Plan 3. $99 + Credit Card">Plan 3. $99 + Credit Card</SelectItem>
+                    <SelectItem value="Unknown">Unknown</SelectItem>
                   </SelectContent>
                 </Select>
                 <FormMessage />
