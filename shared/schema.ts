@@ -65,7 +65,7 @@ export const contacts = pgTable("contacts", {
   painPoints: text("pain_points"),
   interestLevel: text("interest_level"), // Low, Medium, High
   notes: text("notes"),
-  status: text("status").notNull().default("active"), // active, inactive
+  status: text("status").notNull().default("active"), // active, inactive, pipeline
   lastContactDate: timestamp("last_contact_date"),
 });
 

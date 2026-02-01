@@ -80,7 +80,17 @@ export default function DealForm({ deal, onSuccess, onCancel }: DealFormProps) {
         return apiRequest("POST", "/api/deals", formData);
       }
     },
-    onSuccess: () => {
+    onSuccess: async () => {
+      // When creating a new deal with a contact, change contact status to "pipeline"
+      const contactId = form.getValues("contactId");
+      if (!deal && contactId) {
+        try {
+          await apiRequest("PATCH", `/api/contacts/${contactId}`, { status: "pipeline" });
+        } catch (e) {
+          // Silently ignore - deal creation succeeded
+        }
+      }
+      
       toast({
         title: deal ? "Deal updated" : "Deal created",
         description: `${form.getValues("title")} has been ${deal ? "updated" : "added"} successfully.`,

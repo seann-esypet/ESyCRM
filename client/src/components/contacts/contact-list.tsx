@@ -132,6 +132,7 @@ export default function ContactList({ contacts, isLoading, onEdit, onDelete, onS
                     <SelectContent>
                       <SelectItem value="active">Active</SelectItem>
                       <SelectItem value="inactive">Inactive</SelectItem>
+                      <SelectItem value="pipeline">Pipeline</SelectItem>
                     </SelectContent>
                   </Select>
                 </TableCell>

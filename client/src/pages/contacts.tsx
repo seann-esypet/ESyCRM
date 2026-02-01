@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import Header from "@/components/layout/header";
 import ContactList from "@/components/contacts/contact-list";
@@ -94,6 +94,17 @@ export default function Contacts() {
     statusChangeMutation.mutate({ contactId, status: newStatus });
   };
 
+  // Sort contacts: Active first, then Pipeline and Inactive at the bottom
+  const sortedContacts = useMemo(() => {
+    if (!contacts) return [];
+    const statusOrder: Record<string, number> = { active: 0, pipeline: 1, inactive: 2 };
+    return [...contacts].sort((a, b) => {
+      const aOrder = statusOrder[a.status] ?? 1;
+      const bOrder = statusOrder[b.status] ?? 1;
+      return aOrder - bOrder;
+    });
+  }, [contacts]);
+
   return (
     <>
       <Header 
@@ -117,7 +128,7 @@ export default function Contacts() {
       
       <main className="flex-1 overflow-y-auto p-6 bg-muted/30" data-testid="contacts-content">
         <ContactList
-          contacts={contacts || []}
+          contacts={sortedContacts}
           isLoading={isLoading}
           onEdit={handleEdit}
           onDelete={handleDelete}
