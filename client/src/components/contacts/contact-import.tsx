@@ -132,6 +132,9 @@ export default function ContactImport({ open, onOpenChange }: ContactImportProps
         phone: (row.phone || row.Phone || "").trim() || null,
         company: (row.company || row.Company || "").trim() || null,
         jobTitle: (row.jobTitle || row.job_title || row.JobTitle || "").trim() || null,
+        usesSoftware: (row["Currently uses software"] || row.usesSoftware || row.uses_software || "").trim() || null,
+        currentSoftware: (row["Software Used"] || row.currentSoftware || row.current_software || "").trim() || null,
+        leadSource: (row.source || row.leadSource || row.lead_source || row.Source || "").trim() || null,
         notes: (row.notes || row.Notes || "").trim() || null,
         status: (row.status || row.Status || "active").trim() || "active",
       }));
