@@ -186,15 +186,16 @@ export async function searchWithSerpApi(
 
   try {
     // Use Google Maps engine for better local business results
+    // Include location in query since ll parameter requires lat,long coordinates
+    const searchQuery = `${query.replace(", Zip code " + zipCode, "")} ${zipCode}`;
     const params = new URLSearchParams({
       api_key: apiKey,
       engine: "google_maps",
-      q: query,
-      ll: `@${zipCode}`, // Use ZIP code for location
+      q: searchQuery,
       type: "search",
     });
 
-    console.log(`Searching Google Maps: ${query}`);
+    console.log(`Searching Google Maps: ${searchQuery}`);
     const response = await fetch(`https://serpapi.com/search?${params}`);
     
     if (!response.ok) {
