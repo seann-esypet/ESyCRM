@@ -22,6 +22,9 @@ import {
   type InsertLeadDiscoveryJob,
   type LeadDiscoveryResult,
   type InsertLeadDiscoveryResult,
+  type SerpUsage,
+  type SerpCache,
+  type LeadDiscoveryConfig,
   users,
   contacts,
   contactGroups,
@@ -32,7 +35,10 @@ import {
   emailSequenceLogs,
   inboxMessages,
   leadDiscoveryJobs,
-  leadDiscoveryResults
+  leadDiscoveryResults,
+  serpUsage,
+  serpCache,
+  leadDiscoveryConfig
 } from "@shared/schema";
 import { normalizePhoneNumber, normalizeName, normalizeEmail } from "@shared/utils";
 import { db } from "./db";
@@ -120,6 +126,24 @@ export interface IStorage {
   bulkCreateLeadDiscoveryResults(results: InsertLeadDiscoveryResult[], userId: string): Promise<LeadDiscoveryResult[]>;
   updateLeadDiscoveryResult(id: string, result: Partial<LeadDiscoveryResult>, userId: string | null): Promise<LeadDiscoveryResult | undefined>;
   markResultsAsImported(resultIds: string[], contactIds: string[], userId: string | null): Promise<void>;
+  
+  // SERP Usage Tracking
+  getSerpUsage(monthYear: string): Promise<SerpUsage | undefined>;
+  getOrCreateSerpUsage(monthYear: string): Promise<SerpUsage>;
+  incrementSerpUsage(monthYear: string): Promise<SerpUsage>;
+  updateSerpQuota(monthYear: string, quota: number, hardStopAt: number): Promise<SerpUsage | undefined>;
+  
+  // SERP Cache
+  getSerpCache(zipCode: string, queryTemplate: string, state: string, maxAgeDays?: number): Promise<SerpCache | undefined>;
+  createSerpCache(zipCode: string, queryTemplate: string, state: string, results: any): Promise<SerpCache>;
+  clearOldSerpCache(maxAgeDays: number): Promise<number>;
+  
+  // Lead Discovery Config
+  getLeadDiscoveryConfig(configKey: string): Promise<LeadDiscoveryConfig | undefined>;
+  getOrCreateLeadDiscoveryConfig(configKey: string): Promise<LeadDiscoveryConfig>;
+  updateLeadDiscoveryConfig(configKey: string, updates: Partial<LeadDiscoveryConfig>): Promise<LeadDiscoveryConfig | undefined>;
+  getRunsToday(userId: string): Promise<number>;
+  getSerpCallsInLastHour(): Promise<number>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1109,6 +1133,144 @@ export class DatabaseStorage implements IStorage {
         })
         .where(whereClause);
     }
+  }
+
+  // SERP Usage Tracking
+  async getSerpUsage(monthYear: string): Promise<SerpUsage | undefined> {
+    const [usage] = await db
+      .select()
+      .from(serpUsage)
+      .where(eq(serpUsage.monthYear, monthYear));
+    return usage;
+  }
+
+  async getOrCreateSerpUsage(monthYear: string): Promise<SerpUsage> {
+    const existing = await this.getSerpUsage(monthYear);
+    if (existing) return existing;
+    
+    const [created] = await db
+      .insert(serpUsage)
+      .values({ monthYear, usedCredits: 0, monthlyQuota: 250, hardStopAt: 200 })
+      .returning();
+    return created;
+  }
+
+  async incrementSerpUsage(monthYear: string): Promise<SerpUsage> {
+    const usage = await this.getOrCreateSerpUsage(monthYear);
+    const [updated] = await db
+      .update(serpUsage)
+      .set({ usedCredits: (usage.usedCredits || 0) + 1 })
+      .where(eq(serpUsage.monthYear, monthYear))
+      .returning();
+    return updated;
+  }
+
+  async updateSerpQuota(monthYear: string, quota: number, hardStopAt: number): Promise<SerpUsage | undefined> {
+    const usage = await this.getOrCreateSerpUsage(monthYear);
+    const [updated] = await db
+      .update(serpUsage)
+      .set({ monthlyQuota: quota, hardStopAt })
+      .where(eq(serpUsage.monthYear, monthYear))
+      .returning();
+    return updated;
+  }
+
+  // SERP Cache
+  async getSerpCache(zipCode: string, queryTemplate: string, state: string, maxAgeDays: number = 30): Promise<SerpCache | undefined> {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - maxAgeDays);
+    
+    const [cached] = await db
+      .select()
+      .from(serpCache)
+      .where(and(
+        eq(serpCache.zipCode, zipCode),
+        eq(serpCache.queryTemplate, queryTemplate),
+        eq(serpCache.state, state),
+        gte(serpCache.createdAt, cutoffDate)
+      ));
+    return cached;
+  }
+
+  async createSerpCache(zipCode: string, queryTemplate: string, state: string, results: any): Promise<SerpCache> {
+    const [created] = await db
+      .insert(serpCache)
+      .values({ zipCode, queryTemplate, state, resultsJson: results })
+      .returning();
+    return created;
+  }
+
+  async clearOldSerpCache(maxAgeDays: number): Promise<number> {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - maxAgeDays);
+    
+    const result = await db
+      .delete(serpCache)
+      .where(lte(serpCache.createdAt, cutoffDate));
+    return 0;
+  }
+
+  // Lead Discovery Config
+  async getLeadDiscoveryConfig(configKey: string): Promise<LeadDiscoveryConfig | undefined> {
+    const [config] = await db
+      .select()
+      .from(leadDiscoveryConfig)
+      .where(eq(leadDiscoveryConfig.configKey, configKey));
+    return config;
+  }
+
+  async getOrCreateLeadDiscoveryConfig(configKey: string): Promise<LeadDiscoveryConfig> {
+    const existing = await this.getLeadDiscoveryConfig(configKey);
+    if (existing) return existing;
+    
+    const [created] = await db
+      .insert(leadDiscoveryConfig)
+      .values({
+        configKey,
+        queriesPerZip: 2,
+        maxZipsPerRun: 3,
+        maxRunsPerDay: 1,
+        maxSerpCallsPerHour: 5,
+        enableThirdQuery: "false",
+        planType: "free"
+      })
+      .returning();
+    return created;
+  }
+
+  async updateLeadDiscoveryConfig(configKey: string, updates: Partial<LeadDiscoveryConfig>): Promise<LeadDiscoveryConfig | undefined> {
+    await this.getOrCreateLeadDiscoveryConfig(configKey);
+    const [updated] = await db
+      .update(leadDiscoveryConfig)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(leadDiscoveryConfig.configKey, configKey))
+      .returning();
+    return updated;
+  }
+
+  async getRunsToday(userId: string): Promise<number> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const jobs = await db
+      .select()
+      .from(leadDiscoveryJobs)
+      .where(and(
+        eq(leadDiscoveryJobs.userId, userId),
+        gte(leadDiscoveryJobs.createdAt, today)
+      ));
+    return jobs.length;
+  }
+
+  async getSerpCallsInLastHour(): Promise<number> {
+    const oneHourAgo = new Date();
+    oneHourAgo.setHours(oneHourAgo.getHours() - 1);
+    
+    const cached = await db
+      .select()
+      .from(serpCache)
+      .where(gte(serpCache.createdAt, oneHourAgo));
+    return cached.length;
   }
 }
 

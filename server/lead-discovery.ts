@@ -1,16 +1,97 @@
 import { storage } from "./storage";
-import type { LeadDiscoveryJob, LeadDiscoveryResult, InsertLeadDiscoveryResult } from "@shared/schema";
+import type { LeadDiscoveryJob, LeadDiscoveryResult, InsertLeadDiscoveryResult, SerpUsage, LeadDiscoveryConfig } from "@shared/schema";
 
-const SEARCH_QUERIES = [
-  "Grooming shop in {STATE}, Zip code {ZIP}",
-  "Grooming salon in {STATE}, Zip code {ZIP}",
-  "Pet Grooming shop in {STATE}, Zip code {ZIP}",
-  "Pet Grooming salon in {STATE}, Zip code {ZIP}",
+// New reduced query set for budget management
+const DEFAULT_QUERIES = [
   "Dog Groomer in {STATE}, Zip code {ZIP}",
-  "Dog Grooming shop in {STATE}, Zip code {ZIP}",
-  "Cat Grooming shop in {STATE}, Zip code {ZIP}",
-  "Dog Grooming salon in {STATE}, Zip code {ZIP}",
+  "Pet Grooming shop in {STATE}, Zip code {ZIP}",
 ];
+
+const OPTIONAL_THIRD_QUERY = "Grooming salon in {STATE}, Zip code {ZIP}";
+
+// Helper to get current month-year string
+function getCurrentMonthYear(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+
+// Guardrail check functions
+export async function getSerpUsageStatus(): Promise<{
+  usage: SerpUsage;
+  config: LeadDiscoveryConfig;
+  isQuotaReached: boolean;
+  warningLevel: 'none' | 'yellow' | 'red' | 'hardstop';
+}> {
+  const monthYear = getCurrentMonthYear();
+  const usage = await storage.getOrCreateSerpUsage(monthYear);
+  const config = await storage.getOrCreateLeadDiscoveryConfig("global");
+  
+  const used = usage.usedCredits || 0;
+  const hardStop = usage.hardStopAt || 200;
+  const quota = usage.monthlyQuota || 250;
+  
+  let warningLevel: 'none' | 'yellow' | 'red' | 'hardstop' = 'none';
+  if (used >= hardStop) {
+    warningLevel = 'hardstop';
+  } else if (used >= 175) {
+    warningLevel = 'red';
+  } else if (used >= 100) {
+    warningLevel = 'yellow';
+  }
+  
+  return {
+    usage,
+    config,
+    isQuotaReached: used >= hardStop,
+    warningLevel
+  };
+}
+
+export async function canRunDiscovery(userId: string, numZips: number): Promise<{
+  allowed: boolean;
+  reason?: string;
+}> {
+  const status = await getSerpUsageStatus();
+  
+  // Check if quota is reached
+  if (status.isQuotaReached) {
+    return { allowed: false, reason: "SERP quota reached – upgrade required" };
+  }
+  
+  // Check max ZIPs per run
+  const maxZips = status.config.maxZipsPerRun || 3;
+  if (numZips > maxZips) {
+    return { allowed: false, reason: `Maximum ${maxZips} ZIP codes allowed per run` };
+  }
+  
+  // Check runs per day
+  const runsToday = await storage.getRunsToday(userId);
+  const maxRunsPerDay = status.config.maxRunsPerDay || 1;
+  if (runsToday >= maxRunsPerDay) {
+    return { allowed: false, reason: `Maximum ${maxRunsPerDay} run(s) per day reached` };
+  }
+  
+  // Check hourly rate limit
+  const callsLastHour = await storage.getSerpCallsInLastHour();
+  const maxCallsPerHour = status.config.maxSerpCallsPerHour || 5;
+  if (callsLastHour >= maxCallsPerHour) {
+    return { allowed: false, reason: `Hourly SERP limit reached (${maxCallsPerHour}/hour). Please wait.` };
+  }
+  
+  return { allowed: true };
+}
+
+// Get the queries to use based on config
+export async function getActiveQueries(): Promise<string[]> {
+  const config = await storage.getOrCreateLeadDiscoveryConfig("global");
+  const queries = [...DEFAULT_QUERIES];
+  
+  if (config.enableThirdQuery === "true") {
+    queries.push(OPTIONAL_THIRD_QUERY);
+  }
+  
+  return queries;
+}
 
 const BOOKING_SOFTWARE_PATTERNS: Record<string, string> = {
   "booking.moego.pet": "MoeGo",
@@ -69,30 +150,49 @@ interface BusinessData {
   address?: string;
 }
 
+// Search using Google Maps engine with caching and usage tracking
 export async function searchWithSerpApi(
   query: string, 
-  engine: "google" | "bing" = "google",
-  maxResults: number = 10
-): Promise<SerpApiResult[]> {
+  zipCode: string,
+  state: string,
+  queryTemplate: string
+): Promise<{ results: SerpApiResult[]; fromCache: boolean }> {
   const apiKey = process.env.SERPAPI_API_KEY;
   if (!apiKey) {
     throw new Error("SERPAPI_API_KEY not configured");
   }
 
+  // Check quota before making request
+  const status = await getSerpUsageStatus();
+  if (status.isQuotaReached) {
+    throw new Error("SERP quota reached – upgrade required");
+  }
+
+  // Check cache first (30-day caching)
+  const cached = await storage.getSerpCache(zipCode, queryTemplate, state, 30);
+  if (cached) {
+    console.log(`Using cached results for ${zipCode} - ${queryTemplate}`);
+    return { results: cached.resultsJson as SerpApiResult[], fromCache: true };
+  }
+
+  // Check hourly rate limit
+  const callsLastHour = await storage.getSerpCallsInLastHour();
+  const maxCallsPerHour = status.config.maxSerpCallsPerHour || 5;
+  if (callsLastHour >= maxCallsPerHour) {
+    throw new Error(`Hourly SERP limit reached (${maxCallsPerHour}/hour). Please wait.`);
+  }
+
   try {
+    // Use Google Maps engine for better local business results
     const params = new URLSearchParams({
       api_key: apiKey,
+      engine: "google_maps",
       q: query,
-      num: String(maxResults),
+      ll: `@${zipCode}`, // Use ZIP code for location
+      type: "search",
     });
 
-    if (engine === "google") {
-      params.set("engine", "google");
-      params.set("google_domain", "google.com");
-    } else if (engine === "bing") {
-      params.set("engine", "bing");
-    }
-
+    console.log(`Searching Google Maps: ${query}`);
     const response = await fetch(`https://serpapi.com/search?${params}`);
     
     if (!response.ok) {
@@ -105,33 +205,45 @@ export async function searchWithSerpApi(
     
     const results: SerpApiResult[] = [];
     
+    // Google Maps returns local_results
     if (data.local_results) {
       for (const local of data.local_results) {
         results.push({
           title: local.title || "",
-          link: local.website || local.link || "",
+          link: local.website || "",
           phone: local.phone,
           address: local.address,
-          snippet: local.snippet,
+          snippet: local.description || "",
         });
       }
     }
     
-    if (data.organic_results) {
-      for (const organic of data.organic_results) {
-        if (!results.some(r => r.link === organic.link)) {
-          results.push({
-            title: organic.title || "",
-            link: organic.link || "",
-            snippet: organic.snippet,
-          });
-        }
+    // Also check place_results for single place searches
+    if (data.place_results) {
+      const place = data.place_results;
+      if (!results.some(r => r.title === place.title)) {
+        results.push({
+          title: place.title || "",
+          link: place.website || "",
+          phone: place.phone,
+          address: place.address,
+          snippet: place.description || "",
+        });
       }
     }
 
-    return results.slice(0, maxResults);
+    // Increment usage ONLY on successful response
+    const monthYear = getCurrentMonthYear();
+    await storage.incrementSerpUsage(monthYear);
+    
+    // Cache the results
+    await storage.createSerpCache(zipCode, queryTemplate, state, results);
+    
+    console.log(`Found ${results.length} results for ${query}`);
+    return { results, fromCache: false };
   } catch (error) {
     console.error("SerpAPI search failed:", error);
+    // NO automatic retries - require manual retry
     throw error;
   }
 }
@@ -333,9 +445,10 @@ export async function runLeadDiscoveryJob(jobId: string, userId: string): Promis
     }, null);
 
     const zipCodes = job.zipCodes.split(",").map(z => z.trim()).filter(z => z);
-    const engines = (job.searchEngines || "google").split(",") as ("google" | "bing")[];
     const state = job.state;
-    const maxPerZip = job.maxResultsPerZip || 20;
+    
+    // Get active queries based on config (2 default, 3rd optional)
+    const activeQueries = await getActiveQueries();
 
     const allResults: LeadDiscoveryResult[] = [];
     let totalFound = 0;
@@ -349,16 +462,31 @@ export async function runLeadDiscoveryJob(jobId: string, userId: string): Promis
         break;
       }
 
-      for (const queryTemplate of SEARCH_QUERIES) {
+      // Check guardrails before each ZIP
+      const canRun = await canRunDiscovery(userId, 1);
+      if (!canRun.allowed) {
+        console.log(`Stopping job: ${canRun.reason}`);
+        await storage.updateLeadDiscoveryJob(jobId, {
+          status: "failed",
+          errorMessage: canRun.reason,
+        }, null);
+        return;
+      }
+
+      for (const queryTemplate of activeQueries) {
         const query = queryTemplate
           .replace("{STATE}", state)
           .replace("{ZIP}", zip);
 
-        for (const engine of engines) {
-          try {
-            const searchResults = await searchWithSerpApi(query, engine, Math.ceil(maxPerZip / SEARCH_QUERIES.length));
-            
-            for (const result of searchResults) {
+        try {
+          // Use Google Maps engine with caching
+          const { results: searchResults, fromCache } = await searchWithSerpApi(query, zip, state, queryTemplate);
+          
+          if (fromCache) {
+            console.log(`Using cached results for ${zip}`);
+          }
+          
+          for (const result of searchResults) {
               if (!result.title || !result.link) continue;
               
               const businessData: BusinessData = {
@@ -403,7 +531,7 @@ export async function runLeadDiscoveryJob(jobId: string, userId: string): Promis
                   ? "Yes" 
                   : (crawlStatus === "completed" ? "No" : "Unknown"),
                 contactRequestFormUrl: crawlData?.contactFormUrl || null,
-                leadSource: `${engine.charAt(0).toUpperCase() + engine.slice(1)} Search`,
+                leadSource: "Google Maps",
                 notes: crawlError 
                   ? `Crawl failed: ${crawlError}` 
                   : (crawlData?.softwareName === "Unknown" ? "Booking link detected but software unclear" : null),
@@ -422,9 +550,9 @@ export async function runLeadDiscoveryJob(jobId: string, userId: string): Promis
             
             await new Promise(resolve => setTimeout(resolve, 1000));
           } catch (err) {
-            console.error(`Search failed for query "${query}" on ${engine}:`, err);
+            console.error(`Search failed for query "${query}":`, err);
+            // NO automatic retries - log and continue
           }
-        }
       }
 
       await storage.updateLeadDiscoveryJob(jobId, {

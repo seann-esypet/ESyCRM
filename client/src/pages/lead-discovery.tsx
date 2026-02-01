@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/useAuth";
 import Header from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,8 +16,29 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Search, Plus, Download, Upload, Trash2, Eye, AlertCircle, CheckCircle, Clock, XCircle, RefreshCw } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Search, Plus, Download, Upload, Trash2, Eye, AlertCircle, CheckCircle, Clock, XCircle, RefreshCw, Settings } from "lucide-react";
 import type { LeadDiscoveryJob, LeadDiscoveryResult } from "@shared/schema";
+
+interface LeadDiscoveryConfig {
+  serpApiConfigured: boolean;
+  usage: {
+    used: number;
+    quota: number;
+    hardStopAt: number;
+    warningLevel: 'none' | 'yellow' | 'red' | 'hardstop';
+    isQuotaReached: boolean;
+  };
+  config: {
+    queriesPerZip: number;
+    maxZipsPerRun: number;
+    maxRunsPerDay: number;
+    maxSerpCallsPerHour: number;
+    enableThirdQuery: boolean;
+    planType: string;
+  };
+  activeQueries: string[];
+}
 
 const US_STATES = [
   { code: "AL", name: "Alabama" }, { code: "AK", name: "Alaska" }, { code: "AZ", name: "Arizona" },
@@ -40,17 +62,32 @@ const US_STATES = [
 
 export default function LeadDiscovery() {
   const { toast } = useToast();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const [showNewJobDialog, setShowNewJobDialog] = useState(false);
+  const [showSettingsDialog, setShowSettingsDialog] = useState(false);
   const [selectedJob, setSelectedJob] = useState<LeadDiscoveryJob | null>(null);
   const [selectedResults, setSelectedResults] = useState<string[]>([]);
   
   const [newJobState, setNewJobState] = useState("");
   const [newJobZipCodes, setNewJobZipCodes] = useState("");
-  const [newJobSearchEngines, setNewJobSearchEngines] = useState(["google"]);
-  const [newJobMaxPerZip, setNewJobMaxPerZip] = useState(20);
 
-  const { data: config } = useQuery<{ serpApiConfigured: boolean; scraperApiConfigured: boolean }>({
+  const { data: config, refetch: refetchConfig } = useQuery<LeadDiscoveryConfig>({
     queryKey: ["/api/lead-discovery/config"],
+  });
+
+  const updateConfigMutation = useMutation({
+    mutationFn: async (updates: Partial<LeadDiscoveryConfig['config']>) => {
+      const res = await apiRequest("PATCH", "/api/lead-discovery/config", updates);
+      return res.json();
+    },
+    onSuccess: () => {
+      refetchConfig();
+      toast({ title: "Settings updated" });
+    },
+    onError: () => {
+      toast({ title: "Failed to update settings", variant: "destructive" });
+    },
   });
 
   const { data: jobs = [], isLoading: jobsLoading, refetch: refetchJobs } = useQuery<LeadDiscoveryJob[]>({
@@ -64,17 +101,20 @@ export default function LeadDiscovery() {
   });
 
   const createJobMutation = useMutation({
-    mutationFn: async (data: { state: string; zipCodes: string; searchEngines: string; maxResultsPerZip: number }) => {
-      const res = await apiRequest("POST", "/api/lead-discovery/jobs", data);
+    mutationFn: async (data: { state: string; zipCodes: string }) => {
+      const res = await apiRequest("POST", "/api/lead-discovery/jobs", {
+        ...data,
+        searchEngines: "google_maps",
+        maxResultsPerZip: 20,
+      });
       return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/lead-discovery/jobs"] });
+      refetchConfig();
       setShowNewJobDialog(false);
       setNewJobState("");
       setNewJobZipCodes("");
-      setNewJobSearchEngines(["google"]);
-      setNewJobMaxPerZip(20);
       toast({ title: "Search started", description: "Lead discovery job has been created and is running." });
     },
     onError: (error: any) => {
@@ -128,11 +168,32 @@ export default function LeadDiscovery() {
       toast({ title: "Missing info", description: "Please select a state and enter ZIP codes", variant: "destructive" });
       return;
     }
+    
+    // Validate ZIP count against limit
+    const zipCount = newJobZipCodes.split(/[,\n]/).map(z => z.trim()).filter(z => z).length;
+    const maxZips = config?.config?.maxZipsPerRun || 3;
+    if (zipCount > maxZips) {
+      toast({ 
+        title: "Too many ZIP codes", 
+        description: `Maximum ${maxZips} ZIP codes allowed per search. You entered ${zipCount}.`, 
+        variant: "destructive" 
+      });
+      return;
+    }
+    
+    // Check if quota is reached
+    if (config?.usage?.isQuotaReached) {
+      toast({ 
+        title: "SERP quota reached", 
+        description: "Upgrade to Developer plan to continue searching.", 
+        variant: "destructive" 
+      });
+      return;
+    }
+    
     createJobMutation.mutate({
       state: newJobState,
       zipCodes: newJobZipCodes,
-      searchEngines: newJobSearchEngines.join(","),
-      maxResultsPerZip: newJobMaxPerZip,
     });
   };
 
@@ -206,6 +267,101 @@ export default function LeadDiscovery() {
           </Card>
         )}
 
+        {/* SERP Usage Bar */}
+        {config?.usage && (
+          <Card className={`mb-6 ${
+            config.usage.warningLevel === 'hardstop' ? 'border-red-500 bg-red-50 dark:bg-red-900/20' :
+            config.usage.warningLevel === 'red' ? 'border-orange-500 bg-orange-50 dark:bg-orange-900/20' :
+            config.usage.warningLevel === 'yellow' ? 'border-yellow-500 bg-yellow-50 dark:bg-yellow-900/20' : ''
+          }`}>
+            <CardContent className="pt-4">
+              <div className="flex justify-between items-center mb-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium">SerpAPI Usage:</span>
+                  <span className={`font-bold ${
+                    config.usage.warningLevel === 'hardstop' ? 'text-red-600' :
+                    config.usage.warningLevel === 'red' ? 'text-orange-600' :
+                    config.usage.warningLevel === 'yellow' ? 'text-yellow-600' : ''
+                  }`}>
+                    {config.usage.used} / {config.usage.quota}
+                  </span>
+                  <Badge variant="outline" className="text-xs">
+                    {config.config?.planType === 'developer' ? 'Developer Plan' : 'Free Plan'}
+                  </Badge>
+                </div>
+                {isAdmin && (
+                  <Dialog open={showSettingsDialog} onOpenChange={setShowSettingsDialog}>
+                    <DialogTrigger asChild>
+                      <Button variant="outline" size="sm" data-testid="btn-settings">
+                        <Settings className="h-4 w-4 mr-1" />
+                        Settings
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Lead Discovery Settings</DialogTitle>
+                        <DialogDescription>Admin controls for SERP usage and queries</DialogDescription>
+                      </DialogHeader>
+                      <div className="space-y-4 py-4">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <Label>Enable 3rd Query</Label>
+                            <p className="text-xs text-muted-foreground">
+                              "Grooming salon in [STATE], Zip code [ZIP]"
+                            </p>
+                          </div>
+                          <Switch
+                            checked={config.config?.enableThirdQuery}
+                            onCheckedChange={(checked) => updateConfigMutation.mutate({ enableThirdQuery: checked })}
+                            data-testid="switch-third-query"
+                          />
+                        </div>
+                        <div className="border-t pt-4">
+                          <Label className="text-sm font-medium">Plan Settings</Label>
+                          <p className="text-xs text-muted-foreground mb-2">
+                            Current plan: {config.config?.planType}
+                          </p>
+                          {config.config?.planType === 'free' && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => updateConfigMutation.mutate({ planType: 'developer', maxZipsPerRun: 20, queriesPerZip: 3 })}
+                              data-testid="btn-upgrade-plan"
+                            >
+                              Upgrade to Developer Plan
+                            </Button>
+                          )}
+                          <p className="text-xs text-muted-foreground mt-2">
+                            Developer plan: 5000 searches/month, 20 ZIPs/run, 3 queries/ZIP
+                          </p>
+                        </div>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+                )}
+              </div>
+              <Progress 
+                value={(config.usage.used / config.usage.quota) * 100} 
+                className={`h-2 ${
+                  config.usage.warningLevel === 'hardstop' ? '[&>div]:bg-red-500' :
+                  config.usage.warningLevel === 'red' ? '[&>div]:bg-orange-500' :
+                  config.usage.warningLevel === 'yellow' ? '[&>div]:bg-yellow-500' : ''
+                }`}
+              />
+              {config.usage.isQuotaReached && (
+                <p className="text-sm text-red-600 mt-2 font-medium">
+                  SERP quota reached – upgrade required to continue searching
+                </p>
+              )}
+              {config.usage.warningLevel === 'red' && !config.usage.isQuotaReached && (
+                <p className="text-sm text-orange-600 mt-2">
+                  Warning: {config.usage.hardStopAt - config.usage.used} searches remaining before hard stop
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
         <Tabs defaultValue="jobs" className="space-y-4">
           <div className="flex justify-between items-center">
             <TabsList>
@@ -255,43 +411,14 @@ export default function LeadDiscovery() {
                     />
                   </div>
 
-                  <div>
-                    <Label>Search Engines</Label>
-                    <div className="flex gap-4 mt-2">
-                      <label className="flex items-center gap-2">
-                        <Checkbox
-                          checked={newJobSearchEngines.includes("google")}
-                          onCheckedChange={(checked) => {
-                            if (checked) setNewJobSearchEngines([...newJobSearchEngines, "google"]);
-                            else setNewJobSearchEngines(newJobSearchEngines.filter(e => e !== "google"));
-                          }}
-                        />
-                        Google
-                      </label>
-                      <label className="flex items-center gap-2">
-                        <Checkbox
-                          checked={newJobSearchEngines.includes("bing")}
-                          onCheckedChange={(checked) => {
-                            if (checked) setNewJobSearchEngines([...newJobSearchEngines, "bing"]);
-                            else setNewJobSearchEngines(newJobSearchEngines.filter(e => e !== "bing"));
-                          }}
-                        />
-                        Bing
-                      </label>
+                  {config?.config && (
+                    <div className="text-sm p-3 bg-muted rounded-md space-y-1">
+                      <p><strong>Limits:</strong></p>
+                      <p>• Max {config.config.maxZipsPerRun} ZIP codes per search</p>
+                      <p>• {config.config.queriesPerZip} queries per ZIP ({config.config.enableThirdQuery ? "3rd query enabled" : "2 default"})</p>
+                      <p>• Uses Google Maps search engine</p>
                     </div>
-                  </div>
-
-                  <div>
-                    <Label>Max Results Per ZIP</Label>
-                    <Input
-                      type="number"
-                      value={newJobMaxPerZip}
-                      onChange={(e) => setNewJobMaxPerZip(parseInt(e.target.value) || 20)}
-                      min={5}
-                      max={50}
-                      data-testid="input-max-per-zip"
-                    />
-                  </div>
+                  )}
 
                   <div className="flex justify-end gap-2">
                     <Button variant="outline" onClick={() => setShowNewJobDialog(false)}>Cancel</Button>

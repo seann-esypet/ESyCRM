@@ -1190,12 +1190,81 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Check if SerpAPI key is configured
+  // Check if SerpAPI key is configured and get full status
   app.get("/api/lead-discovery/config", isAuthenticated, async (req: any, res) => {
-    res.json({
-      serpApiConfigured: !!process.env.SERPAPI_API_KEY,
-      scraperApiConfigured: !!process.env.SCRAPERAPI_API_KEY,
-    });
+    try {
+      const { getSerpUsageStatus, canRunDiscovery, getActiveQueries } = await import("./lead-discovery");
+      const status = await getSerpUsageStatus();
+      const queries = await getActiveQueries();
+      
+      res.json({
+        serpApiConfigured: !!process.env.SERPAPI_API_KEY,
+        usage: {
+          used: status.usage.usedCredits || 0,
+          quota: status.usage.monthlyQuota || 250,
+          hardStopAt: status.usage.hardStopAt || 200,
+          warningLevel: status.warningLevel,
+          isQuotaReached: status.isQuotaReached,
+        },
+        config: {
+          queriesPerZip: status.config.queriesPerZip || 2,
+          maxZipsPerRun: status.config.maxZipsPerRun || 3,
+          maxRunsPerDay: status.config.maxRunsPerDay || 1,
+          maxSerpCallsPerHour: status.config.maxSerpCallsPerHour || 5,
+          enableThirdQuery: status.config.enableThirdQuery === "true",
+          planType: status.config.planType || "free",
+        },
+        activeQueries: queries,
+      });
+    } catch (error) {
+      res.json({
+        serpApiConfigured: !!process.env.SERPAPI_API_KEY,
+        usage: { used: 0, quota: 250, hardStopAt: 200, warningLevel: 'none', isQuotaReached: false },
+        config: { queriesPerZip: 2, maxZipsPerRun: 3, maxRunsPerDay: 1, maxSerpCallsPerHour: 5, enableThirdQuery: false, planType: "free" },
+        activeQueries: [],
+      });
+    }
+  });
+
+  // Admin: Update discovery config (toggle 3rd query, upgrade plan)
+  app.patch("/api/lead-discovery/config", isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const { enableThirdQuery, planType, queriesPerZip, maxZipsPerRun, maxRunsPerDay, maxSerpCallsPerHour } = req.body;
+      
+      const updates: any = {};
+      if (enableThirdQuery !== undefined) {
+        updates.enableThirdQuery = enableThirdQuery ? "true" : "false";
+      }
+      if (planType) updates.planType = planType;
+      if (queriesPerZip) updates.queriesPerZip = queriesPerZip;
+      if (maxZipsPerRun) updates.maxZipsPerRun = maxZipsPerRun;
+      if (maxRunsPerDay) updates.maxRunsPerDay = maxRunsPerDay;
+      if (maxSerpCallsPerHour) updates.maxSerpCallsPerHour = maxSerpCallsPerHour;
+      
+      const config = await storage.updateLeadDiscoveryConfig("global", updates);
+      
+      // If upgrading to developer plan, update quota too
+      if (planType === "developer") {
+        const monthYear = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+        await storage.updateSerpQuota(monthYear, 5000, 4000);
+      }
+      
+      res.json({ success: true, config });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to update config" });
+    }
+  });
+
+  // Pre-flight check before starting a job
+  app.post("/api/lead-discovery/check", isAuthenticated, async (req: any, res) => {
+    try {
+      const { numZips } = req.body;
+      const { canRunDiscovery } = await import("./lead-discovery");
+      const result = await canRunDiscovery(req.user.id, numZips || 1);
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ allowed: false, reason: "Check failed" });
+    }
   });
 
   const httpServer = createServer(app);

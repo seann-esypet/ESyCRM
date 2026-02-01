@@ -225,6 +225,40 @@ export const insertInboxMessageSchema = createInsertSchema(inboxMessages).omit({
   receivedAt: true,
 });
 
+// SERP API Usage Tracking
+export const serpUsage = pgTable("serp_usage", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  monthYear: text("month_year").notNull().unique(), // Format: "2025-01"
+  monthlyQuota: integer("monthly_quota").notNull().default(250),
+  usedCredits: integer("used_credits").notNull().default(0),
+  hardStopAt: integer("hard_stop_at").notNull().default(200), // 80% of quota
+  lastResetDate: timestamp("last_reset_date").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// SERP Query Cache (30-day caching)
+export const serpCache = pgTable("serp_cache", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  zipCode: text("zip_code").notNull(),
+  queryTemplate: text("query_template").notNull(), // e.g., "Dog Groomer in {STATE}, Zip code {ZIP}"
+  state: text("state").notNull(),
+  resultsJson: jsonb("results_json").notNull(), // Cached SERP results
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Lead Discovery Config (per-user or global settings)
+export const leadDiscoveryConfig = pgTable("lead_discovery_config", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  configKey: text("config_key").notNull().unique(), // e.g., "global" or userId
+  queriesPerZip: integer("queries_per_zip").notNull().default(2), // 2 default, 3 with admin toggle
+  maxZipsPerRun: integer("max_zips_per_run").notNull().default(3),
+  maxRunsPerDay: integer("max_runs_per_day").notNull().default(1),
+  maxSerpCallsPerHour: integer("max_serp_calls_per_hour").notNull().default(5),
+  enableThirdQuery: text("enable_third_query").default("false"), // Admin toggle for 3rd query
+  planType: text("plan_type").notNull().default("free"), // free, developer
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // Lead Discovery Module
 export const leadDiscoveryJobs = pgTable("lead_discovery_jobs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -278,6 +312,21 @@ export const leadDiscoveryResults = pgTable("lead_discovery_results", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const insertSerpUsageSchema = createInsertSchema(serpUsage).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertSerpCacheSchema = createInsertSchema(serpCache).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertLeadDiscoveryConfigSchema = createInsertSchema(leadDiscoveryConfig).omit({
+  id: true,
+  updatedAt: true,
+});
+
 export const insertLeadDiscoveryJobSchema = createInsertSchema(leadDiscoveryJobs).omit({
   id: true,
   userId: true,
@@ -315,5 +364,11 @@ export type LeadDiscoveryJob = typeof leadDiscoveryJobs.$inferSelect;
 export type InsertLeadDiscoveryJob = z.infer<typeof insertLeadDiscoveryJobSchema>;
 export type LeadDiscoveryResult = typeof leadDiscoveryResults.$inferSelect;
 export type InsertLeadDiscoveryResult = z.infer<typeof insertLeadDiscoveryResultSchema>;
+export type SerpUsage = typeof serpUsage.$inferSelect;
+export type InsertSerpUsage = z.infer<typeof insertSerpUsageSchema>;
+export type SerpCache = typeof serpCache.$inferSelect;
+export type InsertSerpCache = z.infer<typeof insertSerpCacheSchema>;
+export type LeadDiscoveryConfig = typeof leadDiscoveryConfig.$inferSelect;
+export type InsertLeadDiscoveryConfig = z.infer<typeof insertLeadDiscoveryConfigSchema>;
 export type User = typeof users.$inferSelect;
 export type UpsertUser = typeof users.$inferInsert;
