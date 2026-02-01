@@ -49,7 +49,8 @@ export const contacts = pgTable("contacts", {
   phoneOther: text("phone_other"),
   company: text("company"),
   jobTitle: text("job_title"),
-  usesSoftware: text("uses_software"), // Yes, No
+  usesSoftware: text("uses_software"), // Yes, No, Unknown
+  hasWebsite: text("has_website"), // Yes, No, Unknown
   websiteUrl: text("website_url"),
   facebookUrl: text("facebook_url"),
   instagramHandle: text("instagram_handle"),

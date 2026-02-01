@@ -37,6 +37,7 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
       company: contact?.company || "",
       jobTitle: contact?.jobTitle || "",
       usesSoftware: contact?.usesSoftware || "",
+      hasWebsite: contact?.hasWebsite || "",
       websiteUrl: contact?.websiteUrl || "",
       facebookUrl: contact?.facebookUrl || "",
       instagramHandle: contact?.instagramHandle || "",
@@ -423,6 +424,32 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
         <div className="space-y-4 pt-2 border-t border-border">
           <h3 className="text-sm font-semibold text-foreground">Social Media & Web</h3>
           <div className="grid grid-cols-1 gap-4">
+            <FormField
+              control={form.control}
+              name="hasWebsite"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Has Website</FormLabel>
+                  <Select 
+                    onValueChange={field.onChange} 
+                    value={field.value || ""}
+                  >
+                    <FormControl>
+                      <SelectTrigger data-testid="select-hasWebsite">
+                        <SelectValue placeholder="Select..." />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="Yes">Yes</SelectItem>
+                      <SelectItem value="No">No</SelectItem>
+                      <SelectItem value="Unknown">Unknown</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
             <FormField
               control={form.control}
               name="websiteUrl"
