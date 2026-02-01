@@ -57,6 +57,7 @@ export const contacts = pgTable("contacts", {
   secondaryLastName: text("secondary_last_name"),
   leadSource: text("lead_source"), // Inbound, Outbound, Cold Call, Facebook Ad, Referral, Event, EsyPet Website Form, Google Search
   currentSoftware: text("current_software"),
+  bookingSoftwareUrl: text("booking_software_url"),
   numberOfEmployees: integer("number_of_employees"),
   numberOfLocations: integer("number_of_locations"),
   painPoints: text("pain_points"),

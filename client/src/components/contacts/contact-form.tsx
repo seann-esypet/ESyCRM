@@ -44,6 +44,7 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
       secondaryLastName: contact?.secondaryLastName || "",
       leadSource: contact?.leadSource || "",
       currentSoftware: contact?.currentSoftware || "",
+      bookingSoftwareUrl: contact?.bookingSoftwareUrl || "",
       numberOfEmployees: contact?.numberOfEmployees || undefined,
       numberOfLocations: contact?.numberOfLocations || undefined,
       painPoints: contact?.painPoints || "",
@@ -347,6 +348,25 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
                     value={field.value || ""}
                     placeholder="e.g., Salesforce, HubSpot, Custom CRM"
                     data-testid="input-currentSoftware"
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name="bookingSoftwareUrl"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Booking Software URL</FormLabel>
+                <FormControl>
+                  <Input 
+                    {...field} 
+                    value={field.value || ""}
+                    placeholder="e.g., https://app.example.com"
+                    data-testid="input-bookingSoftwareUrl"
                   />
                 </FormControl>
                 <FormMessage />

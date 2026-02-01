@@ -884,6 +884,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         jobTitle: contact.jobTitle,
         "Currently uses software": contact.usesSoftware,
         "Software Used": contact.currentSoftware,
+        "Booking Software URL": contact.bookingSoftwareUrl,
         source: contact.leadSource,
         notes: contact.notes,
         userId: contact.userId,
