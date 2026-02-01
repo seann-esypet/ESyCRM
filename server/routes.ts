@@ -873,9 +873,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/export/contacts", isAdmin, async (req: any, res) => {
     try {
       const contacts = await storage.getContacts(null); // null = get all data (admin)
-      // Use explicit fields to ensure consistent CSV format even with empty data
-      const fields = ['id', 'firstName', 'lastName', 'email', 'phone', 'company', 'jobTitle', 'source', 'notes', 'userId'];
-      const csv = Papa.unparse(contacts, { header: true, columns: fields });
+      // Transform data to use desired column headers
+      const transformedContacts = contacts.map((contact: any) => ({
+        id: contact.id,
+        firstName: contact.firstName,
+        lastName: contact.lastName,
+        email: contact.email,
+        phone: contact.phone,
+        company: contact.company,
+        jobTitle: contact.jobTitle,
+        "Currently uses software": contact.usesSoftware,
+        "Software Used": contact.currentSoftware,
+        source: contact.leadSource,
+        notes: contact.notes,
+        userId: contact.userId,
+      }));
+      const csv = Papa.unparse(transformedContacts, { header: true });
       res.setHeader('Content-Type', 'text/csv');
       res.setHeader('Content-Disposition', 'attachment; filename=contacts.csv');
       res.send(csv);

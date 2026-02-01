@@ -36,6 +36,7 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
       phoneOther: contact?.phoneOther || "",
       company: contact?.company || "",
       jobTitle: contact?.jobTitle || "",
+      usesSoftware: contact?.usesSoftware || "",
       websiteUrl: contact?.websiteUrl || "",
       facebookUrl: contact?.facebookUrl || "",
       instagramHandle: contact?.instagramHandle || "",
@@ -308,6 +309,31 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
               )}
             />
           </div>
+
+          <FormField
+            control={form.control}
+            name="usesSoftware"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Uses Software</FormLabel>
+                <Select 
+                  onValueChange={field.onChange} 
+                  value={field.value || ""}
+                >
+                  <FormControl>
+                    <SelectTrigger data-testid="select-usesSoftware">
+                      <SelectValue placeholder="Select..." />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent>
+                    <SelectItem value="Yes">Yes</SelectItem>
+                    <SelectItem value="No">No</SelectItem>
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
 
           <FormField
             control={form.control}
