@@ -18,6 +18,10 @@ import {
   type InsertEmailSequenceLog,
   type InboxMessage,
   type InsertInboxMessage,
+  type LeadDiscoveryJob,
+  type InsertLeadDiscoveryJob,
+  type LeadDiscoveryResult,
+  type InsertLeadDiscoveryResult,
   users,
   contacts,
   contactGroups,
@@ -26,7 +30,9 @@ import {
   activities,
   emailSequences,
   emailSequenceLogs,
-  inboxMessages
+  inboxMessages,
+  leadDiscoveryJobs,
+  leadDiscoveryResults
 } from "@shared/schema";
 import { normalizePhoneNumber, normalizeName, normalizeEmail } from "@shared/utils";
 import { db } from "./db";
@@ -102,6 +108,18 @@ export interface IStorage {
   updateInboxMessage(id: string, message: Partial<InsertInboxMessage>, userId: string | null): Promise<InboxMessage | undefined>;
   deleteInboxMessage(id: string, userId: string | null): Promise<boolean>;
   getUnreadCount(userId: string | null): Promise<number>;
+  
+  // Lead Discovery
+  getLeadDiscoveryJobs(userId: string | null): Promise<LeadDiscoveryJob[]>;
+  getLeadDiscoveryJob(id: string, userId: string | null): Promise<LeadDiscoveryJob | undefined>;
+  createLeadDiscoveryJob(job: InsertLeadDiscoveryJob, userId: string): Promise<LeadDiscoveryJob>;
+  updateLeadDiscoveryJob(id: string, job: Partial<LeadDiscoveryJob>, userId: string | null): Promise<LeadDiscoveryJob | undefined>;
+  deleteLeadDiscoveryJob(id: string, userId: string | null): Promise<boolean>;
+  getLeadDiscoveryResults(jobId: string, userId: string | null): Promise<LeadDiscoveryResult[]>;
+  createLeadDiscoveryResult(result: InsertLeadDiscoveryResult, userId: string): Promise<LeadDiscoveryResult>;
+  bulkCreateLeadDiscoveryResults(results: InsertLeadDiscoveryResult[], userId: string): Promise<LeadDiscoveryResult[]>;
+  updateLeadDiscoveryResult(id: string, result: Partial<LeadDiscoveryResult>, userId: string | null): Promise<LeadDiscoveryResult | undefined>;
+  markResultsAsImported(resultIds: string[], contactIds: string[], userId: string | null): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -966,6 +984,131 @@ export class DatabaseStorage implements IStorage {
       .where(whereClause);
     
     return result?.count || 0;
+  }
+
+  // Lead Discovery operations
+  async getLeadDiscoveryJobs(userId: string | null): Promise<LeadDiscoveryJob[]> {
+    const whereClause = userId === null
+      ? undefined
+      : eq(leadDiscoveryJobs.userId, userId);
+
+    return await db
+      .select()
+      .from(leadDiscoveryJobs)
+      .where(whereClause)
+      .orderBy(desc(leadDiscoveryJobs.createdAt));
+  }
+
+  async getLeadDiscoveryJob(id: string, userId: string | null): Promise<LeadDiscoveryJob | undefined> {
+    const whereClause = userId === null
+      ? eq(leadDiscoveryJobs.id, id)
+      : and(eq(leadDiscoveryJobs.id, id), eq(leadDiscoveryJobs.userId, userId));
+
+    const [job] = await db
+      .select()
+      .from(leadDiscoveryJobs)
+      .where(whereClause);
+    return job;
+  }
+
+  async createLeadDiscoveryJob(job: InsertLeadDiscoveryJob, userId: string): Promise<LeadDiscoveryJob> {
+    const zipCodeList = job.zipCodes.split(',').map(z => z.trim()).filter(z => z);
+    const [newJob] = await db
+      .insert(leadDiscoveryJobs)
+      .values({
+        ...job,
+        userId,
+        totalZipCodes: zipCodeList.length,
+      })
+      .returning();
+    return newJob;
+  }
+
+  async updateLeadDiscoveryJob(id: string, job: Partial<LeadDiscoveryJob>, userId: string | null): Promise<LeadDiscoveryJob | undefined> {
+    const whereClause = userId === null
+      ? eq(leadDiscoveryJobs.id, id)
+      : and(eq(leadDiscoveryJobs.id, id), eq(leadDiscoveryJobs.userId, userId));
+
+    const [updated] = await db
+      .update(leadDiscoveryJobs)
+      .set(job)
+      .where(whereClause)
+      .returning();
+    return updated;
+  }
+
+  async deleteLeadDiscoveryJob(id: string, userId: string | null): Promise<boolean> {
+    const whereClause = userId === null
+      ? eq(leadDiscoveryJobs.id, id)
+      : and(eq(leadDiscoveryJobs.id, id), eq(leadDiscoveryJobs.userId, userId));
+
+    const result = await db
+      .delete(leadDiscoveryJobs)
+      .where(whereClause)
+      .returning();
+    return result.length > 0;
+  }
+
+  async getLeadDiscoveryResults(jobId: string, userId: string | null): Promise<LeadDiscoveryResult[]> {
+    const whereClause = userId === null
+      ? eq(leadDiscoveryResults.jobId, jobId)
+      : and(eq(leadDiscoveryResults.jobId, jobId), eq(leadDiscoveryResults.userId, userId));
+
+    return await db
+      .select()
+      .from(leadDiscoveryResults)
+      .where(whereClause)
+      .orderBy(desc(leadDiscoveryResults.createdAt));
+  }
+
+  async createLeadDiscoveryResult(result: InsertLeadDiscoveryResult, userId: string): Promise<LeadDiscoveryResult> {
+    const [newResult] = await db
+      .insert(leadDiscoveryResults)
+      .values({
+        ...result,
+        userId,
+      })
+      .returning();
+    return newResult;
+  }
+
+  async bulkCreateLeadDiscoveryResults(results: InsertLeadDiscoveryResult[], userId: string): Promise<LeadDiscoveryResult[]> {
+    if (results.length === 0) return [];
+    
+    const resultsWithUserId = results.map(r => ({ ...r, userId }));
+    return await db
+      .insert(leadDiscoveryResults)
+      .values(resultsWithUserId)
+      .returning();
+  }
+
+  async updateLeadDiscoveryResult(id: string, result: Partial<LeadDiscoveryResult>, userId: string | null): Promise<LeadDiscoveryResult | undefined> {
+    const whereClause = userId === null
+      ? eq(leadDiscoveryResults.id, id)
+      : and(eq(leadDiscoveryResults.id, id), eq(leadDiscoveryResults.userId, userId));
+
+    const [updated] = await db
+      .update(leadDiscoveryResults)
+      .set(result)
+      .where(whereClause)
+      .returning();
+    return updated;
+  }
+
+  async markResultsAsImported(resultIds: string[], contactIds: string[], userId: string | null): Promise<void> {
+    for (let i = 0; i < resultIds.length; i++) {
+      const whereClause = userId === null
+        ? eq(leadDiscoveryResults.id, resultIds[i])
+        : and(eq(leadDiscoveryResults.id, resultIds[i]), eq(leadDiscoveryResults.userId, userId));
+
+      await db
+        .update(leadDiscoveryResults)
+        .set({ 
+          isImported: "true",
+          importedContactId: contactIds[i]
+        })
+        .where(whereClause);
+    }
   }
 }
 

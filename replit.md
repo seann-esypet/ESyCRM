@@ -45,6 +45,17 @@ ESyCRM is a modern, multi-user Customer Relationship Management system built wit
 - **Profile Settings**: Personal settings management for salespeople
   - **Editable Account Information**: Users can update their first name, last name, phone, and work email
   - **Work Email Configuration**: Set professional email address (e.g., john@esypet.com) used as sender for email sequences
+- **Lead Discovery Module**: Automated business discovery and qualification for pet grooming leads
+  - **ZIP-Based Search**: Search for pet grooming businesses by state and ZIP codes using SerpAPI
+  - **Multi-Engine Support**: Google and Bing search integration
+  - **Website Crawling**: Automatic website analysis using native fetch()
+  - **Software Detection**: Identifies booking software from 25+ known platforms (MoeGo, Vagaro, Square, etc.)
+  - **Deduplication**: Automatic duplicate removal by website domain, phone, or business name
+  - **Qualification**: Classifies businesses as "Uses Software" (Yes/No/Unknown)
+  - **Contact Extraction**: Attempts to extract email, phone, and contact form URLs
+  - **CRM Import**: Direct import of discovered leads to contacts with one click
+  - **CSV Export**: Export results matching CRM import format
+  - **Progress Tracking**: Real-time progress updates per ZIP code
 - **Secure Authentication**: Login with Google, GitHub, or email/password via Replit Auth
 
 The system follows a monorepo structure with shared TypeScript schemas and utilities, ensuring type safety across the entire application stack. Data access is automatically controlled based on user role: salespeople see only their own data, while administrators have full system visibility.

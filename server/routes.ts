@@ -3,9 +3,10 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { setupAuth, isAuthenticated, isAdmin } from "./replitAuth";
-import { insertContactSchema, insertContactGroupSchema, insertDealSchema, insertTaskSchema, insertEmailSequenceSchema, type InsertContact } from "@shared/schema";
+import { insertContactSchema, insertContactGroupSchema, insertDealSchema, insertTaskSchema, insertEmailSequenceSchema, insertLeadDiscoveryJobSchema, type InsertContact } from "@shared/schema";
 import { z } from "zod";
 import Papa from "papaparse";
+import { runLeadDiscoveryJob, importResultsToCRM } from "./lead-discovery";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Setup auth middleware - From Replit Auth blueprint
@@ -1046,6 +1047,155 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("Error processing inbound email:", error);
       res.status(500).json({ message: "Failed to process inbound email" });
     }
+  });
+
+  // Lead Discovery Routes
+  app.get("/api/lead-discovery/jobs", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const jobs = await storage.getLeadDiscoveryJobs(userId);
+      res.json(jobs);
+    } catch (error) {
+      console.error("Error fetching lead discovery jobs:", error);
+      res.status(500).json({ message: "Failed to fetch jobs" });
+    }
+  });
+
+  app.get("/api/lead-discovery/jobs/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const job = await storage.getLeadDiscoveryJob(req.params.id, userId);
+      if (!job) {
+        return res.status(404).json({ message: "Job not found" });
+      }
+      res.json(job);
+    } catch (error) {
+      console.error("Error fetching lead discovery job:", error);
+      res.status(500).json({ message: "Failed to fetch job" });
+    }
+  });
+
+  app.post("/api/lead-discovery/jobs", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const jobData = insertLeadDiscoveryJobSchema.parse(req.body);
+      const job = await storage.createLeadDiscoveryJob(jobData, userId);
+      
+      // Start the job asynchronously
+      runLeadDiscoveryJob(job.id, userId).catch(err => {
+        console.error("Lead discovery job failed:", err);
+      });
+      
+      res.status(201).json(job);
+    } catch (error) {
+      console.error("Error creating lead discovery job:", error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid job data", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to create job" });
+    }
+  });
+
+  app.post("/api/lead-discovery/jobs/:id/cancel", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const job = await storage.updateLeadDiscoveryJob(req.params.id, {
+        status: "cancelled",
+        completedAt: new Date(),
+      }, userId);
+      if (!job) {
+        return res.status(404).json({ message: "Job not found" });
+      }
+      res.json(job);
+    } catch (error) {
+      console.error("Error cancelling job:", error);
+      res.status(500).json({ message: "Failed to cancel job" });
+    }
+  });
+
+  app.delete("/api/lead-discovery/jobs/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const deleted = await storage.deleteLeadDiscoveryJob(req.params.id, userId);
+      if (!deleted) {
+        return res.status(404).json({ message: "Job not found" });
+      }
+      res.json({ message: "Job deleted" });
+    } catch (error) {
+      console.error("Error deleting job:", error);
+      res.status(500).json({ message: "Failed to delete job" });
+    }
+  });
+
+  app.get("/api/lead-discovery/jobs/:id/results", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const results = await storage.getLeadDiscoveryResults(req.params.id, userId);
+      res.json(results);
+    } catch (error) {
+      console.error("Error fetching results:", error);
+      res.status(500).json({ message: "Failed to fetch results" });
+    }
+  });
+
+  app.post("/api/lead-discovery/import", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const { resultIds } = req.body;
+      
+      if (!Array.isArray(resultIds) || resultIds.length === 0) {
+        return res.status(400).json({ message: "No result IDs provided" });
+      }
+
+      const { imported, errors } = await importResultsToCRM(resultIds, userId);
+      res.json({ imported, errors });
+    } catch (error) {
+      console.error("Error importing results:", error);
+      res.status(500).json({ message: "Failed to import results" });
+    }
+  });
+
+  app.get("/api/lead-discovery/export/:jobId", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const results = await storage.getLeadDiscoveryResults(req.params.jobId, userId);
+      
+      // Transform to CRM format
+      const csvData = results.map(r => ({
+        id: r.id,
+        firstName: r.firstName || "",
+        lastName: r.lastName || "",
+        email: r.email || "",
+        phone: r.phone || "",
+        company: r.company || "",
+        jobTitle: r.jobTitle || "",
+        "Currently uses software": r.usesSoftware || "",
+        "Software Used": r.currentSoftware || "",
+        "Booking Software URL": r.bookingSoftwareUrl || "",
+        "Has Web Site": r.hasWebsite || "",
+        "Web Site Address": r.websiteUrl || "",
+        "Contact Request Form URL": r.contactRequestFormUrl || "",
+        source: r.leadSource || "",
+        notes: r.notes || "",
+        userId: r.userId || "",
+      }));
+
+      const csv = Papa.unparse(csvData, { header: true });
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", `attachment; filename=lead-discovery-${req.params.jobId}.csv`);
+      res.send(csv);
+    } catch (error) {
+      console.error("Error exporting results:", error);
+      res.status(500).json({ message: "Failed to export results" });
+    }
+  });
+
+  // Check if SerpAPI key is configured
+  app.get("/api/lead-discovery/config", isAuthenticated, async (req: any, res) => {
+    res.json({
+      serpApiConfigured: !!process.env.SERPAPI_API_KEY,
+      scraperApiConfigured: !!process.env.SCRAPERAPI_API_KEY,
+    });
   });
 
   const httpServer = createServer(app);

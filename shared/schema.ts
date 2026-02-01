@@ -225,6 +225,76 @@ export const insertInboxMessageSchema = createInsertSchema(inboxMessages).omit({
   receivedAt: true,
 });
 
+// Lead Discovery Module
+export const leadDiscoveryJobs = pgTable("lead_discovery_jobs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onUpdate: "cascade" }),
+  state: text("state").notNull(), // e.g., "NY", "CA"
+  zipCodes: text("zip_codes").notNull(), // Comma-separated ZIP codes
+  searchEngines: text("search_engines").notNull().default("google,bing"), // Comma-separated: google, bing, yahoo
+  maxResultsPerZip: integer("max_results_per_zip").default(20),
+  status: text("status").notNull().default("pending"), // pending, running, completed, failed, cancelled
+  totalZipCodes: integer("total_zip_codes").default(0),
+  processedZipCodes: integer("processed_zip_codes").default(0),
+  totalBusinessesFound: integer("total_businesses_found").default(0),
+  duplicatesRemoved: integer("duplicates_removed").default(0),
+  errorMessage: text("error_message"),
+  startedAt: timestamp("started_at"),
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const leadDiscoveryResults = pgTable("lead_discovery_results", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  jobId: varchar("job_id").notNull().references(() => leadDiscoveryJobs.id, { onDelete: "cascade" }),
+  userId: varchar("user_id").notNull().references(() => users.id, { onUpdate: "cascade" }),
+  // Core business info
+  firstName: text("first_name"),
+  lastName: text("last_name"),
+  email: text("email"),
+  phone: text("phone"),
+  company: text("company"),
+  jobTitle: text("job_title"),
+  // Software qualification
+  usesSoftware: text("uses_software"), // Yes, No, Unknown
+  currentSoftware: text("current_software"),
+  bookingSoftwareUrl: text("booking_software_url"),
+  // Website info
+  hasWebsite: text("has_website"), // Yes, No, Unknown
+  websiteUrl: text("website_url"),
+  contactRequestFormUrl: text("contact_request_form_url"),
+  // Source tracking
+  leadSource: text("lead_source"), // Google Search, Bing Search, etc.
+  notes: text("notes"),
+  // Discovery metadata
+  zipCode: text("zip_code"),
+  searchQuery: text("search_query"),
+  googleBusinessProfileUrl: text("google_business_profile_url"),
+  isDuplicate: text("is_duplicate").default("false"), // true, false
+  isImported: text("is_imported").default("false"), // true, false
+  importedContactId: varchar("imported_contact_id"),
+  crawlStatus: text("crawl_status").default("pending"), // pending, completed, failed
+  crawlError: text("crawl_error"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertLeadDiscoveryJobSchema = createInsertSchema(leadDiscoveryJobs).omit({
+  id: true,
+  userId: true,
+  startedAt: true,
+  completedAt: true,
+  createdAt: true,
+}).extend({
+  state: z.string().min(1, "State is required"),
+  zipCodes: z.string().min(1, "At least one ZIP code is required"),
+});
+
+export const insertLeadDiscoveryResultSchema = createInsertSchema(leadDiscoveryResults).omit({
+  id: true,
+  userId: true,
+  createdAt: true,
+});
+
 export type ContactGroup = typeof contactGroups.$inferSelect;
 export type InsertContactGroup = z.infer<typeof insertContactGroupSchema>;
 export type Contact = typeof contacts.$inferSelect;
@@ -241,5 +311,9 @@ export type EmailSequenceLog = typeof emailSequenceLogs.$inferSelect;
 export type InsertEmailSequenceLog = z.infer<typeof insertEmailSequenceLogSchema>;
 export type InboxMessage = typeof inboxMessages.$inferSelect;
 export type InsertInboxMessage = z.infer<typeof insertInboxMessageSchema>;
+export type LeadDiscoveryJob = typeof leadDiscoveryJobs.$inferSelect;
+export type InsertLeadDiscoveryJob = z.infer<typeof insertLeadDiscoveryJobSchema>;
+export type LeadDiscoveryResult = typeof leadDiscoveryResults.$inferSelect;
+export type InsertLeadDiscoveryResult = z.infer<typeof insertLeadDiscoveryResultSchema>;
 export type User = typeof users.$inferSelect;
 export type UpsertUser = typeof users.$inferInsert;

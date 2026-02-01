@@ -13,11 +13,13 @@ import {
   Inbox as InboxIcon,
   Settings as SettingsIcon,
   LogOut,
-  UserCog
+  UserCog,
+  Search
 } from "lucide-react";
 
 const navigation = [
   { name: "Dashboard", href: "/", icon: BarChart3 },
+  { name: "Lead Discovery", href: "/lead-discovery", icon: Search },
   { name: "Contacts", href: "/contacts", icon: Users },
   { name: "Pipeline", href: "/deals", icon: Handshake },
   { name: "Tasks", href: "/tasks", icon: CheckSquare },

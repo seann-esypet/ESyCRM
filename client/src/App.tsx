@@ -16,6 +16,7 @@ import EmailSequences from "@/pages/email-sequences";
 import Inbox from "@/pages/inbox";
 import Settings from "@/pages/settings";
 import AdminUsers from "@/pages/admin-users";
+import LeadDiscovery from "@/pages/lead-discovery";
 import Sidebar from "@/components/layout/sidebar";
 
 // From Replit Auth blueprint - Conditional routing based on auth state
@@ -34,6 +35,7 @@ function Router() {
       <div className="flex-1 flex flex-col overflow-hidden">
         <Switch>
           <Route path="/" component={Dashboard} />
+          <Route path="/lead-discovery" component={LeadDiscovery} />
           <Route path="/contacts" component={Contacts} />
           <Route path="/deals" component={Deals} />
           <Route path="/tasks" component={Tasks} />
