@@ -13,6 +13,7 @@ if (SENDGRID_API_KEY) {
  * Supported variables:
  * - [Contact_First_Name] - Contact's first name
  * - [Sales_Person] - Salesperson's full name
+ * - [Business_Name] - Contact's company/business name
  */
 export function replaceTemplateVariables(
   content: string,
@@ -20,10 +21,12 @@ export function replaceTemplateVariables(
   salesperson: User
 ): string {
   const salespersonName = `${salesperson.firstName || ''} ${salesperson.lastName || ''}`.trim() || salesperson.email || 'Sales Team';
+  const businessName = contact.company || 'your business';
   
   return content
     .replace(/\[Contact_First_Name\]/g, contact.firstName)
-    .replace(/\[Sales_Person\]/g, salespersonName);
+    .replace(/\[Sales_Person\]/g, salespersonName)
+    .replace(/\[Business_Name\]/g, businessName);
 }
 
 /**

@@ -136,7 +136,7 @@ export default function EmailSequenceForm({ sequence, onSuccess, onCancel }: Ema
                   />
                 </FormControl>
                 <FormDescription>
-                  Use [Contact_First_Name] and [Sales_Person] as placeholders. They will be replaced automatically.
+                  Use [Contact_First_Name], [Sales_Person], and [Business_Name] as placeholders. They will be replaced automatically.
                 </FormDescription>
                 <FormMessage />
               </FormItem>
