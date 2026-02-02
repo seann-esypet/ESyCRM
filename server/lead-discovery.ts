@@ -592,8 +592,7 @@ export async function importResultsToCRM(
 
   for (const resultId of resultIds) {
     try {
-      const result = await storage.getLeadDiscoveryResults(resultId, null);
-      const leadResult = result.find(r => r.id === resultId);
+      const leadResult = await storage.getLeadDiscoveryResultById(resultId);
       
       if (!leadResult) {
         errors.push(`Result ${resultId} not found`);

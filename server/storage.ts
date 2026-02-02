@@ -122,6 +122,7 @@ export interface IStorage {
   updateLeadDiscoveryJob(id: string, job: Partial<LeadDiscoveryJob>, userId: string | null): Promise<LeadDiscoveryJob | undefined>;
   deleteLeadDiscoveryJob(id: string, userId: string | null): Promise<boolean>;
   getLeadDiscoveryResults(jobId: string, userId: string | null): Promise<LeadDiscoveryResult[]>;
+  getLeadDiscoveryResultById(id: string): Promise<LeadDiscoveryResult | undefined>;
   createLeadDiscoveryResult(result: InsertLeadDiscoveryResult, userId: string): Promise<LeadDiscoveryResult>;
   bulkCreateLeadDiscoveryResults(results: InsertLeadDiscoveryResult[], userId: string): Promise<LeadDiscoveryResult[]>;
   updateLeadDiscoveryResult(id: string, result: Partial<LeadDiscoveryResult>, userId: string | null): Promise<LeadDiscoveryResult | undefined>;
@@ -1083,6 +1084,14 @@ export class DatabaseStorage implements IStorage {
       .from(leadDiscoveryResults)
       .where(whereClause)
       .orderBy(desc(leadDiscoveryResults.createdAt));
+  }
+
+  async getLeadDiscoveryResultById(id: string): Promise<LeadDiscoveryResult | undefined> {
+    const [result] = await db
+      .select()
+      .from(leadDiscoveryResults)
+      .where(eq(leadDiscoveryResults.id, id));
+    return result;
   }
 
   async createLeadDiscoveryResult(result: InsertLeadDiscoveryResult, userId: string): Promise<LeadDiscoveryResult> {
