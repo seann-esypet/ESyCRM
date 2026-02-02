@@ -7,7 +7,65 @@ import type { Contact, EmailSequence, EmailSequenceLog } from "@shared/schema";
  * This runs periodically to check and send automated email sequences
  * 
  * IMPORTANT: Requires Reserved VM deployment for 24/7 operation
+ * 
+ * TIMEZONE: All scheduled times are interpreted as Eastern Time (America/New_York)
+ * This automatically handles Daylight Saving Time changes.
  */
+
+const TIMEZONE = "America/New_York";
+
+/**
+ * Get current time in Eastern timezone
+ */
+function getNowInEastern(): Date {
+  const now = new Date();
+  // Get the current time formatted in Eastern timezone
+  const easternString = now.toLocaleString("en-US", { timeZone: TIMEZONE });
+  return new Date(easternString);
+}
+
+/**
+ * Convert a date and time to Eastern timezone for comparison
+ * The scheduledDate stores the date the user picked, and scheduledTime is the time in Eastern
+ */
+function getScheduledDateTimeInEastern(scheduledDate: Date, scheduledTime: string): Date {
+  // Get the date components from the scheduled date (which was stored as UTC midnight)
+  const year = scheduledDate.getUTCFullYear();
+  const month = scheduledDate.getUTCMonth();
+  const day = scheduledDate.getUTCDate();
+  
+  // Parse the time
+  const [hours, minutes] = scheduledTime.split(':').map(Number);
+  
+  // Create a date string in Eastern timezone format
+  // We create the datetime as if it's in Eastern time
+  const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}T${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
+  
+  // Parse this as a local Eastern time by using toLocaleString trick
+  // Create date in UTC, then adjust
+  const targetDate = new Date(dateStr);
+  
+  // Get the offset difference between UTC and Eastern for this specific date
+  const utcDate = new Date(Date.UTC(year, month, day, hours, minutes, 0));
+  const easternOffset = getEasternOffset(utcDate);
+  
+  // Return the UTC time that corresponds to the Eastern time the user intended
+  return new Date(utcDate.getTime() + easternOffset * 60 * 1000);
+}
+
+/**
+ * Get the offset in minutes between UTC and Eastern time for a given date
+ * This handles DST automatically
+ */
+function getEasternOffset(date: Date): number {
+  const utcString = date.toLocaleString("en-US", { timeZone: "UTC" });
+  const easternString = date.toLocaleString("en-US", { timeZone: TIMEZONE });
+  
+  const utcDate = new Date(utcString);
+  const easternDate = new Date(easternString);
+  
+  return (utcDate.getTime() - easternDate.getTime()) / (60 * 1000);
+}
 
 /**
  * Check if it's time to send Sequence 1 for a contact
@@ -26,17 +84,15 @@ function shouldSendSequence1(
     return false;
   }
 
-  const now = new Date();
+  const now = new Date(); // Current UTC time
   
   // scheduledDate is already a Date object from Drizzle
   const scheduledDate = sequence.scheduledDate instanceof Date 
     ? sequence.scheduledDate 
     : new Date(sequence.scheduledDate);
   
-  // Create scheduled datetime by combining date and time
-  const scheduledDateTime = new Date(scheduledDate);
-  const [hours, minutes] = sequence.scheduledTime.split(':');
-  scheduledDateTime.setHours(parseInt(hours, 10), parseInt(minutes, 10), 0, 0);
+  // Get the scheduled time interpreted as Eastern timezone
+  const scheduledDateTime = getScheduledDateTimeInEastern(scheduledDate, sequence.scheduledTime);
   
   return now >= scheduledDateTime;
 }
