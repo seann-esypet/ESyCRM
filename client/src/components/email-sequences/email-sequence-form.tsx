@@ -24,10 +24,15 @@ export default function EmailSequenceForm({ sequence, onSuccess, onCancel }: Ema
   const isEdit = !!sequence?.id;
   const sequenceNumber = sequence?.sequenceNumber || 1;
 
-  // Generate time options (00:00 to 23:00 in 1-hour increments)
-  const timeOptions = Array.from({ length: 24 }, (_, i) => {
-    const hour = i.toString().padStart(2, '0');
-    return `${hour}:00`;
+  // Generate time options (12-hour format with half-hour increments)
+  const timeOptions = Array.from({ length: 48 }, (_, i) => {
+    const hour24 = Math.floor(i / 2);
+    const minutes = i % 2 === 0 ? "00" : "30";
+    const hour12 = hour24 === 0 ? 12 : hour24 > 12 ? hour24 - 12 : hour24;
+    const ampm = hour24 < 12 ? "AM" : "PM";
+    const value = `${hour24.toString().padStart(2, '0')}:${minutes}`;
+    const label = `${hour12}:${minutes} ${ampm}`;
+    return { value, label };
   });
 
   // Generate days options (1-30 days)
@@ -180,12 +185,12 @@ export default function EmailSequenceForm({ sequence, onSuccess, onCancel }: Ema
                       </FormControl>
                       <SelectContent>
                         {timeOptions.map(time => (
-                          <SelectItem key={time} value={time}>{time}</SelectItem>
+                          <SelectItem key={time.value} value={time.value}>{time.label}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
                     <FormDescription>
-                      Time to send (24-hour format)
+                      Time to send (Eastern Time)
                     </FormDescription>
                     <FormMessage />
                   </FormItem>
