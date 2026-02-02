@@ -47,6 +47,7 @@ export const contacts = pgTable("contacts", {
   phoneCell: text("phone_cell"),
   phoneWork: text("phone_work"),
   phoneOther: text("phone_other"),
+  address: text("address"),
   company: text("company"),
   jobTitle: text("job_title"),
   usesSoftware: text("uses_software"), // Yes, No, Unknown
@@ -287,6 +288,7 @@ export const leadDiscoveryResults = pgTable("lead_discovery_results", {
   lastName: text("last_name"),
   email: text("email"),
   phone: text("phone"),
+  address: text("address"),
   company: text("company"),
   jobTitle: text("job_title"),
   // Software qualification

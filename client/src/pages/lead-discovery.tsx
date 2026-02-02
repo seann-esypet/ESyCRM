@@ -69,6 +69,7 @@ export default function LeadDiscovery() {
   const [selectedJob, setSelectedJob] = useState<LeadDiscoveryJob | null>(null);
   const [activeTab, setActiveTab] = useState("jobs");
   const [selectedResults, setSelectedResults] = useState<string[]>([]);
+  const [viewDetailsResult, setViewDetailsResult] = useState<LeadDiscoveryResult | null>(null);
   
   const [newJobState, setNewJobState] = useState("");
   const [newJobZipCodes, setNewJobZipCodes] = useState("");
@@ -161,6 +162,20 @@ export default function LeadDiscovery() {
     },
     onError: (error: any) => {
       toast({ title: "Import failed", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const deleteResultMutation = useMutation({
+    mutationFn: async (resultId: string) => {
+      await apiRequest("DELETE", `/api/lead-discovery/results/${resultId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/lead-discovery/jobs", selectedJob?.id, "results"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/lead-discovery/jobs"] });
+      toast({ title: "Result deleted" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Delete failed", description: error.message, variant: "destructive" });
     },
   });
 
@@ -458,7 +473,7 @@ export default function LeadDiscovery() {
                             {job.state} - {job.totalZipCodes} ZIP codes
                           </CardTitle>
                           <CardDescription>
-                            Created {new Date(job.createdAt!).toLocaleString()}
+                            Created {new Date(job.createdAt!).toLocaleString()} | Search ID: {job.id.substring(0, 8)}
                           </CardDescription>
                         </div>
                         {getStatusBadge(job.status)}
@@ -586,11 +601,11 @@ export default function LeadDiscovery() {
                           <TableHead className="w-12"></TableHead>
                           <TableHead>Business</TableHead>
                           <TableHead>Contact</TableHead>
+                          <TableHead>Address</TableHead>
                           <TableHead>Website</TableHead>
                           <TableHead>Uses Software</TableHead>
-                          <TableHead>Software</TableHead>
-                          <TableHead>Source</TableHead>
                           <TableHead>Status</TableHead>
+                          <TableHead>Actions</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -613,12 +628,17 @@ export default function LeadDiscovery() {
                               <div className="text-sm text-muted-foreground">{result.email || "-"}</div>
                             </TableCell>
                             <TableCell>
+                              <div className="text-sm max-w-[150px] truncate" title={result.address || ""}>
+                                {result.address || "-"}
+                              </div>
+                            </TableCell>
+                            <TableCell>
                               {result.websiteUrl ? (
                                 <a 
                                   href={result.websiteUrl} 
                                   target="_blank" 
                                   rel="noopener noreferrer"
-                                  className="text-blue-500 hover:underline text-sm truncate max-w-[200px] block"
+                                  className="text-blue-500 hover:underline text-sm truncate max-w-[150px] block"
                                   data-testid={`link-website-${result.id}`}
                                 >
                                   {new URL(result.websiteUrl).hostname}
@@ -629,17 +649,32 @@ export default function LeadDiscovery() {
                             </TableCell>
                             <TableCell>{getSoftwareBadge(result.usesSoftware)}</TableCell>
                             <TableCell>
-                              <div className="text-sm">{result.currentSoftware || "-"}</div>
-                            </TableCell>
-                            <TableCell>
-                              <div className="text-sm">{result.leadSource}</div>
-                            </TableCell>
-                            <TableCell>
                               {result.isImported === "true" ? (
                                 <Badge variant="outline" className="text-green-600">Imported</Badge>
                               ) : (
                                 <Badge variant="secondary">Ready</Badge>
                               )}
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setViewDetailsResult(result)}
+                                  data-testid={`btn-view-details-${result.id}`}
+                                >
+                                  <Eye className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => deleteResultMutation.mutate(result.id)}
+                                  disabled={deleteResultMutation.isPending}
+                                  data-testid={`btn-delete-result-${result.id}`}
+                                >
+                                  <Trash2 className="h-4 w-4 text-red-500" />
+                                </Button>
+                              </div>
                             </TableCell>
                           </TableRow>
                         ))}
@@ -651,6 +686,124 @@ export default function LeadDiscovery() {
             )}
           </TabsContent>
         </Tabs>
+
+        {/* View Details Dialog */}
+        <Dialog open={!!viewDetailsResult} onOpenChange={(open) => !open && setViewDetailsResult(null)}>
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>{viewDetailsResult?.company || "Business Details"}</DialogTitle>
+              <DialogDescription>All information found from SERP search</DialogDescription>
+            </DialogHeader>
+            {viewDetailsResult && (
+              <div className="grid gap-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-muted-foreground">Business Name</Label>
+                    <p className="font-medium">{viewDetailsResult.company || "-"}</p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground">ZIP Code</Label>
+                    <p className="font-medium">{viewDetailsResult.zipCode || "-"}</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-muted-foreground">Phone</Label>
+                    <p className="font-medium">{viewDetailsResult.phone || "-"}</p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground">Email</Label>
+                    <p className="font-medium">{viewDetailsResult.email || "-"}</p>
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-muted-foreground">Address</Label>
+                  <p className="font-medium">{viewDetailsResult.address || "-"}</p>
+                </div>
+                <div>
+                  <Label className="text-muted-foreground">Website</Label>
+                  {viewDetailsResult.websiteUrl ? (
+                    <a href={viewDetailsResult.websiteUrl} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline block">
+                      {viewDetailsResult.websiteUrl}
+                    </a>
+                  ) : (
+                    <p>-</p>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-muted-foreground">Uses Software</Label>
+                    <p className="font-medium">{viewDetailsResult.usesSoftware || "Unknown"}</p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground">Current Software</Label>
+                    <p className="font-medium">{viewDetailsResult.currentSoftware || "-"}</p>
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-muted-foreground">Booking Software URL</Label>
+                  {viewDetailsResult.bookingSoftwareUrl ? (
+                    <a href={viewDetailsResult.bookingSoftwareUrl} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline block">
+                      {viewDetailsResult.bookingSoftwareUrl}
+                    </a>
+                  ) : (
+                    <p>-</p>
+                  )}
+                </div>
+                <div>
+                  <Label className="text-muted-foreground">Contact Request Form URL</Label>
+                  {viewDetailsResult.contactRequestFormUrl ? (
+                    <a href={viewDetailsResult.contactRequestFormUrl} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline block">
+                      {viewDetailsResult.contactRequestFormUrl}
+                    </a>
+                  ) : (
+                    <p>-</p>
+                  )}
+                </div>
+                <div>
+                  <Label className="text-muted-foreground">Google Business Profile</Label>
+                  {viewDetailsResult.googleBusinessProfileUrl ? (
+                    <a href={viewDetailsResult.googleBusinessProfileUrl} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline block">
+                      View Profile
+                    </a>
+                  ) : (
+                    <p>-</p>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-muted-foreground">Lead Source</Label>
+                    <p className="font-medium">{viewDetailsResult.leadSource || "-"}</p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground">Search Query</Label>
+                    <p className="font-medium">{viewDetailsResult.searchQuery || "-"}</p>
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-muted-foreground">Notes</Label>
+                  <p className="font-medium">{viewDetailsResult.notes || "-"}</p>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-muted-foreground">Crawl Status</Label>
+                    <p className="font-medium">{viewDetailsResult.crawlStatus || "-"}</p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground">Import Status</Label>
+                    <p className="font-medium">{viewDetailsResult.isImported === "true" ? "Imported" : "Not Imported"}</p>
+                  </div>
+                </div>
+                {viewDetailsResult.crawlError && (
+                  <div>
+                    <Label className="text-muted-foreground">Crawl Error</Label>
+                    <p className="text-red-500">{viewDetailsResult.crawlError}</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
       </main>
     </div>
   );

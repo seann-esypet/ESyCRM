@@ -34,6 +34,7 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
       phoneCell: contact?.phoneCell || "",
       phoneWork: contact?.phoneWork || "",
       phoneOther: contact?.phoneOther || "",
+      address: contact?.address || "",
       company: contact?.company || "",
       jobTitle: contact?.jobTitle || "",
       usesSoftware: contact?.usesSoftware || "",
@@ -269,6 +270,25 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
               )}
             />
           </div>
+          
+          <FormField
+            control={form.control}
+            name="address"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Address</FormLabel>
+                <FormControl>
+                  <Input 
+                    {...field} 
+                    value={field.value || ""}
+                    placeholder="123 Main St, City, State 12345"
+                    data-testid="input-address"
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
         </div>
 
         <div className="space-y-4 pt-2 border-t border-border">

@@ -123,6 +123,7 @@ export interface IStorage {
   deleteLeadDiscoveryJob(id: string, userId: string | null): Promise<boolean>;
   getLeadDiscoveryResults(jobId: string, userId: string | null): Promise<LeadDiscoveryResult[]>;
   getLeadDiscoveryResultById(id: string): Promise<LeadDiscoveryResult | undefined>;
+  deleteLeadDiscoveryResult(id: string, userId: string | null): Promise<boolean>;
   createLeadDiscoveryResult(result: InsertLeadDiscoveryResult, userId: string): Promise<LeadDiscoveryResult>;
   bulkCreateLeadDiscoveryResults(results: InsertLeadDiscoveryResult[], userId: string): Promise<LeadDiscoveryResult[]>;
   updateLeadDiscoveryResult(id: string, result: Partial<LeadDiscoveryResult>, userId: string | null): Promise<LeadDiscoveryResult | undefined>;
@@ -1092,6 +1093,18 @@ export class DatabaseStorage implements IStorage {
       .from(leadDiscoveryResults)
       .where(eq(leadDiscoveryResults.id, id));
     return result;
+  }
+
+  async deleteLeadDiscoveryResult(id: string, userId: string | null): Promise<boolean> {
+    const whereClause = userId === null
+      ? eq(leadDiscoveryResults.id, id)
+      : and(eq(leadDiscoveryResults.id, id), eq(leadDiscoveryResults.userId, userId));
+    
+    const deleted = await db
+      .delete(leadDiscoveryResults)
+      .where(whereClause)
+      .returning();
+    return deleted.length > 0;
   }
 
   async createLeadDiscoveryResult(result: InsertLeadDiscoveryResult, userId: string): Promise<LeadDiscoveryResult> {

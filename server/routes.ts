@@ -1155,6 +1155,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.delete("/api/lead-discovery/results/:resultId", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      await storage.deleteLeadDiscoveryResult(req.params.resultId, userId);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting result:", error);
+      res.status(500).json({ message: "Failed to delete result" });
+    }
+  });
+
   app.get("/api/lead-discovery/export/:jobId", isAuthenticated, async (req: any, res) => {
     try {
       const userId = getUserIdForQuery(req.user);

@@ -75,6 +75,12 @@ export default function Deals() {
     return contact ? `${contact.firstName} ${contact.lastName}` : "Unknown contact";
   };
 
+  const getContactAddress = (contactId: string | null) => {
+    if (!contactId || !contacts) return "";
+    const contact = contacts.find(c => c.id === contactId);
+    return contact?.address || "";
+  };
+
   const getStageLabel = (stage: string) => {
     switch (stage) {
       case "new_lead_unqualified":
@@ -443,6 +449,11 @@ export default function Deals() {
                       <p className="text-sm text-muted-foreground">
                         Contact: {getContactName(deal.contactId)}
                       </p>
+                      {getContactAddress(deal.contactId) && (
+                        <p className="text-sm text-muted-foreground truncate" title={getContactAddress(deal.contactId)}>
+                          Address: {getContactAddress(deal.contactId)}
+                        </p>
+                      )}
                       {deal.probability !== null && (
                         <p className="text-sm text-muted-foreground">
                           Probability: {deal.probability}%
@@ -527,6 +538,7 @@ export default function Deals() {
                       <SortIcon column="contact" />
                     </Button>
                   </TableHead>
+                  <TableHead>Address</TableHead>
                   <TableHead>
                     <Button
                       variant="ghost"
@@ -587,6 +599,11 @@ export default function Deals() {
                         {formatDateTime(deal.stageChangedAt)}
                       </TableCell>
                       <TableCell>{getContactName(deal.contactId)}</TableCell>
+                      <TableCell>
+                        <div className="max-w-[150px] truncate" title={getContactAddress(deal.contactId)}>
+                          {getContactAddress(deal.contactId) || "—"}
+                        </div>
+                      </TableCell>
                       <TableCell>
                         {deal.probability !== null ? `${deal.probability}%` : "—"}
                       </TableCell>

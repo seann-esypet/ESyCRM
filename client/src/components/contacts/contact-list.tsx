@@ -69,6 +69,7 @@ export default function ContactList({ contacts, isLoading, onEdit, onDelete, onS
             <TableRow>
               <TableHead>Contact</TableHead>
               <TableHead>Company</TableHead>
+              <TableHead>Address</TableHead>
               <TableHead>Email</TableHead>
               <TableHead>Phone</TableHead>
               <TableHead>Last Contact</TableHead>
@@ -97,6 +98,11 @@ export default function ContactList({ contacts, isLoading, onEdit, onDelete, onS
                   </div>
                 </TableCell>
                 <TableCell>{contact.company || "-"}</TableCell>
+                <TableCell>
+                  <div className="max-w-[150px] truncate" title={contact.address || ""}>
+                    {contact.address || "-"}
+                  </div>
+                </TableCell>
                 <TableCell>
                   {contact.email ? (
                     <div className="flex items-center space-x-2">
