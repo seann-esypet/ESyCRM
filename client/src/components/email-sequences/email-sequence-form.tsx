@@ -23,6 +23,7 @@ export default function EmailSequenceForm({ sequence, onSuccess, onCancel }: Ema
   const { user } = useAuth();
   const isEdit = !!sequence?.id;
   const sequenceNumber = sequence?.sequenceNumber || 1;
+  const sequenceTrack = sequence?.sequenceTrack || "no_software";
 
   // Generate time options (12-hour format with half-hour increments)
   const timeOptions = Array.from({ length: 48 }, (_, i) => {
@@ -42,6 +43,7 @@ export default function EmailSequenceForm({ sequence, onSuccess, onCancel }: Ema
     resolver: zodResolver(insertEmailSequenceSchema),
     defaultValues: {
       sequenceNumber: sequence?.sequenceNumber || 1,
+      sequenceTrack: sequenceTrack,
       subject: sequence?.subject || "",
       body: sequence?.body || `Hi [Contact_First_Name],\n\n\n\nBest regards,\n[Sales_Person]`,
       scheduledDate: sequence?.scheduledDate ? new Date(sequence.scheduledDate).toISOString().split('T')[0] : "",
@@ -56,7 +58,7 @@ export default function EmailSequenceForm({ sequence, onSuccess, onCancel }: Ema
       return await apiRequest("POST", "/api/email-sequences", data);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/email-sequences"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/email-sequences", sequenceTrack] });
       toast({
         title: "Success",
         description: "Email sequence created successfully",
@@ -77,7 +79,7 @@ export default function EmailSequenceForm({ sequence, onSuccess, onCancel }: Ema
       return await apiRequest("PATCH", `/api/email-sequences/${sequence?.id}`, data);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/email-sequences"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/email-sequences", sequenceTrack] });
       toast({
         title: "Success",
         description: "Email sequence updated successfully",
