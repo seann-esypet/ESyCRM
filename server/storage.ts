@@ -900,6 +900,17 @@ export class DatabaseStorage implements IStorage {
           continue;
         }
         
+        // Enforce track matching: contact's track must match sequence's track
+        // Contacts without a track are allowed in "no_software" sequences by default
+        const contactTrack = contact.sequenceTrack || "no_software";
+        if (contactTrack !== sequence.sequenceTrack) {
+          failed.push({
+            contactId,
+            error: `Contact track (${contactTrack}) does not match sequence track (${sequence.sequenceTrack})`
+          });
+          continue;
+        }
+        
         // Check if this contact is already in the queue for this sequence
         const existingLogs = await db.select().from(emailSequenceLogs)
           .where(and(

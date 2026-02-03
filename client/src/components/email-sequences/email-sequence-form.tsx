@@ -58,7 +58,7 @@ export default function EmailSequenceForm({ sequence, onSuccess, onCancel }: Ema
       return await apiRequest("POST", "/api/email-sequences", data);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/email-sequences", sequenceTrack] });
+      queryClient.invalidateQueries({ queryKey: [`/api/email-sequences?track=${sequenceTrack}`] });
       toast({
         title: "Success",
         description: "Email sequence created successfully",
@@ -79,7 +79,7 @@ export default function EmailSequenceForm({ sequence, onSuccess, onCancel }: Ema
       return await apiRequest("PATCH", `/api/email-sequences/${sequence?.id}`, data);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/email-sequences", sequenceTrack] });
+      queryClient.invalidateQueries({ queryKey: [`/api/email-sequences?track=${sequenceTrack}`] });
       toast({
         title: "Success",
         description: "Email sequence updated successfully",

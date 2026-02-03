@@ -20,21 +20,11 @@ export default function EmailSequences() {
   const [sequenceForContacts, setSequenceForContacts] = useState<EmailSequence | undefined>();
 
   const { data: noSoftwareSequences, isLoading: isLoadingNoSoftware } = useQuery<EmailSequence[]>({
-    queryKey: ["/api/email-sequences", "no_software"],
-    queryFn: async () => {
-      const res = await fetch("/api/email-sequences?track=no_software");
-      if (!res.ok) throw new Error("Failed to fetch sequences");
-      return res.json();
-    },
+    queryKey: ["/api/email-sequences?track=no_software"],
   });
 
   const { data: competitorSequences, isLoading: isLoadingCompetitor } = useQuery<EmailSequence[]>({
-    queryKey: ["/api/email-sequences", "uses_competitor"],
-    queryFn: async () => {
-      const res = await fetch("/api/email-sequences?track=uses_competitor");
-      if (!res.ok) throw new Error("Failed to fetch sequences");
-      return res.json();
-    },
+    queryKey: ["/api/email-sequences?track=uses_competitor"],
   });
 
   const { data: logs, isLoading: isLogsLoading, isError: isLogsError } = useQuery<EmailSequenceLog[]>({
