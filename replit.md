@@ -17,12 +17,17 @@ ESyCRM is a modern, multi-user Customer Relationship Management system built wit
   - **Smart Sorting**: Sortable columns with default ordering (open deals first, newest first)
 - **Task Management**: Organize follow-ups and action items with priorities and due dates
 - **Email Sequences**: Automated email campaigns with queue system and rate limiting (requires Reserved VM deployment)
-  - **5-Sequence System**: Create up to 5 automated email sequences per salesperson
+  - **Two-Track System**: Separate email sequences for different prospect types
+    - **No Software Track**: 5 sequences for contacts without booking software (focus on pain points and benefits)
+    - **Uses Competitor Track**: 5 sequences for contacts using competitor software like MoeGo, Vagaro, etc. (focus on switching benefits)
+    - **Automatic Track Assignment**: When a deal is marked "Qualified Lead", the contact is automatically assigned to the appropriate track based on their "Uses Software" field
+  - **10-Sequence System**: Create up to 10 automated email sequences per salesperson (5 per track)
   - **Queue System**: Add multiple contacts to sequences via bulk selection, tracks pending/processing/sent status
+  - **Track Enforcement**: Backend validates that contacts can only be added to sequences matching their track
   - **Rate Limiting**: Sends max 1 email per 5 minutes (12/hour) to maintain sender reputation and avoid spam
-  - **Smart Scheduling**: Sequence 1 sends on scheduled date/time, sequences 2-5 send after no reply
+  - **Smart Scheduling**: Sequence 1 sends on scheduled date/time (Eastern Time), sequences 2-5 send after no reply
   - **Stale Log Recovery**: Automatically resets stuck processing logs after 90 minutes using dedicated processingStartedAt timestamp (handles process crashes)
-  - **Template Variables**: Dynamic content with [Contact_First_Name] and [Sales_Person] placeholders
+  - **Template Variables**: Dynamic content with [Contact_First_Name], [Sales_Person], and [Business_Name] placeholders
   - **SendGrid Integration**: Professional email delivery with branded domain support
   - **Activity Tracking**: Monitor email sends, responses, and sequence status per contact with queue visibility
 - **Inbox System**: Email reply management with role-based access
