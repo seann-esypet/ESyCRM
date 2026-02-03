@@ -24,8 +24,19 @@ export default function AddContactsToSequenceDialog({
   const [selectedContacts, setSelectedContacts] = useState<string[]>([]);
   const { toast } = useToast();
 
-  const { data: contacts, isLoading } = useQuery<Contact[]>({
+  const { data: allContacts, isLoading } = useQuery<Contact[]>({
     queryKey: ["/api/contacts"],
+  });
+
+  // Filter contacts to only show those matching the sequence track
+  const contacts = allContacts?.filter(contact => {
+    // If contact has a sequenceTrack assigned, it must match the sequence track
+    if (contact.sequenceTrack) {
+      return contact.sequenceTrack === sequence.sequenceTrack;
+    }
+    // If contact has no track assigned yet, show in "no_software" by default
+    // This allows manually adding contacts before they're marked as qualified
+    return sequence.sequenceTrack === "no_software";
   });
 
   const addContactsMutation = useMutation({
@@ -102,9 +113,16 @@ export default function AddContactsToSequenceDialog({
           <DialogTitle className="flex items-center space-x-2">
             <Mail className="h-5 w-5" />
             <span>Add Contacts to Sequence {sequence.sequenceNumber}</span>
+            <span className={`text-xs px-2 py-0.5 rounded-full ${
+              sequence.sequenceTrack === "uses_competitor" 
+                ? "bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-300" 
+                : "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
+            }`}>
+              {sequence.sequenceTrack === "uses_competitor" ? "Uses Competitor" : "No Software"}
+            </span>
           </DialogTitle>
           <DialogDescription>
-            Select contacts to add to this email sequence. They will be queued and sent according to the sequence schedule.
+            Select contacts to add to this email sequence. Only contacts matching this track are shown.
           </DialogDescription>
         </DialogHeader>
 
@@ -163,7 +181,12 @@ export default function AddContactsToSequenceDialog({
               </div>
             ) : (
               <div className="p-8 text-center text-muted-foreground">
-                No contacts found
+                <p>No contacts found for this track.</p>
+                <p className="text-sm mt-2">
+                  {sequence.sequenceTrack === "uses_competitor" 
+                    ? "Contacts are assigned to this track when their deal is marked as 'Qualified Lead' and they use competitor software."
+                    : "Contacts are assigned to this track when their deal is marked as 'Qualified Lead' and they don't use software."}
+                </p>
               </div>
             )}
           </ScrollArea>
