@@ -67,6 +67,7 @@ export const contacts = pgTable("contacts", {
   interestLevel: text("interest_level"), // Low, Medium, High
   notes: text("notes"),
   status: text("status").notNull().default("active"), // active, inactive, pipeline
+  sequenceTrack: text("sequence_track"), // no_software, uses_competitor - assigned when qualified
   lastContactDate: timestamp("last_contact_date"),
 });
 
@@ -117,9 +118,10 @@ export const activities = pgTable("activities", {
 export const emailSequences = pgTable("email_sequences", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id, { onUpdate: "cascade" }),
+  sequenceTrack: text("sequence_track").notNull().default("no_software"), // no_software, uses_competitor
   sequenceNumber: integer("sequence_number").notNull(), // 1-5
   subject: text("subject").notNull(),
-  body: text("body").notNull(), // Email content with placeholders like [Contact_First_Name], [Sales_Person]
+  body: text("body").notNull(), // Email content with placeholders like [Contact_First_Name], [Sales_Person], [Business_Name]
   scheduledDate: timestamp("scheduled_date"), // Only for sequence 1
   scheduledTime: text("scheduled_time"), // Only for sequence 1, e.g., "09:00"
   daysAfterNoReply: integer("days_after_no_reply"), // For sequences 2-5
@@ -133,6 +135,7 @@ export const emailSequenceLogs = pgTable("email_sequence_logs", {
   userId: varchar("user_id").notNull().references(() => users.id, { onUpdate: "cascade" }),
   contactId: varchar("contact_id").notNull().references(() => contacts.id),
   sequenceId: varchar("sequence_id").notNull().references(() => emailSequences.id),
+  sequenceTrack: text("sequence_track").notNull().default("no_software"), // no_software, uses_competitor
   sequenceNumber: integer("sequence_number").notNull(), // 1-5
   sentAt: timestamp("sent_at"),
   status: text("status").notNull().default("pending"), // pending, processing, sent, failed, replied
