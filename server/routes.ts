@@ -497,6 +497,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!deal) {
         return res.status(404).json({ message: "Deal not found" });
       }
+      
+      // When deal is moved to "qualified_lead" stage, assign sequence track to contact
+      if (dealData.stage === "qualified_lead" && deal.contactId) {
+        const contact = await storage.getContact(deal.contactId, userId);
+        if (contact) {
+          // Determine sequence track based on usesSoftware field
+          // "Yes" means they use competitor software, otherwise "no_software"
+          const sequenceTrack = contact.usesSoftware === "Yes" ? "uses_competitor" : "no_software";
+          await storage.updateContact(deal.contactId, { sequenceTrack }, userId);
+        }
+      }
+      
       res.json(deal);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -514,6 +526,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!deal) {
         return res.status(404).json({ message: "Deal not found" });
       }
+      
+      // When deal is moved to "qualified_lead" stage, assign sequence track to contact
+      if (dealData.stage === "qualified_lead" && deal.contactId) {
+        const contact = await storage.getContact(deal.contactId, userId);
+        if (contact) {
+          // Determine sequence track based on usesSoftware field
+          // "Yes" means they use competitor software, otherwise "no_software"
+          const sequenceTrack = contact.usesSoftware === "Yes" ? "uses_competitor" : "no_software";
+          await storage.updateContact(deal.contactId, { sequenceTrack }, userId);
+        }
+      }
+      
       res.json(deal);
     } catch (error) {
       if (error instanceof z.ZodError) {
