@@ -723,7 +723,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/email-sequences", isAuthenticated, async (req: any, res) => {
     try {
       const userId = getUserIdForQuery(req.user);
-      const sequences = await storage.getEmailSequences(userId);
+      const track = req.query.track as string | undefined;
+      
+      let sequences;
+      if (track) {
+        sequences = await storage.getEmailSequencesByTrack(userId, track);
+      } else {
+        sequences = await storage.getEmailSequences(userId);
+      }
       res.json(sequences);
     } catch (error) {
       console.error("Error fetching email sequences:", error);

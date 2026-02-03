@@ -96,6 +96,7 @@ export interface IStorage {
 
   // Email Sequences (userId can be null for admins to get all data)
   getEmailSequences(userId: string | null): Promise<EmailSequence[]>;
+  getEmailSequencesByTrack(userId: string | null, track: string): Promise<EmailSequence[]>;
   getEmailSequence(id: string, userId: string | null): Promise<EmailSequence | undefined>;
   createEmailSequence(sequence: InsertEmailSequence, userId: string): Promise<EmailSequence>;
   updateEmailSequence(id: string, sequence: Partial<InsertEmailSequence>, userId: string | null): Promise<EmailSequence | undefined>;
@@ -761,6 +762,18 @@ export class DatabaseStorage implements IStorage {
       .orderBy(emailSequences.sequenceNumber);
   }
 
+  async getEmailSequencesByTrack(userId: string | null, track: string): Promise<EmailSequence[]> {
+    if (userId === null) {
+      // Admin: get all sequences for track
+      return await db.select().from(emailSequences)
+        .where(eq(emailSequences.sequenceTrack, track))
+        .orderBy(emailSequences.sequenceNumber);
+    }
+    return await db.select().from(emailSequences)
+      .where(and(eq(emailSequences.userId, userId), eq(emailSequences.sequenceTrack, track)))
+      .orderBy(emailSequences.sequenceNumber);
+  }
+
   async getEmailSequence(id: string, userId: string | null): Promise<EmailSequence | undefined> {
     if (userId === null) {
       // Admin: get any sequence by ID
@@ -909,6 +922,7 @@ export class DatabaseStorage implements IStorage {
           .values({
             contactId,
             sequenceId,
+            sequenceTrack: sequence.sequenceTrack,
             sequenceNumber: sequence.sequenceNumber,
             status: "pending",
             emailResponseReceived: "false",
