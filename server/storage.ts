@@ -110,7 +110,7 @@ export interface IStorage {
   updateEmailSequenceLog(id: string, log: Partial<InsertEmailSequenceLog>, userId: string | null): Promise<EmailSequenceLog | undefined>;
   
   // Inbox Messages (userId can be null for admins to get all data)
-  getInboxMessages(userId: string | null): Promise<InboxMessage[]>;
+  getInboxMessages(userId: string | null, contactId?: string): Promise<InboxMessage[]>;
   getInboxMessage(id: string, userId: string | null): Promise<InboxMessage | undefined>;
   createInboxMessage(message: InsertInboxMessage, userId: string): Promise<InboxMessage>;
   updateInboxMessage(id: string, message: Partial<InsertInboxMessage>, userId: string | null): Promise<InboxMessage | undefined>;
@@ -978,14 +978,20 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Inbox Messages
-  async getInboxMessages(userId: string | null): Promise<InboxMessage[]> {
-    if (userId === null) {
-      // Admin: get all inbox messages
-      return await db.select().from(inboxMessages).orderBy(desc(inboxMessages.receivedAt));
+  async getInboxMessages(userId: string | null, contactId?: string): Promise<InboxMessage[]> {
+    const conditions = [];
+    if (userId !== null) {
+      conditions.push(eq(inboxMessages.userId, userId));
     }
-    return await db.select().from(inboxMessages)
-      .where(eq(inboxMessages.userId, userId))
-      .orderBy(desc(inboxMessages.receivedAt));
+    if (contactId) {
+      conditions.push(eq(inboxMessages.contactId, contactId));
+    }
+    if (conditions.length > 0) {
+      return await db.select().from(inboxMessages)
+        .where(and(...conditions))
+        .orderBy(desc(inboxMessages.receivedAt));
+    }
+    return await db.select().from(inboxMessages).orderBy(desc(inboxMessages.receivedAt));
   }
 
   async getInboxMessage(id: string, userId: string | null): Promise<InboxMessage | undefined> {

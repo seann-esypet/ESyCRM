@@ -7,12 +7,14 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Edit, Trash2, Calendar, DollarSign, Handshake, LayoutGrid, List, ArrowUpDown, ArrowUp, ArrowDown, RotateCcw, Download, Users } from "lucide-react";
+import { Edit, Trash2, Calendar, DollarSign, Handshake, LayoutGrid, List, ArrowUpDown, ArrowUp, ArrowDown, RotateCcw, Download, Users, Mail, MessageSquare, Send, Clock, CheckCircle, XCircle, AlertCircle } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
-import type { Deal, Contact, User } from "@shared/schema";
+import type { Deal, Contact, User, EmailSequenceLog, EmailSequence, InboxMessage } from "@shared/schema";
 
 type ViewType = "card" | "table";
 type SortColumn = "title" | "value" | "expectedCloseDate" | "stage" | "contact" | "probability";
@@ -28,6 +30,8 @@ export default function Deals() {
   const [viewType, setViewType] = useState<ViewType>("table");
   const [sortColumn, setSortColumn] = useState<SortColumn | null>(null);
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+
+  const [emailHistoryContactId, setEmailHistoryContactId] = useState<string | null>(null);
 
   const initialFilterUserId = isAdmin ? new URLSearchParams(window.location.search).get("filterUserId") || "" : "";
   const [filterUserId, setFilterUserId] = useState(initialFilterUserId);
@@ -63,6 +67,29 @@ export default function Deals() {
       const response = await fetch(url);
       return response.json();
     },
+  });
+
+  const { data: sequenceLogs, isLoading: isLoadingLogs } = useQuery<EmailSequenceLog[]>({
+    queryKey: ["/api/email-sequence-logs", emailHistoryContactId],
+    queryFn: async () => {
+      const response = await fetch(`/api/email-sequence-logs?contactId=${emailHistoryContactId}`);
+      return response.json();
+    },
+    enabled: !!emailHistoryContactId,
+  });
+
+  const { data: sequences } = useQuery<EmailSequence[]>({
+    queryKey: ["/api/email-sequences"],
+    enabled: !!emailHistoryContactId,
+  });
+
+  const { data: inboxMessages, isLoading: isLoadingInbox } = useQuery<InboxMessage[]>({
+    queryKey: ["/api/inbox", emailHistoryContactId],
+    queryFn: async () => {
+      const response = await fetch(`/api/inbox?contactId=${emailHistoryContactId}`);
+      return response.json();
+    },
+    enabled: !!emailHistoryContactId,
   });
 
   const deleteMutation = useMutation({
@@ -193,6 +220,43 @@ export default function Deals() {
     closeDate.setHours(0, 0, 0, 0);
     return closeDate < today;
   };
+
+  const handleContactClick = (contactId: string | null) => {
+    if (contactId) {
+      setEmailHistoryContactId(contactId);
+    }
+  };
+
+  const getSequenceSubject = (sequenceId: string) => {
+    if (!sequences) return "Unknown Sequence";
+    const seq = sequences.find(s => s.id === sequenceId);
+    return seq?.subject || "Unknown Sequence";
+  };
+
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case "sent":
+        return <CheckCircle className="h-4 w-4 text-green-500" />;
+      case "failed":
+        return <XCircle className="h-4 w-4 text-red-500" />;
+      case "pending":
+        return <Clock className="h-4 w-4 text-yellow-500" />;
+      case "processing":
+        return <Clock className="h-4 w-4 text-blue-500 animate-spin" />;
+      case "replied":
+        return <MessageSquare className="h-4 w-4 text-purple-500" />;
+      default:
+        return <AlertCircle className="h-4 w-4 text-muted-foreground" />;
+    }
+  };
+
+  const getTrackLabel = (track: string) => {
+    return track === "no_software" ? "No Software" : "Uses Competitor";
+  };
+
+  const emailHistoryContact = emailHistoryContactId
+    ? contacts?.find(c => c.id === emailHistoryContactId)
+    : null;
 
   const handleEdit = (deal: Deal) => {
     setSelectedDeal(deal);
@@ -493,7 +557,14 @@ export default function Deals() {
 
                     <div className="pt-2 border-t border-border">
                       <p className="text-sm text-muted-foreground">
-                        Contact: {getContactName(deal.contactId)}
+                        Contact:{" "}
+                        <button
+                          className="text-primary hover:underline cursor-pointer font-medium"
+                          onClick={(e) => { e.stopPropagation(); handleContactClick(deal.contactId); }}
+                          data-testid={`contact-link-card-${deal.id}`}
+                        >
+                          {getContactName(deal.contactId)}
+                        </button>
                       </p>
                       {getContactAddress(deal.contactId) && (
                         <p className="text-sm text-muted-foreground truncate" title={getContactAddress(deal.contactId)}>
@@ -609,7 +680,15 @@ export default function Deals() {
                       data-testid={`deal-row-${deal.id}`}
                       className={isExpired ? "bg-[#E96161] hover:bg-[#E96161]/90" : ""}
                     >
-                      <TableCell>{getContactName(deal.contactId)}</TableCell>
+                      <TableCell>
+                        <button
+                          className="text-primary hover:underline cursor-pointer font-medium"
+                          onClick={() => handleContactClick(deal.contactId)}
+                          data-testid={`contact-link-table-${deal.id}`}
+                        >
+                          {getContactName(deal.contactId)}
+                        </button>
+                      </TableCell>
                       <TableCell className="font-medium">
                         {deal.title}
                       </TableCell>
@@ -695,6 +774,133 @@ export default function Deals() {
             onSuccess={handleFormSuccess}
             onCancel={handleFormClose}
           />
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!emailHistoryContactId} onOpenChange={(open) => { if (!open) setEmailHistoryContactId(null); }}>
+        <DialogContent className="max-w-3xl max-h-[85vh]" data-testid="email-history-dialog">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Mail className="h-5 w-5" />
+              Email History — {emailHistoryContact ? `${emailHistoryContact.firstName} ${emailHistoryContact.lastName}` : ""}
+            </DialogTitle>
+          </DialogHeader>
+
+          <ScrollArea className="max-h-[70vh] pr-4">
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-3">
+                  <Send className="h-4 w-4" />
+                  Email Sequences Sent
+                </h3>
+                {isLoadingLogs ? (
+                  <div className="space-y-2">
+                    {[1, 2, 3].map(i => (
+                      <div key={i} className="h-16 bg-muted rounded animate-pulse" />
+                    ))}
+                  </div>
+                ) : !sequenceLogs?.length ? (
+                  <Card>
+                    <CardContent className="p-4 text-center text-sm text-muted-foreground">
+                      No email sequences have been sent to this contact yet.
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <div className="space-y-2">
+                    {sequenceLogs.map((log, index) => (
+                      <Card key={log.id} className={index === 0 ? "border-primary/50 shadow-sm" : ""} data-testid={`sequence-log-${log.id}`}>
+                        <CardContent className="p-3">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-start gap-2 min-w-0 flex-1">
+                              {getStatusIcon(log.status)}
+                              <div className="min-w-0 flex-1">
+                                <p className="text-sm font-medium text-foreground truncate">
+                                  {getSequenceSubject(log.sequenceId)}
+                                </p>
+                                <div className="flex flex-wrap items-center gap-2 mt-1">
+                                  <Badge variant="outline" className="text-xs">
+                                    Seq #{log.sequenceNumber}
+                                  </Badge>
+                                  <Badge variant="secondary" className="text-xs">
+                                    {getTrackLabel(log.sequenceTrack)}
+                                  </Badge>
+                                  <Badge
+                                    variant={log.status === "sent" ? "default" : log.status === "failed" ? "destructive" : "secondary"}
+                                    className="text-xs"
+                                  >
+                                    {log.status.charAt(0).toUpperCase() + log.status.slice(1)}
+                                  </Badge>
+                                  {index === 0 && (
+                                    <Badge variant="default" className="text-xs bg-primary">
+                                      Latest
+                                    </Badge>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                            <span className="text-xs text-muted-foreground whitespace-nowrap">
+                              {log.sentAt ? new Date(log.sentAt).toLocaleString() : log.createdAt ? new Date(log.createdAt).toLocaleString() : "—"}
+                            </span>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <Separator />
+
+              <div>
+                <h3 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-3">
+                  <MessageSquare className="h-4 w-4" />
+                  Replies
+                </h3>
+                {isLoadingInbox ? (
+                  <div className="space-y-2">
+                    {[1, 2].map(i => (
+                      <div key={i} className="h-20 bg-muted rounded animate-pulse" />
+                    ))}
+                  </div>
+                ) : !inboxMessages?.length ? (
+                  <Card>
+                    <CardContent className="p-4 text-center text-sm text-muted-foreground">
+                      No replies received from this contact yet.
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <div className="space-y-2">
+                    {inboxMessages.map((msg) => (
+                      <Card key={msg.id} data-testid={`inbox-msg-${msg.id}`}>
+                        <CardContent className="p-3">
+                          <div className="flex items-start justify-between gap-2 mb-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <MessageSquare className="h-4 w-4 text-muted-foreground shrink-0" />
+                              <p className="text-sm font-medium text-foreground truncate">
+                                {msg.subject}
+                              </p>
+                              {msg.isRead === "false" && (
+                                <Badge variant="default" className="text-xs bg-blue-500 shrink-0">
+                                  New
+                                </Badge>
+                              )}
+                            </div>
+                            <span className="text-xs text-muted-foreground whitespace-nowrap">
+                              {msg.receivedAt ? new Date(msg.receivedAt).toLocaleString() : "—"}
+                            </span>
+                          </div>
+                          <p className="text-xs text-muted-foreground mb-1">From: {msg.from}</p>
+                          <p className="text-sm text-foreground whitespace-pre-wrap line-clamp-4">
+                            {msg.bodyText || "(No text content)"}
+                          </p>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </ScrollArea>
         </DialogContent>
       </Dialog>
     </>

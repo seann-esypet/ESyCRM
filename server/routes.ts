@@ -991,7 +991,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/inbox", isAuthenticated, async (req: any, res) => {
     try {
       const userId = getUserIdForQuery(req.user);
-      const messages = await storage.getInboxMessages(userId);
+      const { contactId } = req.query;
+      const messages = await storage.getInboxMessages(userId, contactId as string | undefined);
       res.json(messages);
     } catch (error) {
       console.error("Error fetching inbox messages:", error);
