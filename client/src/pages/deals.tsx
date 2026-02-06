@@ -325,7 +325,11 @@ export default function Deals() {
     initiateMutation.mutate({ contactId: emailHistoryContactId, scheduledSendAt });
   };
 
-  const hasAnySequenceLogs = (sequenceLogs?.length ?? 0) > 0;
+  const contactTrack = emailHistoryContact?.usesSoftware === "Yes" ? "uses_competitor" : "no_software";
+  const hasSequence1ForTrack = sequenceLogs?.some(
+    l => l.sequenceNumber === 1 && l.sequenceTrack === contactTrack
+  ) ?? false;
+  const canInitiateSequence = !hasSequence1ForTrack && !isLoadingLogs;
 
   const handleEdit = (deal: Deal) => {
     setSelectedDeal(deal);
@@ -863,7 +867,7 @@ export default function Deals() {
                     <Send className="h-4 w-4" />
                     Email Sequences
                   </h3>
-                  {!hasAnySequenceLogs && !isLoadingLogs && !showInitiateForm && (
+                  {canInitiateSequence && !showInitiateForm && (
                     <Button
                       variant="default"
                       size="sm"
