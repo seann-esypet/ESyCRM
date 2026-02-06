@@ -165,8 +165,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Contacts routes - All protected with isAuthenticated
   app.get("/api/contacts", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = getUserIdForQuery(req.user); // null for admin, user ID for salesperson
-      const { search } = req.query;
+      let userId = getUserIdForQuery(req.user); // null for admin, user ID for salesperson
+      const { search, filterUserId } = req.query;
+      if (filterUserId && req.user.role === "admin") {
+        userId = filterUserId as string;
+      }
       const contacts = search 
         ? await storage.searchContacts(search as string, userId)
         : await storage.getContacts(userId);
@@ -450,8 +453,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Deals routes - All protected with isAuthenticated
   app.get("/api/deals", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = getUserIdForQuery(req.user);
-      const { stage } = req.query;
+      let userId = getUserIdForQuery(req.user);
+      const { stage, filterUserId } = req.query;
+      if (filterUserId && req.user.role === "admin") {
+        userId = filterUserId as string;
+      }
       const deals = stage 
         ? await storage.getDealsByStage(stage as string, userId)
         : await storage.getDeals(userId);

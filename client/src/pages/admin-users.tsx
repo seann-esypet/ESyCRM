@@ -16,8 +16,9 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { Users, Shield, UserCog, Plus, Loader2, Copy, Check } from "lucide-react";
+import { Users, Shield, UserCog, Plus, Loader2, Copy, Check, Contact, Handshake } from "lucide-react";
 import { format } from "date-fns";
+import { useLocation } from "wouter";
 
 const createUserSchema = z.object({
   email: z.string().email("Please enter a valid email address"),
@@ -42,6 +43,7 @@ type EditUserFormData = z.infer<typeof editUserSchema>;
 export default function AdminUsers() {
   const { user: currentUser } = useAuth();
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
@@ -465,6 +467,7 @@ export default function AdminUsers() {
                   <TableHead>Phone</TableHead>
                   <TableHead>Role</TableHead>
                   <TableHead>Joined</TableHead>
+                  <TableHead>View Data</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -528,11 +531,35 @@ export default function AdminUsers() {
                         ? format(new Date(user.createdAt), "MMM d, yyyy")
                         : "-"}
                     </TableCell>
+                    <TableCell>
+                      <div className="flex gap-1">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setLocation(`/contacts?filterUserId=${user.id}`)}
+                          data-testid={`link-contacts-${user.id}`}
+                          title="View contacts"
+                        >
+                          <Contact className="h-4 w-4 mr-1" />
+                          Contacts
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setLocation(`/deals?filterUserId=${user.id}`)}
+                          data-testid={`link-pipeline-${user.id}`}
+                          title="View pipeline"
+                        >
+                          <Handshake className="h-4 w-4 mr-1" />
+                          Pipeline
+                        </Button>
+                      </div>
+                    </TableCell>
                   </TableRow>
                 ))}
                 {users?.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                    <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
                       No users found
                     </TableCell>
                   </TableRow>

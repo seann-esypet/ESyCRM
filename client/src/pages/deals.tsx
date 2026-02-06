@@ -7,12 +7,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Edit, Trash2, Calendar, DollarSign, Handshake, LayoutGrid, List, ArrowUpDown, ArrowUp, ArrowDown, RotateCcw, Download } from "lucide-react";
+import { Edit, Trash2, Calendar, DollarSign, Handshake, LayoutGrid, List, ArrowUpDown, ArrowUp, ArrowDown, RotateCcw, Download, Users } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
-import type { Deal, Contact } from "@shared/schema";
+import type { Deal, Contact, User } from "@shared/schema";
 
 type ViewType = "card" | "table";
 type SortColumn = "title" | "value" | "expectedCloseDate" | "stage" | "contact" | "probability";
@@ -29,12 +29,40 @@ export default function Deals() {
   const [sortColumn, setSortColumn] = useState<SortColumn | null>(null);
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
 
+  const initialFilterUserId = isAdmin ? new URLSearchParams(window.location.search).get("filterUserId") || "" : "";
+  const [filterUserId, setFilterUserId] = useState(initialFilterUserId);
+
+  const handleFilterChange = (value: string) => {
+    setFilterUserId(value === "all" ? "" : value);
+  };
+
+  const { data: adminUsers } = useQuery<User[]>({
+    queryKey: ["/api/admin/users"],
+    enabled: isAdmin,
+  });
+
   const { data: deals, isLoading } = useQuery<Deal[]>({
-    queryKey: ["/api/deals"],
+    queryKey: ["/api/deals", filterUserId],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (filterUserId) params.set("filterUserId", filterUserId);
+      const queryString = params.toString();
+      const url = queryString ? `/api/deals?${queryString}` : "/api/deals";
+      const response = await fetch(url);
+      return response.json();
+    },
   });
 
   const { data: contacts } = useQuery<Contact[]>({
-    queryKey: ["/api/contacts"],
+    queryKey: ["/api/contacts", filterUserId],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (filterUserId) params.set("filterUserId", filterUserId);
+      const queryString = params.toString();
+      const url = queryString ? `/api/contacts?${queryString}` : "/api/contacts";
+      const response = await fetch(url);
+      return response.json();
+    },
   });
 
   const deleteMutation = useMutation({
@@ -308,7 +336,25 @@ export default function Deals() {
         onAddNew={() => setIsFormOpen(true)}
         addButtonText="New Deal"
         customActions={
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center">
+            {isAdmin && (
+              <div className="flex items-center gap-2">
+                <Users className="h-4 w-4 text-muted-foreground" />
+                <Select value={filterUserId || "all"} onValueChange={handleFilterChange}>
+                  <SelectTrigger className="w-[200px]" data-testid="select-filter-user-deals">
+                    <SelectValue placeholder="All Salespeople" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Salespeople</SelectItem>
+                    {adminUsers?.map((u) => (
+                      <SelectItem key={u.id} value={u.id}>
+                        {u.firstName && u.lastName ? `${u.firstName} ${u.lastName}` : u.email || "Unknown"}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             {isAdmin && (
               <Button
                 variant="outline"

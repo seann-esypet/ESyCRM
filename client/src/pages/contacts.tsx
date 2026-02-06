@@ -7,10 +7,11 @@ import ContactImport from "@/components/contacts/contact-import";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Download } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Download, Users } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
-import type { Contact } from "@shared/schema";
+import type { Contact, User } from "@shared/schema";
 
 export default function Contacts() {
   const { user } = useAuth();
@@ -22,12 +23,26 @@ export default function Contacts() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedContact, setSelectedContact] = useState<Contact | undefined>();
 
+  const initialFilterUserId = isAdmin ? new URLSearchParams(window.location.search).get("filterUserId") || "" : "";
+  const [filterUserId, setFilterUserId] = useState(initialFilterUserId);
+
+  const handleFilterChange = (value: string) => {
+    setFilterUserId(value === "all" ? "" : value);
+  };
+
+  const { data: adminUsers } = useQuery<User[]>({
+    queryKey: ["/api/admin/users"],
+    enabled: isAdmin,
+  });
+
   const { data: contacts, isLoading } = useQuery<Contact[]>({
-    queryKey: ["/api/contacts", searchQuery],
+    queryKey: ["/api/contacts", searchQuery, filterUserId],
     queryFn: async () => {
-      const url = searchQuery 
-        ? `/api/contacts?search=${encodeURIComponent(searchQuery)}`
-        : "/api/contacts";
+      const params = new URLSearchParams();
+      if (searchQuery) params.set("search", searchQuery);
+      if (filterUserId) params.set("filterUserId", filterUserId);
+      const queryString = params.toString();
+      const url = queryString ? `/api/contacts?${queryString}` : "/api/contacts";
       const response = await fetch(url);
       return response.json();
     },
@@ -115,14 +130,32 @@ export default function Contacts() {
         showImportButton={true}
         addButtonText="Add Contact"
         customActions={isAdmin ? (
-          <Button 
-            variant="outline" 
-            onClick={handleExport}
-            data-testid="button-export"
-          >
-            <Download className="h-4 w-4 mr-2" />
-            Export CSV
-          </Button>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2">
+              <Users className="h-4 w-4 text-muted-foreground" />
+              <Select value={filterUserId || "all"} onValueChange={handleFilterChange}>
+                <SelectTrigger className="w-[200px]" data-testid="select-filter-user">
+                  <SelectValue placeholder="All Salespeople" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Salespeople</SelectItem>
+                  {adminUsers?.map((u) => (
+                    <SelectItem key={u.id} value={u.id}>
+                      {u.firstName && u.lastName ? `${u.firstName} ${u.lastName}` : u.email || "Unknown"}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button 
+              variant="outline" 
+              onClick={handleExport}
+              data-testid="button-export"
+            >
+              <Download className="h-4 w-4 mr-2" />
+              Export CSV
+            </Button>
+          </div>
         ) : null}
       />
       
