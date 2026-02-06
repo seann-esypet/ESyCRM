@@ -174,6 +174,7 @@ export const insertContactSchema = createInsertSchema(contacts).omit({
 }).extend({
   firstName: z.string().min(1, "First name is required"),
   lastName: z.string().min(1, "Last name is required"),
+  usesSoftware: z.string().min(1, "Uses Software is required"),
 });
 
 export const insertDealSchema = createInsertSchema(deals).omit({

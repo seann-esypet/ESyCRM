@@ -338,7 +338,7 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
             name="usesSoftware"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Uses Software</FormLabel>
+                <FormLabel>Uses Software *</FormLabel>
                 <Select 
                   onValueChange={field.onChange} 
                   value={field.value || ""}
