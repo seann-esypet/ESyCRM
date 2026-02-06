@@ -68,6 +68,7 @@ export interface IStorage {
   createContact(contact: InsertContact, userId: string): Promise<Contact>;
   bulkCreateContacts(contacts: Array<{ row: number, data: InsertContact }>, userId: string): Promise<{ successful: Contact[], failed: Array<{ row: number, error: string, data: any }> }>;
   updateContact(id: string, contact: Partial<InsertContact>, userId: string | null): Promise<Contact | undefined>;
+  assignContact(id: string, newUserId: string): Promise<Contact | undefined>;
   deleteContact(id: string, userId: string | null): Promise<boolean>;
   searchContacts(query: string, userId: string | null): Promise<Contact[]>;
   findDuplicateContacts(contact: InsertContact, userId: string, excludeId?: string): Promise<Contact[]>;
@@ -402,6 +403,15 @@ export class DatabaseStorage implements IStorage {
       .update(contacts)
       .set({ ...updateData, lastContactDate: new Date() })
       .where(and(eq(contacts.id, id), eq(contacts.userId, userId)))
+      .returning();
+    return updated;
+  }
+
+  async assignContact(id: string, newUserId: string): Promise<Contact | undefined> {
+    const [updated] = await db
+      .update(contacts)
+      .set({ userId: newUserId })
+      .where(eq(contacts.id, id))
       .returning();
     return updated;
   }

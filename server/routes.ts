@@ -223,6 +223,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.patch("/api/contacts/:id/assign", isAdmin, async (req: any, res) => {
+    try {
+      const schema = z.object({ userId: z.string().min(1) });
+      const { userId: newUserId } = schema.parse(req.body);
+      const updated = await storage.assignContact(req.params.id, newUserId);
+      if (!updated) {
+        return res.status(404).json({ message: "Contact not found" });
+      }
+      res.json(updated);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "userId is required", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to reassign contact" });
+    }
+  });
+
   app.patch("/api/contacts/:id", isAuthenticated, async (req: any, res) => {
     try {
       const userId = getUserIdForQuery(req.user);

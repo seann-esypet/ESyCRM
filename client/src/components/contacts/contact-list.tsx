@@ -13,15 +13,18 @@ import {
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Edit, Trash2, Mail, Phone, Users, Building, MapPin, Globe, User, Briefcase, FileText } from "lucide-react";
-import type { Contact, Deal } from "@shared/schema";
+import type { Contact, Deal, User as UserType } from "@shared/schema";
 
 interface ContactListProps {
   contacts: Contact[];
   deals?: Deal[];
   isLoading: boolean;
+  isAdmin?: boolean;
+  adminUsers?: UserType[];
   onEdit: (contact: Contact) => void;
   onDelete: (id: string) => void;
   onStatusChange: (contactId: string, newStatus: string) => void;
+  onAssign?: (contactId: string, newUserId: string) => void;
 }
 
 const getStageLabel = (stage: string) => {
@@ -56,7 +59,7 @@ const getStageColor = (stage: string) => {
   }
 };
 
-export default function ContactList({ contacts, deals, isLoading, onEdit, onDelete, onStatusChange }: ContactListProps) {
+export default function ContactList({ contacts, deals, isLoading, isAdmin, adminUsers, onEdit, onDelete, onStatusChange, onAssign }: ContactListProps) {
   const [viewContact, setViewContact] = useState<Contact | null>(null);
 
   const formatDate = (date: string | Date | null) => {
@@ -276,6 +279,35 @@ export default function ContactList({ contacts, deals, isLoading, onEdit, onDele
                       <p className="text-sm text-muted-foreground italic p-3 border border-border rounded-lg bg-muted/30">No deals in pipeline</p>
                     )}
                   </div>
+
+                  {isAdmin && adminUsers && onAssign && (
+                    <div>
+                      <h4 className="text-sm font-semibold text-foreground mb-2 flex items-center gap-2">
+                        <Users className="h-4 w-4" />
+                        Assigned Salesperson
+                      </h4>
+                      <div className="p-3 border border-border rounded-lg bg-muted/30">
+                        <Select
+                          value={viewContact.userId}
+                          onValueChange={(value) => {
+                            onAssign(viewContact.id, value);
+                            setViewContact({ ...viewContact, userId: value });
+                          }}
+                        >
+                          <SelectTrigger className="w-full" data-testid="select-assign-contact">
+                            <SelectValue placeholder="Select salesperson" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {adminUsers.map((u) => (
+                              <SelectItem key={u.id} value={u.id}>
+                                {u.firstName && u.lastName ? `${u.firstName} ${u.lastName}` : u.email || "Unknown"}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  )}
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-1">
                     <div>

@@ -117,8 +117,32 @@ export default function Contacts() {
     window.open('/api/export/contacts', '_blank');
   };
 
+  const assignMutation = useMutation({
+    mutationFn: async ({ contactId, userId: newUserId }: { contactId: string; userId: string }) => {
+      return apiRequest("PATCH", `/api/contacts/${contactId}/assign`, { userId: newUserId });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/contacts"] });
+      toast({
+        title: "Contact reassigned",
+        description: "Contact has been assigned to the selected salesperson.",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to reassign contact",
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleStatusChange = (contactId: string, newStatus: string) => {
     statusChangeMutation.mutate({ contactId, status: newStatus });
+  };
+
+  const handleAssign = (contactId: string, newUserId: string) => {
+    assignMutation.mutate({ contactId, userId: newUserId });
   };
 
   // Sort contacts: Active first, then Pipeline and Inactive at the bottom
@@ -176,9 +200,12 @@ export default function Contacts() {
           contacts={sortedContacts}
           deals={deals}
           isLoading={isLoading}
+          isAdmin={isAdmin}
+          adminUsers={adminUsers}
           onEdit={handleEdit}
           onDelete={handleDelete}
           onStatusChange={handleStatusChange}
+          onAssign={handleAssign}
         />
       </main>
 
