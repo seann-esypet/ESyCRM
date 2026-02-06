@@ -105,6 +105,7 @@ export interface IStorage {
   
   // Email Sequence Logs
   getEmailSequenceLogs(userId: string | null, contactId?: string): Promise<EmailSequenceLog[]>;
+  getEmailSequenceLogById(id: string, userId: string | null): Promise<EmailSequenceLog | undefined>;
   createEmailSequenceLog(log: InsertEmailSequenceLog, userId: string): Promise<EmailSequenceLog>;
   bulkCreateEmailSequenceLogs(sequenceId: string, contactIds: string[], userId: string | null): Promise<{ successful: EmailSequenceLog[], failed: Array<{ contactId: string, error: string }> }>;
   updateEmailSequenceLog(id: string, log: Partial<InsertEmailSequenceLog>, userId: string | null): Promise<EmailSequenceLog | undefined>;
@@ -868,6 +869,16 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(emailSequenceLogs)
       .where(eq(emailSequenceLogs.userId, userId))
       .orderBy(desc(emailSequenceLogs.createdAt));
+  }
+
+  async getEmailSequenceLogById(id: string, userId: string | null): Promise<EmailSequenceLog | undefined> {
+    if (userId === null) {
+      const [log] = await db.select().from(emailSequenceLogs).where(eq(emailSequenceLogs.id, id));
+      return log;
+    }
+    const [log] = await db.select().from(emailSequenceLogs)
+      .where(and(eq(emailSequenceLogs.id, id), eq(emailSequenceLogs.userId, userId)));
+    return log;
   }
 
   async createEmailSequenceLog(insertLog: InsertEmailSequenceLog, userId: string): Promise<EmailSequenceLog> {

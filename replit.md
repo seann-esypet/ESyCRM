@@ -26,6 +26,9 @@ ESyCRM is a modern, multi-user Customer Relationship Management system built wit
   - **Track Enforcement**: Backend validates that contacts can only be added to sequences matching their track
   - **Rate Limiting**: Sends max 1 email per 5 minutes (12/hour) to maintain sender reputation and avoid spam
   - **Smart Scheduling**: Sequence 1 sends on scheduled date/time (Eastern Time), sequences 2-5 send after no reply
+  - **Per-Contact Scheduling**: Individual email logs can have their own `scheduledSendAt` override; scheduler skips future-scheduled logs
+  - **Pipeline Initiation**: Start Sequence 1 for a contact directly from the Pipeline email history dialog with custom date/time
+  - **Reschedule Pending Emails**: Change the scheduled send date/time for any pending email directly from the Pipeline email history view
   - **Stale Log Recovery**: Automatically resets stuck processing logs after 90 minutes using dedicated processingStartedAt timestamp (handles process crashes)
   - **Template Variables**: Dynamic content with [Contact_First_Name], [Sales_Person], and [Business_Name] placeholders
   - **SendGrid Integration**: Professional email delivery with branded domain support

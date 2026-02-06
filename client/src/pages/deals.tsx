@@ -7,7 +7,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Edit, Trash2, Calendar, DollarSign, Handshake, LayoutGrid, List, ArrowUpDown, ArrowUp, ArrowDown, RotateCcw, Download, Users, Mail, MessageSquare, Send, Clock, CheckCircle, XCircle, AlertCircle } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Edit, Trash2, Calendar, DollarSign, Handshake, LayoutGrid, List, ArrowUpDown, ArrowUp, ArrowDown, RotateCcw, Download, Users, Mail, MessageSquare, Send, Clock, CheckCircle, XCircle, AlertCircle, CalendarClock, Play } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -32,6 +34,12 @@ export default function Deals() {
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
 
   const [emailHistoryContactId, setEmailHistoryContactId] = useState<string | null>(null);
+  const [rescheduleLogId, setRescheduleLogId] = useState<string | null>(null);
+  const [rescheduleDate, setRescheduleDate] = useState("");
+  const [rescheduleTime, setRescheduleTime] = useState("09:00");
+  const [initiateDate, setInitiateDate] = useState("");
+  const [initiateTime, setInitiateTime] = useState("09:00");
+  const [showInitiateForm, setShowInitiateForm] = useState(false);
 
   const initialFilterUserId = isAdmin ? new URLSearchParams(window.location.search).get("filterUserId") || "" : "";
   const [filterUserId, setFilterUserId] = useState(initialFilterUserId);
@@ -90,6 +98,38 @@ export default function Deals() {
       return response.json();
     },
     enabled: !!emailHistoryContactId,
+  });
+
+  const rescheduleMutation = useMutation({
+    mutationFn: async ({ logId, scheduledSendAt }: { logId: string; scheduledSendAt: string }) => {
+      return apiRequest("PATCH", `/api/email-sequence-logs/${logId}/reschedule`, { scheduledSendAt });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/email-sequence-logs"] });
+      setRescheduleLogId(null);
+      setRescheduleDate("");
+      setRescheduleTime("09:00");
+      toast({ title: "Rescheduled", description: "Email has been rescheduled successfully." });
+    },
+    onError: (error: any) => {
+      toast({ title: "Error", description: error.message || "Failed to reschedule email", variant: "destructive" });
+    },
+  });
+
+  const initiateMutation = useMutation({
+    mutationFn: async ({ contactId, scheduledSendAt }: { contactId: string; scheduledSendAt: string }) => {
+      return apiRequest("POST", `/api/email-sequence-logs/initiate`, { contactId, scheduledSendAt });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/email-sequence-logs"] });
+      setShowInitiateForm(false);
+      setInitiateDate("");
+      setInitiateTime("09:00");
+      toast({ title: "Sequence Started", description: "Email Sequence 1 has been scheduled successfully." });
+    },
+    onError: (error: any) => {
+      toast({ title: "Error", description: error.message || "Failed to start email sequence", variant: "destructive" });
+    },
   });
 
   const deleteMutation = useMutation({
@@ -257,6 +297,35 @@ export default function Deals() {
   const emailHistoryContact = emailHistoryContactId
     ? contacts?.find(c => c.id === emailHistoryContactId)
     : null;
+
+  const handleReschedule = (logId: string) => {
+    const log = sequenceLogs?.find(l => l.id === logId);
+    if (log?.scheduledSendAt) {
+      const d = new Date(log.scheduledSendAt);
+      setRescheduleDate(d.toISOString().split("T")[0]);
+      const h = String(d.getHours()).padStart(2, "0");
+      const m = String(d.getMinutes()).padStart(2, "0");
+      setRescheduleTime(`${h}:${m}`);
+    } else {
+      setRescheduleDate("");
+      setRescheduleTime("09:00");
+    }
+    setRescheduleLogId(logId);
+  };
+
+  const submitReschedule = () => {
+    if (!rescheduleLogId || !rescheduleDate || !rescheduleTime) return;
+    const scheduledSendAt = new Date(`${rescheduleDate}T${rescheduleTime}:00`).toISOString();
+    rescheduleMutation.mutate({ logId: rescheduleLogId, scheduledSendAt });
+  };
+
+  const submitInitiate = () => {
+    if (!emailHistoryContactId || !initiateDate || !initiateTime) return;
+    const scheduledSendAt = new Date(`${initiateDate}T${initiateTime}:00`).toISOString();
+    initiateMutation.mutate({ contactId: emailHistoryContactId, scheduledSendAt });
+  };
+
+  const hasAnySequenceLogs = (sequenceLogs?.length ?? 0) > 0;
 
   const handleEdit = (deal: Deal) => {
     setSelectedDeal(deal);
@@ -777,7 +846,7 @@ export default function Deals() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!emailHistoryContactId} onOpenChange={(open) => { if (!open) setEmailHistoryContactId(null); }}>
+      <Dialog open={!!emailHistoryContactId} onOpenChange={(open) => { if (!open) { setEmailHistoryContactId(null); setRescheduleLogId(null); setShowInitiateForm(false); } }}>
         <DialogContent className="max-w-3xl max-h-[85vh]" data-testid="email-history-dialog">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -789,10 +858,78 @@ export default function Deals() {
           <ScrollArea className="max-h-[70vh] pr-4">
             <div className="space-y-6">
               <div>
-                <h3 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-3">
-                  <Send className="h-4 w-4" />
-                  Email Sequences Sent
-                </h3>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                    <Send className="h-4 w-4" />
+                    Email Sequences
+                  </h3>
+                  {!hasAnySequenceLogs && !isLoadingLogs && !showInitiateForm && (
+                    <Button
+                      variant="default"
+                      size="sm"
+                      onClick={() => setShowInitiateForm(true)}
+                      data-testid="button-initiate-sequence"
+                    >
+                      <Play className="h-4 w-4 mr-1" />
+                      Start Sequence 1
+                    </Button>
+                  )}
+                </div>
+
+                {showInitiateForm && (
+                  <Card className="mb-3 border-primary/50">
+                    <CardContent className="p-4">
+                      <h4 className="text-sm font-medium text-foreground mb-3 flex items-center gap-2">
+                        <Play className="h-4 w-4" />
+                        Start Email Sequence 1
+                      </h4>
+                      <p className="text-xs text-muted-foreground mb-3">
+                        Schedule when Sequence 1 should be sent to this contact. Time is in Eastern Time.
+                      </p>
+                      <div className="flex flex-wrap items-end gap-3">
+                        <div className="flex-1 min-w-[140px]">
+                          <Label htmlFor="initiate-date" className="text-xs">Date</Label>
+                          <Input
+                            id="initiate-date"
+                            type="date"
+                            value={initiateDate}
+                            onChange={(e) => setInitiateDate(e.target.value)}
+                            data-testid="input-initiate-date"
+                          />
+                        </div>
+                        <div className="w-[120px]">
+                          <Label htmlFor="initiate-time" className="text-xs">Time (ET)</Label>
+                          <Input
+                            id="initiate-time"
+                            type="time"
+                            value={initiateTime}
+                            onChange={(e) => setInitiateTime(e.target.value)}
+                            data-testid="input-initiate-time"
+                          />
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            onClick={submitInitiate}
+                            disabled={!initiateDate || !initiateTime || initiateMutation.isPending}
+                            data-testid="button-submit-initiate"
+                          >
+                            {initiateMutation.isPending ? "Scheduling..." : "Schedule"}
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => { setShowInitiateForm(false); setInitiateDate(""); setInitiateTime("09:00"); }}
+                            data-testid="button-cancel-initiate"
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
                 {isLoadingLogs ? (
                   <div className="space-y-2">
                     {[1, 2, 3].map(i => (
@@ -836,12 +973,80 @@ export default function Deals() {
                                     </Badge>
                                   )}
                                 </div>
+                                {log.scheduledSendAt && log.status === "pending" && (
+                                  <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
+                                    <CalendarClock className="h-3 w-3" />
+                                    Scheduled: {new Date(log.scheduledSendAt).toLocaleString()}
+                                  </p>
+                                )}
                               </div>
                             </div>
-                            <span className="text-xs text-muted-foreground whitespace-nowrap">
-                              {log.sentAt ? new Date(log.sentAt).toLocaleString() : log.createdAt ? new Date(log.createdAt).toLocaleString() : "—"}
-                            </span>
+                            <div className="flex flex-col items-end gap-1">
+                              <span className="text-xs text-muted-foreground whitespace-nowrap">
+                                {log.sentAt ? new Date(log.sentAt).toLocaleString() : log.createdAt ? new Date(log.createdAt).toLocaleString() : "—"}
+                              </span>
+                              {log.status === "pending" && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-7 text-xs"
+                                  onClick={() => handleReschedule(log.id)}
+                                  data-testid={`button-reschedule-${log.id}`}
+                                >
+                                  <CalendarClock className="h-3 w-3 mr-1" />
+                                  Reschedule
+                                </Button>
+                              )}
+                            </div>
                           </div>
+
+                          {rescheduleLogId === log.id && (
+                            <div className="mt-3 pt-3 border-t border-border">
+                              <p className="text-xs text-muted-foreground mb-2">Set new date and time (Eastern Time):</p>
+                              <div className="flex flex-wrap items-end gap-2">
+                                <div className="flex-1 min-w-[130px]">
+                                  <Label htmlFor={`reschedule-date-${log.id}`} className="text-xs">Date</Label>
+                                  <Input
+                                    id={`reschedule-date-${log.id}`}
+                                    type="date"
+                                    value={rescheduleDate}
+                                    onChange={(e) => setRescheduleDate(e.target.value)}
+                                    data-testid={`input-reschedule-date-${log.id}`}
+                                  />
+                                </div>
+                                <div className="w-[110px]">
+                                  <Label htmlFor={`reschedule-time-${log.id}`} className="text-xs">Time (ET)</Label>
+                                  <Input
+                                    id={`reschedule-time-${log.id}`}
+                                    type="time"
+                                    value={rescheduleTime}
+                                    onChange={(e) => setRescheduleTime(e.target.value)}
+                                    data-testid={`input-reschedule-time-${log.id}`}
+                                  />
+                                </div>
+                                <div className="flex gap-2">
+                                  <Button
+                                    size="sm"
+                                    className="h-8"
+                                    onClick={submitReschedule}
+                                    disabled={!rescheduleDate || !rescheduleTime || rescheduleMutation.isPending}
+                                    data-testid={`button-submit-reschedule-${log.id}`}
+                                  >
+                                    {rescheduleMutation.isPending ? "Saving..." : "Save"}
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8"
+                                    onClick={() => { setRescheduleLogId(null); setRescheduleDate(""); setRescheduleTime("09:00"); }}
+                                    data-testid={`button-cancel-reschedule-${log.id}`}
+                                  >
+                                    Cancel
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+                          )}
                         </CardContent>
                       </Card>
                     ))}

@@ -186,7 +186,14 @@ export async function processEmailSequences(): Promise<{
     // Get fresh list after resetting stale logs
     const refreshedLogs = await storage.getEmailSequenceLogs(null);
     const pendingLogs = refreshedLogs
-      .filter(log => log.status === "pending")
+      .filter(log => {
+        if (log.status !== "pending") return false;
+        if (log.scheduledSendAt) {
+          const scheduledTime = new Date(log.scheduledSendAt);
+          if (scheduledTime > now) return false;
+        }
+        return true;
+      })
       .sort((a, b) => {
         const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
         const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;

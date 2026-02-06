@@ -887,6 +887,89 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.patch("/api/email-sequence-logs/:id/reschedule", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const schema = z.object({
+        scheduledSendAt: z.string().min(1).refine((val) => !isNaN(Date.parse(val)), { message: "Invalid date format" }),
+      });
+      const { scheduledSendAt } = schema.parse(req.body);
+
+      const log = await storage.getEmailSequenceLogById(req.params.id, userId);
+      if (!log) {
+        return res.status(404).json({ message: "Email sequence log not found" });
+      }
+      if (log.status !== "pending") {
+        return res.status(400).json({ message: "Only pending emails can be rescheduled" });
+      }
+
+      const updated = await storage.updateEmailSequenceLog(
+        req.params.id,
+        { scheduledSendAt: new Date(scheduledSendAt) },
+        userId
+      );
+      res.json(updated);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "scheduledSendAt is required", errors: error.errors });
+      }
+      console.error("Error rescheduling email sequence log:", error);
+      res.status(500).json({ message: "Failed to reschedule email" });
+    }
+  });
+
+  app.post("/api/email-sequence-logs/initiate", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const userIdForQuery = getUserIdForQuery(req.user);
+      const schema = z.object({
+        contactId: z.string().min(1),
+        scheduledSendAt: z.string().min(1).refine((val) => !isNaN(Date.parse(val)), { message: "Invalid date format" }),
+      });
+      const { contactId, scheduledSendAt } = schema.parse(req.body);
+
+      const contact = await storage.getContact(contactId, userIdForQuery);
+      if (!contact) {
+        return res.status(404).json({ message: "Contact not found" });
+      }
+
+      const sequenceTrack = contact.usesSoftware === "Yes" ? "uses_competitor" : "no_software";
+
+      const ownerId = contact.userId;
+      const ownerSequences = await storage.getEmailSequencesByTrack(ownerId, sequenceTrack);
+      const sequence1 = ownerSequences.find(s => s.sequenceNumber === 1);
+      if (!sequence1) {
+        return res.status(400).json({ message: `No Sequence 1 template found for the "${sequenceTrack === "no_software" ? "No Software" : "Uses Competitor"}" track. Please create one first in Email Sequences.` });
+      }
+
+      const existingLogs = await storage.getEmailSequenceLogs(userIdForQuery, contactId);
+      const hasSequence1 = existingLogs.some(l => l.sequenceNumber === 1 && l.sequenceTrack === sequenceTrack);
+      if (hasSequence1) {
+        return res.status(400).json({ message: "Sequence 1 has already been started for this contact" });
+      }
+
+      const log = await storage.createEmailSequenceLog(
+        {
+          contactId,
+          sequenceId: sequence1.id,
+          sequenceTrack,
+          sequenceNumber: 1,
+          status: "pending",
+          scheduledSendAt: new Date(scheduledSendAt),
+        },
+        ownerId
+      );
+
+      res.status(201).json(log);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "contactId and scheduledSendAt are required", errors: error.errors });
+      }
+      console.error("Error initiating email sequence:", error);
+      res.status(500).json({ message: "Failed to initiate email sequence" });
+    }
+  });
+
   // Admin reports - Salesperson rankings
   app.get("/api/admin/salesperson-rankings", isAdmin, async (req: any, res) => {
     try {

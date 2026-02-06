@@ -142,6 +142,7 @@ export const emailSequenceLogs = pgTable("email_sequence_logs", {
   emailResponseReceived: text("email_response_received").default("false"), // true, false
   lastCheckedAt: timestamp("last_checked_at"),
   processingStartedAt: timestamp("processing_started_at"), // Track when log transitions to "processing"
+  scheduledSendAt: timestamp("scheduled_send_at"), // Per-log override: don't send until this time (Eastern Time interpreted)
   createdAt: timestamp("created_at").defaultNow(),
 });
 
