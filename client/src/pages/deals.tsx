@@ -527,6 +527,18 @@ export default function Deals() {
                       variant="ghost"
                       size="sm"
                       className="h-8 px-2 -ml-2"
+                      onClick={() => handleSort("contact")}
+                      data-testid="sort-contact"
+                    >
+                      Contact
+                      <SortIcon column="contact" />
+                    </Button>
+                  </TableHead>
+                  <TableHead>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 px-2 -ml-2"
                       onClick={() => handleSort("title")}
                       data-testid="sort-title"
                     >
@@ -572,18 +584,6 @@ export default function Deals() {
                     </Button>
                   </TableHead>
                   <TableHead>Stage Changed</TableHead>
-                  <TableHead>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-8 px-2 -ml-2"
-                      onClick={() => handleSort("contact")}
-                      data-testid="sort-contact"
-                    >
-                      Contact
-                      <SortIcon column="contact" />
-                    </Button>
-                  </TableHead>
                   <TableHead>Address</TableHead>
                   <TableHead>
                     <Button
@@ -609,6 +609,7 @@ export default function Deals() {
                       data-testid={`deal-row-${deal.id}`}
                       className={isExpired ? "bg-[#E96161] hover:bg-[#E96161]/90" : ""}
                     >
+                      <TableCell>{getContactName(deal.contactId)}</TableCell>
                       <TableCell className="font-medium">
                         {deal.title}
                       </TableCell>
@@ -644,7 +645,6 @@ export default function Deals() {
                       <TableCell className="text-sm text-muted-foreground">
                         {formatDateTime(deal.stageChangedAt)}
                       </TableCell>
-                      <TableCell>{getContactName(deal.contactId)}</TableCell>
                       <TableCell>
                         <div className="max-w-[150px] truncate" title={getContactAddress(deal.contactId)}>
                           {getContactAddress(deal.contactId) || "—"}

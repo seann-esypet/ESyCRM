@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Download, Users } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
-import type { Contact, User } from "@shared/schema";
+import type { Contact, Deal, User } from "@shared/schema";
 
 export default function Contacts() {
   const { user } = useAuth();
@@ -43,6 +43,18 @@ export default function Contacts() {
       if (filterUserId) params.set("filterUserId", filterUserId);
       const queryString = params.toString();
       const url = queryString ? `/api/contacts?${queryString}` : "/api/contacts";
+      const response = await fetch(url);
+      return response.json();
+    },
+  });
+
+  const { data: deals } = useQuery<Deal[]>({
+    queryKey: ["/api/deals", filterUserId],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (filterUserId) params.set("filterUserId", filterUserId);
+      const queryString = params.toString();
+      const url = queryString ? `/api/deals?${queryString}` : "/api/deals";
       const response = await fetch(url);
       return response.json();
     },
@@ -162,6 +174,7 @@ export default function Contacts() {
       <main className="flex-1 overflow-y-auto p-6 bg-muted/30" data-testid="contacts-content">
         <ContactList
           contacts={sortedContacts}
+          deals={deals}
           isLoading={isLoading}
           onEdit={handleEdit}
           onDelete={handleDelete}

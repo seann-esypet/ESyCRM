@@ -1,5 +1,7 @@
+import { useState, type ReactNode } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { 
   Table, 
   TableBody, 
@@ -8,22 +10,63 @@ import {
   TableHeader, 
   TableRow 
 } from "@/components/ui/table";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Edit, Trash2, Mail, Phone, Users } from "lucide-react";
-import type { Contact } from "@shared/schema";
+import { Edit, Trash2, Mail, Phone, Users, Building, MapPin, Globe, User, Briefcase, FileText } from "lucide-react";
+import type { Contact, Deal } from "@shared/schema";
 
 interface ContactListProps {
   contacts: Contact[];
+  deals?: Deal[];
   isLoading: boolean;
   onEdit: (contact: Contact) => void;
   onDelete: (id: string) => void;
   onStatusChange: (contactId: string, newStatus: string) => void;
 }
 
-export default function ContactList({ contacts, isLoading, onEdit, onDelete, onStatusChange }: ContactListProps) {
+const getStageLabel = (stage: string) => {
+  switch (stage) {
+    case "new_lead_unqualified": return "New Lead Unqualified";
+    case "qualified_lead": return "Qualified Lead";
+    case "contacted_left_message": return "Contacted (Left Message)";
+    case "contacted_spoke_to_decision_maker": return "Contacted (Spoke to Owner/Decision Maker)";
+    case "onboarded_form_completed": return "Onboarded Form Completed";
+    case "demo_scheduled": return "Demo Scheduled";
+    case "demo_completed": return "Demo Completed";
+    case "decision_pending": return "Decision Pending";
+    case "won": return "Won";
+    case "lost": return "Lost";
+    default: return stage.replace('_', ' ').toUpperCase();
+  }
+};
+
+const getStageColor = (stage: string) => {
+  switch (stage) {
+    case "new_lead_unqualified": return "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300";
+    case "qualified_lead": return "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300";
+    case "contacted_left_message": return "bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-300";
+    case "contacted_spoke_to_decision_maker": return "bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-300";
+    case "onboarded_form_completed": return "bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-300";
+    case "demo_scheduled": return "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300";
+    case "demo_completed": return "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300";
+    case "decision_pending": return "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300";
+    case "won": return "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-300";
+    case "lost": return "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300";
+    default: return "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-300";
+  }
+};
+
+export default function ContactList({ contacts, deals, isLoading, onEdit, onDelete, onStatusChange }: ContactListProps) {
+  const [viewContact, setViewContact] = useState<Contact | null>(null);
+
   const formatDate = (date: string | Date | null) => {
     if (!date) return "Never";
     return new Date(date).toLocaleDateString();
+  };
+
+  const getContactDeals = (contactId: string): Deal[] => {
+    if (!deals) return [];
+    return deals.filter(d => d.contactId === contactId);
   };
 
   if (isLoading) {
@@ -61,113 +104,255 @@ export default function ContactList({ contacts, isLoading, onEdit, onDelete, onS
     );
   }
 
+  const InfoRow = ({ label, value, icon }: { label: string; value: string | number | null | undefined; icon?: ReactNode }) => {
+    if (!value && value !== 0) return null;
+    return (
+      <div className="flex items-start gap-2 py-1.5">
+        {icon && <span className="text-muted-foreground mt-0.5 shrink-0">{icon}</span>}
+        <div>
+          <p className="text-xs text-muted-foreground">{label}</p>
+          <p className="text-sm text-foreground">{String(value)}</p>
+        </div>
+      </div>
+    );
+  };
+
   return (
-    <Card data-testid="contacts-table">
-      <CardContent className="p-0">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Contact</TableHead>
-              <TableHead>Company</TableHead>
-              <TableHead>Address</TableHead>
-              <TableHead>Email</TableHead>
-              <TableHead>Phone</TableHead>
-              <TableHead>Last Contact</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {contacts.map((contact) => (
-              <TableRow 
-                key={contact.id} 
-                className="hover:bg-muted/50"
-                data-testid={`contact-row-${contact.id}`}
-              >
-                <TableCell className="font-medium">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-8 h-8 bg-primary text-primary-foreground rounded-full flex items-center justify-center text-sm font-medium">
-                      {contact.firstName.charAt(0)}{contact.lastName.charAt(0)}
+    <>
+      <Card data-testid="contacts-table">
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Contact</TableHead>
+                <TableHead>Company</TableHead>
+                <TableHead>Address</TableHead>
+                <TableHead>Email</TableHead>
+                <TableHead>Phone</TableHead>
+                <TableHead>Last Contact</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {contacts.map((contact) => (
+                <TableRow 
+                  key={contact.id} 
+                  className="hover:bg-muted/50"
+                  data-testid={`contact-row-${contact.id}`}
+                >
+                  <TableCell className="font-medium">
+                    <div className="flex items-center space-x-3">
+                      <div className="w-8 h-8 bg-primary text-primary-foreground rounded-full flex items-center justify-center text-sm font-medium">
+                        {contact.firstName.charAt(0)}{contact.lastName.charAt(0)}
+                      </div>
+                      <div>
+                        <button
+                          className="font-medium text-primary hover:underline cursor-pointer text-left"
+                          onClick={() => setViewContact(contact)}
+                          data-testid={`link-contact-details-${contact.id}`}
+                        >
+                          {contact.firstName} {contact.lastName}
+                        </button>
+                        {contact.jobTitle && (
+                          <p className="text-sm text-muted-foreground">{contact.jobTitle}</p>
+                        )}
+                      </div>
+                    </div>
+                  </TableCell>
+                  <TableCell>{contact.company || "-"}</TableCell>
+                  <TableCell>
+                    <div className="max-w-[150px] truncate" title={contact.address || ""}>
+                      {contact.address || "-"}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    {contact.email ? (
+                      <div className="flex items-center space-x-2">
+                        <Mail className="h-4 w-4 text-muted-foreground" />
+                        <span>{contact.email}</span>
+                      </div>
+                    ) : (
+                      "-"
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {contact.phone ? (
+                      <div className="flex items-center space-x-2">
+                        <Phone className="h-4 w-4 text-muted-foreground" />
+                        <span>{contact.phone}</span>
+                      </div>
+                    ) : (
+                      "-"
+                    )}
+                  </TableCell>
+                  <TableCell>{formatDate(contact.lastContactDate)}</TableCell>
+                  <TableCell>
+                    <Select 
+                      value={contact.status} 
+                      onValueChange={(value) => onStatusChange(contact.id, value)}
+                    >
+                      <SelectTrigger 
+                        className="w-[110px]" 
+                        data-testid={`status-select-${contact.id}`}
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="active">Active</SelectItem>
+                        <SelectItem value="inactive">Inactive</SelectItem>
+                        <SelectItem value="pipeline">Pipeline</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex justify-end space-x-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => onEdit(contact)}
+                        data-testid={`edit-contact-${contact.id}`}
+                      >
+                        <Edit className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => onDelete(contact.id)}
+                        className="text-destructive hover:text-destructive"
+                        data-testid={`delete-contact-${contact.id}`}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      <Dialog open={!!viewContact} onOpenChange={(open) => { if (!open) setViewContact(null); }}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" data-testid="contact-details-dialog">
+          {viewContact && (() => {
+            const contactDeals = getContactDeals(viewContact.id);
+            return (
+              <>
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-primary text-primary-foreground rounded-full flex items-center justify-center text-sm font-medium">
+                      {viewContact.firstName.charAt(0)}{viewContact.lastName.charAt(0)}
+                    </div>
+                    {viewContact.firstName} {viewContact.lastName}
+                  </DialogTitle>
+                </DialogHeader>
+
+                <div className="space-y-6">
+                  <div>
+                    <h4 className="text-sm font-semibold text-foreground mb-2 flex items-center gap-2">
+                      <Briefcase className="h-4 w-4" />
+                      Pipeline Status
+                    </h4>
+                    {contactDeals.length > 0 ? (
+                      <div className="space-y-2">
+                        {contactDeals.map((deal) => (
+                          <div key={deal.id} className="flex items-center justify-between p-3 border border-border rounded-lg bg-muted/30" data-testid={`contact-deal-${deal.id}`}>
+                            <div>
+                              <p className="font-medium text-sm">{deal.title}</p>
+                              {deal.value && (
+                                <p className="text-xs text-muted-foreground">
+                                  {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(parseFloat(deal.value))}
+                                </p>
+                              )}
+                            </div>
+                            <Badge className={`${getStageColor(deal.stage)} border-0`} data-testid={`contact-deal-stage-${deal.id}`}>
+                              {getStageLabel(deal.stage)}
+                            </Badge>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground italic p-3 border border-border rounded-lg bg-muted/30">No deals in pipeline</p>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-1">
+                    <div>
+                      <h4 className="text-sm font-semibold text-foreground mb-2 flex items-center gap-2">
+                        <User className="h-4 w-4" />
+                        Contact Information
+                      </h4>
+                      <InfoRow label="Email" value={viewContact.email} icon={<Mail className="h-3.5 w-3.5" />} />
+                      <InfoRow label="Phone" value={viewContact.phone} icon={<Phone className="h-3.5 w-3.5" />} />
+                      <InfoRow label="Cell Phone" value={viewContact.phoneCell} icon={<Phone className="h-3.5 w-3.5" />} />
+                      <InfoRow label="Work Phone" value={viewContact.phoneWork} icon={<Phone className="h-3.5 w-3.5" />} />
+                      <InfoRow label="Other Phone" value={viewContact.phoneOther} icon={<Phone className="h-3.5 w-3.5" />} />
+                      <InfoRow label="Address" value={viewContact.address} icon={<MapPin className="h-3.5 w-3.5" />} />
+                      <InfoRow label="Job Title" value={viewContact.jobTitle} />
+                      <InfoRow label="Status" value={viewContact.status} />
                     </div>
                     <div>
-                      <p className="font-medium">{contact.firstName} {contact.lastName}</p>
-                      {contact.jobTitle && (
-                        <p className="text-sm text-muted-foreground">{contact.jobTitle}</p>
+                      <h4 className="text-sm font-semibold text-foreground mb-2 flex items-center gap-2">
+                        <Building className="h-4 w-4" />
+                        Business Information
+                      </h4>
+                      <InfoRow label="Company" value={viewContact.company} icon={<Building className="h-3.5 w-3.5" />} />
+                      <InfoRow label="Uses Software" value={viewContact.usesSoftware} />
+                      <InfoRow label="Current Software" value={viewContact.currentSoftware} />
+                      <InfoRow label="Has Website" value={viewContact.hasWebsite} />
+                      <InfoRow label="Website URL" value={viewContact.websiteUrl} icon={<Globe className="h-3.5 w-3.5" />} />
+                      <InfoRow label="Booking Software URL" value={viewContact.bookingSoftwareUrl} icon={<Globe className="h-3.5 w-3.5" />} />
+                      <InfoRow label="Number of Employees" value={viewContact.numberOfEmployees} />
+                      <InfoRow label="Number of Locations" value={viewContact.numberOfLocations} />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-1">
+                    <div>
+                      <h4 className="text-sm font-semibold text-foreground mb-2 flex items-center gap-2">
+                        <Globe className="h-4 w-4" />
+                        Social & Web
+                      </h4>
+                      <InfoRow label="Facebook" value={viewContact.facebookUrl} />
+                      <InfoRow label="Instagram" value={viewContact.instagramHandle} />
+                      <InfoRow label="Contact Form URL" value={viewContact.contactRequestFormUrl} />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-semibold text-foreground mb-2 flex items-center gap-2">
+                        <FileText className="h-4 w-4" />
+                        Additional Details
+                      </h4>
+                      <InfoRow label="Lead Source" value={viewContact.leadSource} />
+                      <InfoRow label="Interest Level" value={viewContact.interestLevel} />
+                      <InfoRow label="Sequence Track" value={viewContact.sequenceTrack} />
+                      <InfoRow label="Secondary Contact" value={viewContact.secondaryFirstName && viewContact.secondaryLastName ? `${viewContact.secondaryFirstName} ${viewContact.secondaryLastName}` : null} />
+                      <InfoRow label="Last Contact Date" value={viewContact.lastContactDate ? formatDate(viewContact.lastContactDate) : null} />
+                    </div>
+                  </div>
+
+                  {(viewContact.painPoints || viewContact.notes) && (
+                    <div>
+                      {viewContact.painPoints && (
+                        <div className="mb-3">
+                          <h4 className="text-sm font-semibold text-foreground mb-1">Pain Points</h4>
+                          <p className="text-sm text-muted-foreground whitespace-pre-wrap bg-muted/30 p-3 rounded-lg border border-border">{viewContact.painPoints}</p>
+                        </div>
+                      )}
+                      {viewContact.notes && (
+                        <div>
+                          <h4 className="text-sm font-semibold text-foreground mb-1">Notes</h4>
+                          <p className="text-sm text-muted-foreground whitespace-pre-wrap bg-muted/30 p-3 rounded-lg border border-border">{viewContact.notes}</p>
+                        </div>
                       )}
                     </div>
-                  </div>
-                </TableCell>
-                <TableCell>{contact.company || "-"}</TableCell>
-                <TableCell>
-                  <div className="max-w-[150px] truncate" title={contact.address || ""}>
-                    {contact.address || "-"}
-                  </div>
-                </TableCell>
-                <TableCell>
-                  {contact.email ? (
-                    <div className="flex items-center space-x-2">
-                      <Mail className="h-4 w-4 text-muted-foreground" />
-                      <span>{contact.email}</span>
-                    </div>
-                  ) : (
-                    "-"
                   )}
-                </TableCell>
-                <TableCell>
-                  {contact.phone ? (
-                    <div className="flex items-center space-x-2">
-                      <Phone className="h-4 w-4 text-muted-foreground" />
-                      <span>{contact.phone}</span>
-                    </div>
-                  ) : (
-                    "-"
-                  )}
-                </TableCell>
-                <TableCell>{formatDate(contact.lastContactDate)}</TableCell>
-                <TableCell>
-                  <Select 
-                    value={contact.status} 
-                    onValueChange={(value) => onStatusChange(contact.id, value)}
-                  >
-                    <SelectTrigger 
-                      className="w-[110px]" 
-                      data-testid={`status-select-${contact.id}`}
-                    >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="active">Active</SelectItem>
-                      <SelectItem value="inactive">Inactive</SelectItem>
-                      <SelectItem value="pipeline">Pipeline</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </TableCell>
-                <TableCell className="text-right">
-                  <div className="flex justify-end space-x-2">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => onEdit(contact)}
-                      data-testid={`edit-contact-${contact.id}`}
-                    >
-                      <Edit className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => onDelete(contact.id)}
-                      className="text-destructive hover:text-destructive"
-                      data-testid={`delete-contact-${contact.id}`}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </CardContent>
-    </Card>
+                </div>
+              </>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
