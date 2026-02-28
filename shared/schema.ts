@@ -18,7 +18,8 @@ export const sessions = pgTable(
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   email: varchar("email").unique(),
-  workEmail: varchar("work_email"), // Professional email for sending sequences (e.g., john@esypet.com)
+  workEmail: varchar("work_email"), // Professional email for sending sequences (e.g., seann@esypet.com)
+  replyToEmail: varchar("reply_to_email"), // Reply-to address for inbound parse (e.g., seann@inbound.esypet.com)
   firstName: varchar("first_name"),
   lastName: varchar("last_name"),
   phone: varchar("phone"),

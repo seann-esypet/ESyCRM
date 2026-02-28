@@ -162,6 +162,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = req.user.claims.sub;
       const profileSchema = z.object({
         workEmail: z.string().email().optional().or(z.literal("")),
+        replyToEmail: z.string().email().optional().or(z.literal("")),
         firstName: z.string().optional(),
         lastName: z.string().optional(),
         phone: z.string().optional(),

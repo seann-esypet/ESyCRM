@@ -16,6 +16,7 @@ const profileSchema = z.object({
   lastName: z.string().optional(),
   phone: z.string().optional(),
   workEmail: z.string().email("Please enter a valid email address").optional().or(z.literal("")),
+  replyToEmail: z.string().email("Please enter a valid email address").optional().or(z.literal("")),
 });
 
 type ProfileFormData = z.infer<typeof profileSchema>;
@@ -27,6 +28,7 @@ export default function Settings() {
     id: string;
     email: string;
     workEmail?: string;
+    replyToEmail?: string;
     firstName?: string;
     lastName?: string;
     phone?: string;
@@ -42,6 +44,7 @@ export default function Settings() {
       lastName: "",
       phone: "",
       workEmail: "",
+      replyToEmail: "",
     },
   });
 
@@ -52,6 +55,7 @@ export default function Settings() {
         lastName: user.lastName || "",
         phone: user.phone || "",
         workEmail: user.workEmail || "",
+        replyToEmail: user.replyToEmail || "",
       });
     }
   }, [user, form]);
@@ -165,17 +169,36 @@ export default function Settings() {
                   name="workEmail"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Work Email Address</FormLabel>
+                      <FormLabel>From Email Address</FormLabel>
                       <FormControl>
                         <Input 
-                          placeholder="john@esypet.com" 
+                          placeholder="seann@esypet.com" 
                           {...field} 
                           data-testid="input-work-email"
                         />
                       </FormControl>
                       <FormDescription>
-                        This email will be used as the sender address for your email sequences. 
-                        Make sure this email is configured to receive replies (e.g., john@esypet.com).
+                        This address appears as the sender on all outgoing email sequences (e.g., seann@esypet.com). Must be authenticated in SendGrid.
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="replyToEmail"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Reply-To Email Address</FormLabel>
+                      <FormControl>
+                        <Input 
+                          placeholder="seann@inbound.esypet.com" 
+                          {...field} 
+                          data-testid="input-reply-to-email"
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        Where lead replies are routed for the CRM Inbox (e.g., seann@inbound.esypet.com). Must be set up with SendGrid Inbound Parse. If left blank, replies go to your From address.
                       </FormDescription>
                       <FormMessage />
                     </FormItem>

@@ -113,9 +113,9 @@ export async function sendSequenceEmail({
 
   const salespersonName = `${salesperson.firstName || ''} ${salesperson.lastName || ''}`.trim() || salesperson.email || 'Sales Team';
   
-  // Use workEmail if available, otherwise fall back to regular email
+  // Use workEmail as the FROM address; use replyToEmail (inbound parse address) for Reply-To if set
   const fromEmail = salesperson.workEmail || salesperson.email || "noreply@esypet.com";
-  const replyToEmail = salesperson.workEmail || salesperson.email || undefined;
+  const replyToEmail = salesperson.replyToEmail || salesperson.workEmail || salesperson.email || undefined;
 
   return await sendEmail({
     to: contact.email,
