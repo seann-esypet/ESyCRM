@@ -280,9 +280,12 @@ export default function AdminSequenceTest() {
                           </SelectContent>
                         </Select>
                         {selectedContact && (
-                          <p className="text-xs text-muted-foreground">
-                            Auto-detected from contact's "Uses Software" field
-                          </p>
+                          <div className="text-xs text-muted-foreground space-y-0.5 bg-muted/40 rounded p-2 border">
+                            <p><span className="font-medium">Email:</span> {selectedContact.email || "—"}</p>
+                            <p><span className="font-medium">Company:</span> {selectedContact.company || <span className="italic text-orange-500">No company set — [Business_Name] will show as "your business"</span>}</p>
+                            <p><span className="font-medium">City:</span> {selectedContact.city || <span className="italic">(none)</span>}</p>
+                            <p className="pt-1 text-muted-foreground">Track auto-detected from contact's "Uses Software" field</p>
+                          </div>
                         )}
                         <FormMessage />
                       </FormItem>

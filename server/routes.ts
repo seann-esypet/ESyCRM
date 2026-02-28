@@ -41,6 +41,7 @@ async function runSequenceTest(run: TestRun): Promise<void> {
   try {
     const contact = await storage.getContact(run.contactId, null);
     if (!contact) { run.status = "failed"; return; }
+    console.log(`[TEST] Contact fetched: ${contact.firstName} ${contact.lastName} | company="${contact.company}" | email="${contact.email}"`);
 
     const salesperson = await storage.getUser(run.adminUserId);
     if (!salesperson) { run.status = "failed"; return; }

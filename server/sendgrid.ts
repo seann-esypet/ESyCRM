@@ -27,6 +27,8 @@ export function replaceTemplateVariables(
   const city = contact.city || '';
   const salespersonEmail = salesperson.workEmail || salesperson.email || '';
 
+  console.log(`[replaceTemplateVariables] contact: ${contact.firstName} ${contact.lastName}, company: "${contact.company}", businessName: "${businessName}", city: "${city}"`);
+
   return content
     .replace(/\[Contact_First_Name\]/g, contact.firstName)
     .replace(/\[Sales_Person\]/g, salespersonName)
