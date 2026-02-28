@@ -228,6 +228,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         firstName: z.string().optional(),
         lastName: z.string().optional(),
         phone: z.string().optional(),
+        workEmail: z.string().email().optional().or(z.literal("")),
+        replyToEmail: z.string().email().optional().or(z.literal("")),
         role: z.enum(["salesperson", "admin"]).optional(),
       });
       const userData = createUserSchema.parse(req.body);

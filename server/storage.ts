@@ -49,7 +49,7 @@ export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
   upsertUser(user: UpsertUser): Promise<User>;
-  createUser(userData: { email: string; firstName?: string; lastName?: string; phone?: string; role?: string }): Promise<User>;
+  createUser(userData: { email: string; firstName?: string; lastName?: string; phone?: string; workEmail?: string; replyToEmail?: string; role?: string }): Promise<User>;
   updateUserProfile(id: string, profile: Partial<Pick<User, 'workEmail' | 'replyToEmail' | 'firstName' | 'lastName' | 'phone'>>): Promise<User | undefined>;
   updateUserAdmin(id: string, userData: { email?: string; firstName?: string; lastName?: string; phone?: string; workEmail?: string; replyToEmail?: string; role?: string }): Promise<User | undefined>;
   getAllUsers(): Promise<User[]>;
@@ -203,7 +203,7 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
-  async createUser(userData: { email: string; firstName?: string; lastName?: string; phone?: string; role?: string }): Promise<User> {
+  async createUser(userData: { email: string; firstName?: string; lastName?: string; phone?: string; workEmail?: string; replyToEmail?: string; role?: string }): Promise<User> {
     const id = `manual_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const [user] = await db
       .insert(users)
@@ -213,6 +213,8 @@ export class DatabaseStorage implements IStorage {
         firstName: userData.firstName || null,
         lastName: userData.lastName || null,
         phone: userData.phone || null,
+        workEmail: userData.workEmail || null,
+        replyToEmail: userData.replyToEmail || null,
         role: userData.role || "salesperson",
       })
       .returning();
