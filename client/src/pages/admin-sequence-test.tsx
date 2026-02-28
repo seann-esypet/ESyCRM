@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { FlaskConical, Send, CheckCircle2, XCircle, Clock, Loader2, Mail, AlertTriangle } from "lucide-react";
+import { FlaskConical, Send, CheckCircle2, XCircle, Clock, Loader2, Mail, AlertTriangle, Wifi } from "lucide-react";
 
 const testSchema = z.object({
   contactId: z.string().min(1, "Please select a contact"),
@@ -132,6 +132,21 @@ export default function AdminSequenceTest() {
     };
   }, [activeRunId, toast]);
 
+  const pingMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/admin/sendgrid-ping", {});
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      toast({ title: "Connection successful!", description: data.message });
+    },
+    onError: async (error: any) => {
+      let message = "Could not connect to SendGrid";
+      try { const body = await error.json?.(); message = body?.message || message; } catch {}
+      toast({ title: "Connection failed", description: message, variant: "destructive" });
+    },
+  });
+
   const startMutation = useMutation({
     mutationFn: async (data: TestFormData) => {
       const res = await apiRequest("POST", "/api/admin/sequence-test/start", data);
@@ -174,14 +189,28 @@ export default function AdminSequenceTest() {
     <div className="flex-1 overflow-auto p-6">
       <div className="max-w-2xl mx-auto space-y-6">
         {/* Header */}
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-primary/10 rounded-lg">
-            <FlaskConical className="h-6 w-6 text-primary" />
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-primary/10 rounded-lg">
+              <FlaskConical className="h-6 w-6 text-primary" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-foreground">Sequence Test Lab</h1>
+              <p className="text-sm text-muted-foreground">Admin only — verify your email sequences are working</p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-2xl font-bold text-foreground">Sequence Test Lab</h1>
-            <p className="text-sm text-muted-foreground">Admin only — verify your email sequences are working</p>
-          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => pingMutation.mutate()}
+            disabled={pingMutation.isPending}
+            data-testid="button-sendgrid-ping"
+            className="flex-shrink-0"
+          >
+            {pingMutation.isPending
+              ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Sending…</>
+              : <><Wifi className="h-4 w-4 mr-2" /> Test Connection</>}
+          </Button>
         </div>
 
         {/* Info banner */}

@@ -1548,6 +1548,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ─── Admin SendGrid Connection Ping ───────────────────────────────────────
+  app.post("/api/admin/sendgrid-ping", isAdmin, async (req: any, res) => {
+    try {
+      const adminUserId = req.user.claims.sub;
+      const adminUser = await storage.getUser(adminUserId);
+      const toEmail = adminUser?.workEmail || adminUser?.email;
+      if (!toEmail) return res.status(400).json({ message: "No email address found for your account" });
+
+      const { sendEmail } = await import("./sendgrid");
+      const result = await sendEmail({
+        to: toEmail,
+        subject: "EsyPet CRM — SendGrid Connection Test",
+        body: "Your SendGrid API key is working correctly.\n\nYou can now use email sequences in EsyPet CRM.\n\nhttps://EsyPet-CRM.replit.app",
+        fromEmail: toEmail,
+        fromName: "EsyPet CRM",
+      });
+
+      if (result.success) {
+        res.json({ success: true, message: `Test email sent to ${toEmail}` });
+      } else {
+        res.status(400).json({ success: false, message: result.error });
+      }
+    } catch (error) {
+      console.error("SendGrid ping error:", error);
+      res.status(500).json({ success: false, message: "Failed to send test email" });
+    }
+  });
+  // ──────────────────────────────────────────────────────────────────────────
+
   // ─── Admin Sequence Test Routes ───────────────────────────────────────────
   app.post("/api/admin/sequence-test/start", isAdmin, async (req: any, res) => {
     try {
