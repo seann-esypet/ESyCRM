@@ -14,7 +14,8 @@ import {
   Settings as SettingsIcon,
   LogOut,
   UserCog,
-  Search
+  Search,
+  FlaskConical
 } from "lucide-react";
 
 const navigation = [
@@ -32,6 +33,7 @@ const navigation = [
 
 const adminNavigation = [
   { name: "Users", href: "/admin/users", icon: UserCog },
+  { name: "Seq Test", href: "/admin/sequence-test", icon: FlaskConical },
 ];
 
 export default function Sidebar() {

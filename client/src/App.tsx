@@ -16,6 +16,7 @@ import EmailSequences from "@/pages/email-sequences";
 import Inbox from "@/pages/inbox";
 import Settings from "@/pages/settings";
 import AdminUsers from "@/pages/admin-users";
+import AdminSequenceTest from "@/pages/admin-sequence-test";
 import LeadDiscovery from "@/pages/lead-discovery";
 import Sidebar from "@/components/layout/sidebar";
 
@@ -45,6 +46,7 @@ function Router() {
           <Route path="/reports" component={Reports} />
           <Route path="/settings" component={Settings} />
           <Route path="/admin/users" component={AdminUsers} />
+          <Route path="/admin/sequence-test" component={AdminSequenceTest} />
           <Route component={NotFound} />
         </Switch>
       </div>

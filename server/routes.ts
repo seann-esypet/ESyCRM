@@ -7,7 +7,128 @@ import { insertContactSchema, insertContactGroupSchema, insertDealSchema, insert
 import { z } from "zod";
 import Papa from "papaparse";
 import { runLeadDiscoveryJob, importResultsToCRM } from "./lead-discovery";
-import { sendReplyNotificationEmail } from "./sendgrid";
+import { sendReplyNotificationEmail, sendEmail, replaceTemplateVariables } from "./sendgrid";
+
+// ─── Sequence Test Runner (in-memory) ────────────────────────────────────────
+interface TestStepResult {
+  sequenceNumber: number;
+  status: "pending" | "waiting" | "sending" | "sent" | "failed";
+  scheduledAt?: Date;
+  sentAt?: Date;
+  error?: string;
+}
+
+interface TestRun {
+  id: string;
+  adminUserId: string;
+  adminEmail: string;
+  contactId: string;
+  contactName: string;
+  track: string;
+  toEmail: string;
+  status: "running" | "completed" | "failed";
+  startedAt: Date;
+  completedAt?: Date;
+  steps: TestStepResult[];
+}
+
+const testRuns = new Map<string, TestRun>();
+
+// Minute delays between sequences in test mode
+const TEST_WAIT_MINUTES_BEFORE: Record<number, number> = { 2: 7, 3: 7, 4: 30, 5: 30 };
+
+async function runSequenceTest(run: TestRun): Promise<void> {
+  try {
+    const contact = await storage.getContact(run.contactId, null);
+    if (!contact) { run.status = "failed"; return; }
+
+    const salesperson = await storage.getUser(run.adminUserId);
+    if (!salesperson) { run.status = "failed"; return; }
+
+    const sequences = await storage.getEmailSequencesByTrack(run.adminUserId, run.track as any);
+
+    for (let seqNum = 1; seqNum <= 5; seqNum++) {
+      const step = run.steps.find(s => s.sequenceNumber === seqNum);
+      if (!step) continue;
+
+      // Wait the required minutes before this sequence (except seq 1)
+      const waitMin = TEST_WAIT_MINUTES_BEFORE[seqNum];
+      if (waitMin) {
+        step.status = "waiting";
+        step.scheduledAt = new Date(Date.now() + waitMin * 60 * 1000);
+        await new Promise(resolve => setTimeout(resolve, waitMin * 60 * 1000));
+      }
+
+      step.status = "sending";
+      const seq = sequences.find(s => s.sequenceNumber === seqNum);
+      if (!seq) {
+        step.status = "failed";
+        step.error = `No Sequence ${seqNum} template found for track "${run.track}"`;
+        continue;
+      }
+
+      const subject = `[TEST Seq ${seqNum}] ` + replaceTemplateVariables(seq.subject, contact, salesperson);
+      const body = replaceTemplateVariables(seq.body, contact, salesperson);
+
+      const result = await sendEmail({
+        to: run.toEmail,
+        subject,
+        body,
+        fromEmail: salesperson.workEmail || salesperson.email || "noreply@esypet.com",
+        fromName: `[TEST] ${salesperson.firstName || "EsyPet"}`,
+      });
+
+      if (result.success) {
+        step.status = "sent";
+        step.sentAt = new Date();
+      } else {
+        step.status = "failed";
+        step.error = result.error;
+      }
+    }
+
+    run.status = "completed";
+    run.completedAt = new Date();
+
+    // Send summary email to admin
+    const sent = run.steps.filter(s => s.status === "sent").length;
+    const failed = run.steps.filter(s => s.status === "failed").length;
+    const summaryLines = run.steps.map(s => {
+      if (s.status === "sent") return `  ✓ Email ${s.sequenceNumber}: Sent at ${s.sentAt?.toLocaleString()}`;
+      if (s.status === "failed") return `  ✗ Email ${s.sequenceNumber}: FAILED – ${s.error}`;
+      return `  - Email ${s.sequenceNumber}: ${s.status}`;
+    });
+
+    const summaryBody = [
+      `Sequence Test Results`,
+      `═══════════════════`,
+      `Contact: ${run.contactName}`,
+      `Track: ${run.track === "no_software" ? "No Software" : "Uses Competitor"}`,
+      `Test email sent to: ${run.toEmail}`,
+      `Started: ${run.startedAt.toLocaleString()}`,
+      `Completed: ${run.completedAt?.toLocaleString()}`,
+      ``,
+      `Results: ${sent} sent, ${failed} failed`,
+      ``,
+      ...summaryLines,
+      ``,
+      `https://EsyPet-CRM.replit.app`,
+    ].join("\n");
+
+    await sendEmail({
+      to: run.adminEmail,
+      subject: `EsyPet Sequence Test Complete – ${sent}/5 sent`,
+      body: summaryBody,
+      fromEmail: "noreply@esypet.com",
+      fromName: "EsyPet CRM",
+    });
+  } catch (err) {
+    run.status = "failed";
+    run.completedAt = new Date();
+    console.error("Sequence test runner error:", err);
+  }
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Setup auth middleware - From Replit Auth blueprint
@@ -1426,6 +1547,66 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ allowed: false, reason: "Check failed" });
     }
   });
+
+  // ─── Admin Sequence Test Routes ───────────────────────────────────────────
+  app.post("/api/admin/sequence-test/start", isAdmin, async (req: any, res) => {
+    try {
+      const schema = z.object({
+        contactId: z.string().min(1),
+        track: z.enum(["no_software", "uses_competitor"]),
+        toEmail: z.string().email(),
+      });
+      const { contactId, track, toEmail } = schema.parse(req.body);
+
+      const adminUserId = req.user.claims.sub;
+      const adminUser = await storage.getUser(adminUserId);
+      if (!adminUser) return res.status(404).json({ message: "Admin user not found" });
+
+      const contact = await storage.getContact(contactId, null);
+      if (!contact) return res.status(404).json({ message: "Contact not found" });
+
+      const sequences = await storage.getEmailSequencesByTrack(adminUserId, track);
+      if (sequences.length === 0) {
+        return res.status(400).json({
+          message: `No sequences found for the "${track === "no_software" ? "No Software" : "Uses Competitor"}" track. Please create your email sequences first.`
+        });
+      }
+
+      const id = Math.random().toString(36).slice(2, 10);
+      const run: TestRun = {
+        id,
+        adminUserId,
+        adminEmail: adminUser.workEmail || adminUser.email || toEmail,
+        contactId,
+        contactName: `${contact.firstName} ${contact.lastName || ""}`.trim(),
+        track,
+        toEmail,
+        status: "running",
+        startedAt: new Date(),
+        steps: [1, 2, 3, 4, 5].map(n => ({ sequenceNumber: n, status: n === 1 ? "sending" : "pending" })),
+      };
+
+      testRuns.set(id, run);
+
+      // Fire and forget — run in background
+      runSequenceTest(run).catch(err => console.error("Sequence test error:", err));
+
+      res.status(201).json(run);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid input", errors: error.errors });
+      }
+      console.error("Error starting sequence test:", error);
+      res.status(500).json({ message: "Failed to start test" });
+    }
+  });
+
+  app.get("/api/admin/sequence-test/:id", isAdmin, async (req: any, res) => {
+    const run = testRuns.get(req.params.id);
+    if (!run) return res.status(404).json({ message: "Test run not found" });
+    res.json(run);
+  });
+  // ──────────────────────────────────────────────────────────────────────────
 
   const httpServer = createServer(app);
   return httpServer;
