@@ -7,6 +7,7 @@ import { insertContactSchema, insertContactGroupSchema, insertDealSchema, insert
 import { z } from "zod";
 import Papa from "papaparse";
 import { runLeadDiscoveryJob, importResultsToCRM } from "./lead-discovery";
+import { sendReplyNotificationEmail } from "./sendgrid";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Setup auth middleware - From Replit Auth blueprint
@@ -1171,7 +1172,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Create inbox message for the contact's owner (salesperson)
       await storage.createInboxMessage({
         contactId: contact.id,
-        emailSequenceLogId: null, // We can enhance this later to link to specific sequences
+        emailSequenceLogId: null,
         from: from,
         subject: subject,
         bodyText: text,
@@ -1180,6 +1181,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }, contact.userId);
       
       console.log(`Inbox: Created message from ${fromEmail} for user ${contact.userId}`);
+
+      // Send notification email to the salesperson
+      const salesperson = await storage.getUser(contact.userId);
+      if (salesperson) {
+        const contactName = `${contact.firstName} ${contact.lastName || ''}`.trim();
+        sendReplyNotificationEmail({ salesperson, contactName }).catch(err => {
+          console.error("Failed to send reply notification:", err);
+        });
+      }
+
       res.status(200).send("OK");
     } catch (error) {
       console.error("Error processing inbound email:", error);

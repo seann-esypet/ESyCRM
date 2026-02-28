@@ -12,8 +12,10 @@ if (SENDGRID_API_KEY) {
  * Replace template variables in email content
  * Supported variables:
  * - [Contact_First_Name] - Contact's first name
- * - [Sales_Person] - Salesperson's full name
+ * - [Sales_Person] - Salesperson's first name
  * - [Business_Name] - Contact's company/business name
+ * - [City] - Contact's city
+ * - [Sales_Person_Email] - Salesperson's work email (or regular email)
  */
 export function replaceTemplateVariables(
   content: string,
@@ -22,11 +24,15 @@ export function replaceTemplateVariables(
 ): string {
   const salespersonName = `${salesperson.firstName || ''} ${salesperson.lastName || ''}`.trim() || salesperson.email || 'Sales Team';
   const businessName = contact.company || 'your business';
-  
+  const city = contact.city || '';
+  const salespersonEmail = salesperson.workEmail || salesperson.email || '';
+
   return content
     .replace(/\[Contact_First_Name\]/g, contact.firstName)
     .replace(/\[Sales_Person\]/g, salespersonName)
-    .replace(/\[Business_Name\]/g, businessName);
+    .replace(/\[Business_Name\]/g, businessName)
+    .replace(/\[City\]/g, city)
+    .replace(/\[Sales_Person_Email\]/g, salespersonEmail);
 }
 
 /**
@@ -117,4 +123,34 @@ export async function sendSequenceEmail({
     fromName: salespersonName,
     replyTo: replyToEmail,
   });
+}
+
+/**
+ * Send a notification email to a salesperson when a lead replies
+ */
+export async function sendReplyNotificationEmail({
+  salesperson,
+  contactName,
+}: {
+  salesperson: User;
+  contactName: string;
+}): Promise<void> {
+  const notifyEmail = salesperson.workEmail || salesperson.email;
+  if (!notifyEmail) return;
+
+  const subject = "You have a EsyPet Response. Check INBOX";
+  const body = `Please check your EsyPet Inbox and reply to the lead.\n\nhttps://EsyPet-CRM.replit.app`;
+
+  try {
+    await sendEmail({
+      to: notifyEmail,
+      subject,
+      body,
+      fromEmail: "noreply@esypet.com",
+      fromName: "EsyPet CRM",
+    });
+    console.log(`Reply notification sent to ${notifyEmail} for contact ${contactName}`);
+  } catch (error) {
+    console.error("Failed to send reply notification email:", error);
+  }
 }
