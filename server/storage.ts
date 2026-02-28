@@ -51,7 +51,7 @@ export interface IStorage {
   upsertUser(user: UpsertUser): Promise<User>;
   createUser(userData: { email: string; firstName?: string; lastName?: string; phone?: string; role?: string }): Promise<User>;
   updateUserProfile(id: string, profile: Partial<Pick<User, 'workEmail' | 'replyToEmail' | 'firstName' | 'lastName' | 'phone'>>): Promise<User | undefined>;
-  updateUserAdmin(id: string, userData: { email?: string; firstName?: string; lastName?: string; phone?: string; workEmail?: string; role?: string }): Promise<User | undefined>;
+  updateUserAdmin(id: string, userData: { email?: string; firstName?: string; lastName?: string; phone?: string; workEmail?: string; replyToEmail?: string; role?: string }): Promise<User | undefined>;
   getAllUsers(): Promise<User[]>;
   updateUserRole(id: string, role: string): Promise<User | undefined>;
   
@@ -235,7 +235,7 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  async updateUserAdmin(id: string, userData: { email?: string; firstName?: string; lastName?: string; phone?: string; workEmail?: string; role?: string }): Promise<User | undefined> {
+  async updateUserAdmin(id: string, userData: { email?: string; firstName?: string; lastName?: string; phone?: string; workEmail?: string; replyToEmail?: string; role?: string }): Promise<User | undefined> {
     const [updated] = await db
       .update(users)
       .set({

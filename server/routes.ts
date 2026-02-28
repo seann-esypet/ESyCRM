@@ -257,6 +257,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         lastName: z.string().optional(),
         phone: z.string().optional(),
         workEmail: z.string().email().optional().nullable(),
+        replyToEmail: z.string().email().optional().nullable(),
         role: z.enum(["salesperson", "admin"]).optional(),
       });
       const userData = updateUserSchema.parse(req.body);
@@ -272,6 +273,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const updatedUser = await storage.updateUserAdmin(id, {
         ...userData,
         workEmail: userData.workEmail === null ? undefined : userData.workEmail,
+        replyToEmail: userData.replyToEmail === null ? undefined : userData.replyToEmail,
       });
       if (!updatedUser) {
         return res.status(404).json({ message: "User not found" });

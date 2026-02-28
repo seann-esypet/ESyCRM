@@ -34,6 +34,7 @@ const editUserSchema = z.object({
   lastName: z.string().optional(),
   phone: z.string().optional(),
   workEmail: z.string().email("Please enter a valid email address").optional().or(z.literal("")),
+  replyToEmail: z.string().email("Please enter a valid email address").optional().or(z.literal("")),
   role: z.enum(["salesperson", "admin"]),
 });
 
@@ -74,6 +75,7 @@ export default function AdminUsers() {
       lastName: "",
       phone: "",
       workEmail: "",
+      replyToEmail: "",
       role: "salesperson",
     },
   });
@@ -177,6 +179,7 @@ export default function AdminUsers() {
       lastName: user.lastName || "",
       phone: user.phone || "",
       workEmail: user.workEmail || "",
+      replyToEmail: user.replyToEmail || "",
       role: (user.role as "salesperson" | "admin") || "salesperson",
     });
     setIsEditDialogOpen(true);
@@ -383,9 +386,22 @@ export default function AdminUsers() {
                 name="workEmail"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Work Email (for sending sequences)</FormLabel>
+                    <FormLabel>From Email (sends sequences)</FormLabel>
                     <FormControl>
-                      <Input placeholder="john@company.com" {...field} data-testid="input-edit-user-workemail" />
+                      <Input placeholder="john@esypet.com" {...field} data-testid="input-edit-user-workemail" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={editForm.control}
+                name="replyToEmail"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Reply-To Email (for CRM Inbox)</FormLabel>
+                    <FormControl>
+                      <Input placeholder="john@inbound.esypet.com" {...field} data-testid="input-edit-user-replytoemail" />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
