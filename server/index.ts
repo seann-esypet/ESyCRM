@@ -70,7 +70,7 @@ app.use((req, res, next) => {
     log(`serving on port ${port}`);
     
     // Start email sequence scheduler if SendGrid is configured
-    if (process.env.SENDGRID_API_KEY) {
+    if (process.env.SENDGRID_NEW_API_KEY || process.env.SENDGRID_API_KEY) {
       log("Starting email sequence scheduler...");
       startEmailSequenceScheduler();
     } else {
