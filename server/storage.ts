@@ -420,13 +420,24 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteContact(id: string, userId: string | null): Promise<boolean> {
+    // Verify ownership before deleting
+    let contact;
     if (userId === null) {
-      // Admin: delete any contact
-      const result = await db.delete(contacts).where(eq(contacts.id, id));
-      return result.rowCount ? result.rowCount > 0 : false;
+      [contact] = await db.select().from(contacts).where(eq(contacts.id, id));
+    } else {
+      [contact] = await db.select().from(contacts)
+        .where(and(eq(contacts.id, id), eq(contacts.userId, userId)));
     }
-    const result = await db.delete(contacts)
-      .where(and(eq(contacts.id, id), eq(contacts.userId, userId)));
+    if (!contact) return false;
+
+    // Delete all related records first (cascade in code to avoid FK violations)
+    await db.delete(emailSequenceLogs).where(eq(emailSequenceLogs.contactId, id));
+    await db.delete(inboxMessages).where(eq(inboxMessages.contactId, id));
+    await db.delete(activities).where(eq(activities.contactId, id));
+    await db.delete(tasks).where(eq(tasks.contactId, id));
+    await db.delete(deals).where(eq(deals.contactId, id));
+
+    const result = await db.delete(contacts).where(eq(contacts.id, id));
     return result.rowCount ? result.rowCount > 0 : false;
   }
 
