@@ -6,7 +6,7 @@ import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import {
   ArrowLeft, Phone, Mail, Globe, MapPin, Building2, Users, Monitor,
-  Pencil, CheckSquare, Square, ChevronDown, PhoneCall, FileText,
+  Pencil, CheckSquare, Square, ChevronDown, ChevronLeft, ChevronRight, PhoneCall, FileText,
   StickyNote, Home, ListTodo, Calendar, DollarSign, TrendingUp,
   AlertCircle, User, ExternalLink, Facebook, Instagram, Link2
 } from "lucide-react";
@@ -92,6 +92,7 @@ export default function DealWorkspace() {
   const dealId = params?.id ?? "";
   const [activeTab, setActiveTab] = useState("activity");
   const [editContactOpen, setEditContactOpen] = useState(false);
+  const [leftCollapsed, setLeftCollapsed] = useState(false);
 
   // Fetch workspace data (deal + contact + tasks + activities)
   const { data, isLoading, error } = useQuery<{ deal: Deal; contact: Contact | null; tasks: Task[]; activities: any[] }>({
@@ -227,8 +228,31 @@ export default function DealWorkspace() {
       <div className="flex flex-1 overflow-hidden">
 
         {/* ── LEFT: Contact Info ──────────────────────────────────────────────── */}
-        <div className="w-72 shrink-0 border-r overflow-y-auto flex flex-col bg-card">
-          <div className="p-4 flex-1">
+        <div className={`shrink-0 border-r flex flex-col bg-card transition-all duration-200 ${leftCollapsed ? "w-10 overflow-hidden" : "w-72 overflow-y-auto"}`}>
+          {/* Collapse / expand toggle bar */}
+          <div className={`shrink-0 flex items-center border-b ${leftCollapsed ? "justify-center py-2" : "justify-end px-2 py-1.5"}`}>
+            {leftCollapsed ? (
+              <button
+                onClick={() => setLeftCollapsed(false)}
+                className="flex items-center justify-center h-7 w-7 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                title="Expand contact panel"
+                data-testid="button-expand-left"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            ) : (
+              <button
+                onClick={() => setLeftCollapsed(true)}
+                className="flex items-center justify-center h-7 w-7 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                title="Collapse contact panel"
+                data-testid="button-collapse-left"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+
+          <div className="p-4 flex-1" style={{ display: leftCollapsed ? "none" : undefined }}>
             {contact ? (
               <>
                 {/* Avatar + Name */}
@@ -353,7 +377,7 @@ export default function DealWorkspace() {
           </div>
 
           {/* Edit Contact button */}
-          {contact && (
+          {contact && !leftCollapsed && (
             <div className="p-4 border-t shrink-0">
               <Button
                 variant="outline"
