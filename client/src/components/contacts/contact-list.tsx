@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Edit, Trash2, Mail, Phone, Users, Building, MapPin, Globe, User, Briefcase, FileText } from "lucide-react";
+import { Edit, Mail, Phone, Users, Building, MapPin, Globe, User, Briefcase, FileText, Archive, ArchiveRestore, ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react";
 import type { Contact, Deal, User as UserType } from "@shared/schema";
 
 interface ContactListProps {
@@ -21,8 +21,13 @@ interface ContactListProps {
   isLoading: boolean;
   isAdmin?: boolean;
   adminUsers?: UserType[];
+  showArchived?: boolean;
+  sortColumn: "name" | "company" | "lastContact" | null;
+  sortDir: "asc" | "desc";
+  onSortChange: (col: "name" | "company" | "lastContact") => void;
   onEdit: (contact: Contact) => void;
-  onDelete: (id: string) => void;
+  onArchive: (id: string) => void;
+  onUnarchive: (id: string) => void;
   onStatusChange: (contactId: string, newStatus: string) => void;
   onAssign?: (contactId: string, newUserId: string) => void;
 }
@@ -59,7 +64,14 @@ const getStageColor = (stage: string) => {
   }
 };
 
-export default function ContactList({ contacts, deals, isLoading, isAdmin, adminUsers, onEdit, onDelete, onStatusChange, onAssign }: ContactListProps) {
+function SortIcon({ col, sortColumn, sortDir }: { col: "name" | "company" | "lastContact"; sortColumn: "name" | "company" | "lastContact" | null; sortDir: "asc" | "desc" }) {
+  if (sortColumn !== col) return <ChevronsUpDown className="h-3.5 w-3.5 ml-1 text-muted-foreground opacity-50" />;
+  return sortDir === "asc"
+    ? <ChevronUp className="h-3.5 w-3.5 ml-1 text-primary" />
+    : <ChevronDown className="h-3.5 w-3.5 ml-1 text-primary" />;
+}
+
+export default function ContactList({ contacts, deals, isLoading, isAdmin, adminUsers, showArchived, sortColumn, sortDir, onSortChange, onEdit, onArchive, onUnarchive, onStatusChange, onAssign }: ContactListProps) {
   const [viewContact, setViewContact] = useState<Contact | null>(null);
 
   const formatDate = (date: string | Date | null) => {
@@ -98,9 +110,11 @@ export default function ContactList({ contacts, deals, isLoading, isAdmin, admin
       <Card>
         <CardContent className="p-12 text-center">
           <Users className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
-          <h3 className="text-lg font-medium text-foreground mb-2">No contacts found</h3>
+          <h3 className="text-lg font-medium text-foreground mb-2">
+            {showArchived ? "No archived contacts" : "No contacts found"}
+          </h3>
           <p className="text-muted-foreground">
-            Get started by adding your first contact.
+            {showArchived ? "Archived contacts will appear here." : "Get started by adding your first contact."}
           </p>
         </CardContent>
       </Card>
@@ -120,6 +134,19 @@ export default function ContactList({ contacts, deals, isLoading, isAdmin, admin
     );
   };
 
+  const SortableHead = ({ col, label }: { col: "name" | "company" | "lastContact"; label: string }) => (
+    <TableHead>
+      <button
+        className="flex items-center font-medium hover:text-primary transition-colors"
+        onClick={() => onSortChange(col)}
+        data-testid={`sort-${col}`}
+      >
+        {label}
+        <SortIcon col={col} sortColumn={sortColumn} sortDir={sortDir} />
+      </button>
+    </TableHead>
+  );
+
   return (
     <>
       <Card data-testid="contacts-table">
@@ -127,12 +154,12 @@ export default function ContactList({ contacts, deals, isLoading, isAdmin, admin
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Contact</TableHead>
-                <TableHead>Company</TableHead>
+                <SortableHead col="name" label="Contact" />
+                <SortableHead col="company" label="Company" />
                 <TableHead>Address</TableHead>
                 <TableHead>Email</TableHead>
                 <TableHead>Phone</TableHead>
-                <TableHead>Last Contact</TableHead>
+                <SortableHead col="lastContact" label="Last Contact" />
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
@@ -141,7 +168,7 @@ export default function ContactList({ contacts, deals, isLoading, isAdmin, admin
               {contacts.map((contact) => (
                 <TableRow 
                   key={contact.id} 
-                  className="hover:bg-muted/50"
+                  className={`hover:bg-muted/50 ${contact.archivedAt ? "opacity-70" : ""}`}
                   data-testid={`contact-row-${contact.id}`}
                 >
                   <TableCell className="font-medium">
@@ -191,42 +218,62 @@ export default function ContactList({ contacts, deals, isLoading, isAdmin, admin
                   </TableCell>
                   <TableCell>{formatDate(contact.lastContactDate)}</TableCell>
                   <TableCell>
-                    <Select 
-                      value={contact.status} 
-                      onValueChange={(value) => onStatusChange(contact.id, value)}
-                    >
-                      <SelectTrigger 
-                        className="w-[110px]" 
-                        data-testid={`status-select-${contact.id}`}
+                    {contact.archivedAt ? (
+                      <Badge variant="outline" className="text-muted-foreground">Archived</Badge>
+                    ) : (
+                      <Select 
+                        value={contact.status} 
+                        onValueChange={(value) => onStatusChange(contact.id, value)}
                       >
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="active">Active</SelectItem>
-                        <SelectItem value="inactive">Inactive</SelectItem>
-                        <SelectItem value="pipeline">Pipeline</SelectItem>
-                      </SelectContent>
-                    </Select>
+                        <SelectTrigger 
+                          className="w-[110px]" 
+                          data-testid={`status-select-${contact.id}`}
+                        >
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="active">Active</SelectItem>
+                          <SelectItem value="inactive">Inactive</SelectItem>
+                          <SelectItem value="pipeline">Pipeline</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    )}
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end space-x-2">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => onEdit(contact)}
-                        data-testid={`edit-contact-${contact.id}`}
-                      >
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => onDelete(contact.id)}
-                        className="text-destructive hover:text-destructive"
-                        data-testid={`delete-contact-${contact.id}`}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      {!contact.archivedAt && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => onEdit(contact)}
+                          data-testid={`edit-contact-${contact.id}`}
+                        >
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                      )}
+                      {contact.archivedAt ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => onUnarchive(contact.id)}
+                          className="text-green-600 hover:text-green-700"
+                          title="Restore contact"
+                          data-testid={`unarchive-contact-${contact.id}`}
+                        >
+                          <ArchiveRestore className="h-4 w-4" />
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => onArchive(contact.id)}
+                          className="text-muted-foreground hover:text-orange-600"
+                          title="Archive contact"
+                          data-testid={`archive-contact-${contact.id}`}
+                        >
+                          <Archive className="h-4 w-4" />
+                        </Button>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>

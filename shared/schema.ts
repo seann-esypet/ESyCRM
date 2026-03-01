@@ -71,6 +71,7 @@ export const contacts = pgTable("contacts", {
   status: text("status").notNull().default("active"), // active, inactive, pipeline
   sequenceTrack: text("sequence_track"), // no_software, uses_competitor - assigned when qualified
   lastContactDate: timestamp("last_contact_date"),
+  archivedAt: timestamp("archived_at"),
 });
 
 export const deals = pgTable("deals", {

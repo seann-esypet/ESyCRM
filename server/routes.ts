@@ -294,13 +294,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/contacts", isAuthenticated, async (req: any, res) => {
     try {
       let userId = getUserIdForQuery(req.user); // null for admin, user ID for salesperson
-      const { search, filterUserId } = req.query;
+      const { search, filterUserId, showArchived } = req.query;
       if (filterUserId && req.user.role === "admin") {
         userId = filterUserId as string;
       }
+      const archived = showArchived === "true";
       const contacts = search 
         ? await storage.searchContacts(search as string, userId)
-        : await storage.getContacts(userId);
+        : await storage.getContacts(userId, archived);
       res.json(contacts);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch contacts" });
@@ -365,6 +366,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "userId is required", errors: error.errors });
       }
       res.status(500).json({ message: "Failed to reassign contact" });
+    }
+  });
+
+  app.patch("/api/contacts/:id/archive", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const updated = await storage.archiveContact(req.params.id, userId);
+      if (!updated) {
+        return res.status(404).json({ message: "Contact not found" });
+      }
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to archive contact" });
+    }
+  });
+
+  app.patch("/api/contacts/:id/unarchive", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const updated = await storage.unarchiveContact(req.params.id, userId);
+      if (!updated) {
+        return res.status(404).json({ message: "Contact not found" });
+      }
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to unarchive contact" });
     }
   });
 

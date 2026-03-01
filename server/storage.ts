@@ -63,12 +63,14 @@ export interface IStorage {
   deleteContactGroup(id: string, userId: string | null): Promise<boolean>;
   
   // Contacts (userId can be null for admins to get all data)
-  getContacts(userId: string | null): Promise<Contact[]>;
+  getContacts(userId: string | null, showArchived?: boolean): Promise<Contact[]>;
   getContact(id: string, userId: string | null): Promise<Contact | undefined>;
   createContact(contact: InsertContact, userId: string): Promise<Contact>;
   bulkCreateContacts(contacts: Array<{ row: number, data: InsertContact }>, userId: string): Promise<{ successful: Contact[], failed: Array<{ row: number, error: string, data: any }> }>;
   updateContact(id: string, contact: Partial<InsertContact>, userId: string | null): Promise<Contact | undefined>;
   assignContact(id: string, newUserId: string): Promise<Contact | undefined>;
+  archiveContact(id: string, userId: string | null): Promise<Contact | undefined>;
+  unarchiveContact(id: string, userId: string | null): Promise<Contact | undefined>;
   deleteContact(id: string, userId: string | null): Promise<boolean>;
   searchContacts(query: string, userId: string | null): Promise<Contact[]>;
   findDuplicateContacts(contact: InsertContact, userId: string, excludeId?: string): Promise<Contact[]>;
@@ -337,12 +339,15 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Contacts
-  async getContacts(userId: string | null): Promise<Contact[]> {
+  async getContacts(userId: string | null, showArchived = false): Promise<Contact[]> {
+    const archivedFilter = showArchived
+      ? sql`${contacts.archivedAt} IS NOT NULL`
+      : sql`${contacts.archivedAt} IS NULL`;
     if (userId === null) {
-      // Admin: get all contacts
-      return await db.select().from(contacts);
+      return await db.select().from(contacts).where(archivedFilter);
     }
-    return await db.select().from(contacts).where(eq(contacts.userId, userId));
+    return await db.select().from(contacts)
+      .where(and(eq(contacts.userId, userId), archivedFilter));
   }
 
   async getContact(id: string, userId: string | null): Promise<Contact | undefined> {
@@ -415,6 +420,30 @@ export class DatabaseStorage implements IStorage {
       .update(contacts)
       .set({ userId: newUserId })
       .where(eq(contacts.id, id))
+      .returning();
+    return updated;
+  }
+
+  async archiveContact(id: string, userId: string | null): Promise<Contact | undefined> {
+    const where = userId === null
+      ? eq(contacts.id, id)
+      : and(eq(contacts.id, id), eq(contacts.userId, userId));
+    const [updated] = await db
+      .update(contacts)
+      .set({ archivedAt: new Date() })
+      .where(where)
+      .returning();
+    return updated;
+  }
+
+  async unarchiveContact(id: string, userId: string | null): Promise<Contact | undefined> {
+    const where = userId === null
+      ? eq(contacts.id, id)
+      : and(eq(contacts.id, id), eq(contacts.userId, userId));
+    const [updated] = await db
+      .update(contacts)
+      .set({ archivedAt: null })
+      .where(where)
       .returning();
     return updated;
   }
