@@ -652,6 +652,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Deal Workspace: single endpoint returning deal + contact + tasks + activities
+  app.get("/api/deal-workspace/:dealId", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const { dealId } = req.params;
+      const deal = await storage.getDeal(dealId, userId);
+      if (!deal) {
+        return res.status(404).json({ message: "Deal not found" });
+      }
+      const contact = deal.contactId ? await storage.getContact(deal.contactId, userId) : null;
+      const tasks = await storage.getTasksByDealId(dealId, userId);
+      const activities = await storage.getDealActivities(dealId, userId);
+      res.json({ deal, contact, tasks, activities });
+    } catch (error) {
+      console.error("Error fetching deal workspace:", error);
+      res.status(500).json({ message: "Failed to fetch deal workspace" });
+    }
+  });
+
+  app.post("/api/deal-activities/:dealId", isAuthenticated, async (req: any, res) => {
+    try {
+      const createdBy = req.user.claims.sub;
+      const userId = getUserIdForQuery(req.user);
+      const { dealId } = req.params;
+      const deal = await storage.getDeal(dealId, userId);
+      if (!deal) return res.status(404).json({ message: "Deal not found" });
+      const activity = await storage.createDealActivity({ ...req.body, dealId }, createdBy);
+      res.status(201).json(activity);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to create activity" });
+    }
+  });
+
   app.post("/api/deals", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;

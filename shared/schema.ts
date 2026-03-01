@@ -118,6 +118,17 @@ export const activities = pgTable("activities", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const dealActivities = pgTable("deal_activities", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull().references(() => deals.id),
+  contactId: varchar("contact_id").notNull().references(() => contacts.id),
+  activityType: text("activity_type").notNull(), // 'call', 'email_note', 'note', 'site_visit', 'stage_change', 'task_created', 'task_completed', 'sequence_step'
+  createdBy: varchar("created_by").notNull().references(() => users.id, { onUpdate: "cascade" }),
+  notes: text("notes"),
+  metadata: text("metadata"), // JSON blob for type-specific fields
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 export const emailSequences = pgTable("email_sequences", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id, { onUpdate: "cascade" }),
@@ -207,6 +218,15 @@ export const insertActivitySchema = createInsertSchema(activities).omit({
   userId: true,
   createdAt: true,
 });
+
+export const insertDealActivitySchema = createInsertSchema(dealActivities).omit({
+  id: true,
+  createdBy: true,
+  createdAt: true,
+});
+
+export type DealActivity = typeof dealActivities.$inferSelect;
+export type InsertDealActivity = z.infer<typeof insertDealActivitySchema>;
 
 export const insertEmailSequenceSchema = createInsertSchema(emailSequences).omit({
   id: true,

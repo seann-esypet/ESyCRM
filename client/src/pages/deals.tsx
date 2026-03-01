@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import Header from "@/components/layout/header";
 import DealForm from "@/components/deals/deal-form";
@@ -26,6 +27,7 @@ export default function Deals() {
   const { user } = useAuth();
   const isAdmin = (user as any)?.role === "admin";
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [selectedDeal, setSelectedDeal] = useState<Deal | undefined>();
@@ -562,7 +564,11 @@ export default function Deals() {
               >
                 <CardContent className="p-6">
                   <div className="flex justify-between items-start mb-4">
-                    <h3 className="font-semibold text-lg text-foreground line-clamp-2">
+                    <h3
+                      className="font-semibold text-lg text-primary hover:underline cursor-pointer line-clamp-2"
+                      onClick={() => setLocation(`/deal/${deal.id}`)}
+                      data-testid={`link-deal-workspace-card-${deal.id}`}
+                    >
                       {deal.title}
                     </h3>
                     <div className="flex space-x-1">
@@ -763,7 +769,13 @@ export default function Deals() {
                         </button>
                       </TableCell>
                       <TableCell className="font-medium">
-                        {deal.title}
+                        <button
+                          className="text-primary hover:underline cursor-pointer font-medium text-left"
+                          onClick={() => setLocation(`/deal/${deal.id}`)}
+                          data-testid={`link-deal-workspace-${deal.id}`}
+                        >
+                          {deal.title}
+                        </button>
                       </TableCell>
                       <TableCell>{formatCurrency(deal.value)}</TableCell>
                       <TableCell>{deal.plan || "—"}</TableCell>

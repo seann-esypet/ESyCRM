@@ -10,6 +10,8 @@ import {
   type InsertTask, 
   type Activity, 
   type InsertActivity,
+  type DealActivity,
+  type InsertDealActivity,
   type User,
   type UpsertUser,
   type EmailSequence,
@@ -31,6 +33,7 @@ import {
   deals,
   tasks,
   activities,
+  dealActivities,
   emailSequences,
   emailSequenceLogs,
   inboxMessages,
@@ -90,7 +93,10 @@ export interface IStorage {
   updateTask(id: string, task: Partial<InsertTask>, userId: string | null): Promise<Task | undefined>;
   deleteTask(id: string, userId: string | null): Promise<boolean>;
   getTasksByStatus(status: string, userId: string | null): Promise<Task[]>;
+  getTasksByDealId(dealId: string, userId: string | null): Promise<Task[]>;
   getUpcomingTasks(userId: string | null): Promise<Task[]>;
+  getDealActivities(dealId: string, userId: string | null): Promise<DealActivity[]>;
+  createDealActivity(activity: InsertDealActivity, createdBy: string): Promise<DealActivity>;
 
   // Activities (userId can be null for admins to get all data)
   getActivities(userId: string | null): Promise<Activity[]>;
@@ -747,6 +753,30 @@ export class DatabaseStorage implements IStorage {
     }
     return await db.select().from(tasks)
       .where(and(eq(tasks.status, status), eq(tasks.userId, userId)));
+  }
+
+  async getTasksByDealId(dealId: string, userId: string | null): Promise<Task[]> {
+    if (userId === null) {
+      return await db.select().from(tasks)
+        .where(eq(tasks.dealId, dealId))
+        .orderBy(desc(tasks.createdAt));
+    }
+    return await db.select().from(tasks)
+      .where(and(eq(tasks.dealId, dealId), eq(tasks.userId, userId)))
+      .orderBy(desc(tasks.createdAt));
+  }
+
+  async getDealActivities(dealId: string, userId: string | null): Promise<DealActivity[]> {
+    return await db.select().from(dealActivities)
+      .where(eq(dealActivities.dealId, dealId))
+      .orderBy(desc(dealActivities.createdAt));
+  }
+
+  async createDealActivity(activity: InsertDealActivity, createdBy: string): Promise<DealActivity> {
+    const [result] = await db.insert(dealActivities)
+      .values({ ...activity, createdBy })
+      .returning();
+    return result;
   }
 
   async getUpcomingTasks(userId: string | null): Promise<Task[]> {
