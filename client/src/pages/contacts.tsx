@@ -23,6 +23,7 @@ export default function Contacts() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedContact, setSelectedContact] = useState<Contact | undefined>();
   const [showArchived, setShowArchived] = useState(false);
+  const [usesSoftwareFilter, setUsesSoftwareFilter] = useState<"all" | "Yes" | "No" | "Unknown">("all");
 
   const [sortColumn, setSortColumn] = useState<"name" | "company" | "lastContact" | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -169,6 +170,10 @@ export default function Contacts() {
     if (!contacts || !Array.isArray(contacts)) return [];
     let list = [...contacts];
 
+    if (usesSoftwareFilter !== "all") {
+      list = list.filter(c => c.usesSoftware === usesSoftwareFilter);
+    }
+
     if (sortColumn) {
       list.sort((a, b) => {
         let aVal: string | number = "";
@@ -200,7 +205,7 @@ export default function Contacts() {
     }
 
     return list;
-  }, [contacts, sortColumn, sortDir]);
+  }, [contacts, sortColumn, sortDir, usesSoftwareFilter]);
 
   return (
     <>
@@ -213,6 +218,20 @@ export default function Contacts() {
         addButtonText="Add Contact"
         customActions={
           <div className="flex items-center gap-2">
+            <Select
+              value={usesSoftwareFilter}
+              onValueChange={(v) => setUsesSoftwareFilter(v as typeof usesSoftwareFilter)}
+            >
+              <SelectTrigger className="w-[190px]" data-testid="select-uses-software-filter">
+                <SelectValue placeholder="Uses Software" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Contacts</SelectItem>
+                <SelectItem value="Yes">✓ Uses Software</SelectItem>
+                <SelectItem value="No">✗ No Software</SelectItem>
+                <SelectItem value="Unknown">? Unknown</SelectItem>
+              </SelectContent>
+            </Select>
             <Button
               variant={showArchived ? "default" : "outline"}
               size="sm"
