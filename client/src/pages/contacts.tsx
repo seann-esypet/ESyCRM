@@ -218,20 +218,6 @@ export default function Contacts() {
         addButtonText="Add Contact"
         customActions={
           <div className="flex items-center gap-2">
-            <Select
-              value={usesSoftwareFilter}
-              onValueChange={(v) => setUsesSoftwareFilter(v as typeof usesSoftwareFilter)}
-            >
-              <SelectTrigger className="w-[190px]" data-testid="select-uses-software-filter">
-                <SelectValue placeholder="Uses Software" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Contacts</SelectItem>
-                <SelectItem value="Yes">✓ Uses Software</SelectItem>
-                <SelectItem value="No">✗ No Software</SelectItem>
-                <SelectItem value="Unknown">? Unknown</SelectItem>
-              </SelectContent>
-            </Select>
             <Button
               variant={showArchived ? "default" : "outline"}
               size="sm"
@@ -277,6 +263,28 @@ export default function Contacts() {
       />
       
       <main className="flex-1 overflow-y-auto p-6 bg-muted/30" data-testid="contacts-content">
+        <div className="flex items-center gap-3 mb-4">
+          <span className="text-sm font-medium text-muted-foreground">Uses Software:</span>
+          {(["all", "Yes", "No", "Unknown"] as const).map((val) => (
+            <button
+              key={val}
+              onClick={() => setUsesSoftwareFilter(val)}
+              data-testid={`filter-software-${val}`}
+              className={`px-4 py-1.5 rounded-full text-sm font-medium border transition-colors ${
+                usesSoftwareFilter === val
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-background text-foreground border-border hover:border-primary hover:text-primary"
+              }`}
+            >
+              {val === "all" ? "All" : val === "Yes" ? "✓ Uses Software" : val === "No" ? "✗ No Software" : "? Unknown"}
+            </button>
+          ))}
+          {usesSoftwareFilter !== "all" && (
+            <span className="text-xs text-muted-foreground ml-1">
+              ({sortedContacts.length} contact{sortedContacts.length !== 1 ? "s" : ""})
+            </span>
+          )}
+        </div>
         <ContactList
           contacts={sortedContacts}
           deals={deals}
