@@ -3,12 +3,13 @@ import { useRoute, useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { format } from "date-fns";
+import { useAuth } from "@/hooks/useAuth";
+import { format, formatDistanceToNow } from "date-fns";
 import {
   ArrowLeft, Phone, Mail, Globe, MapPin, Building2, Users, Monitor,
   Pencil, CheckSquare, Square, ChevronDown, ChevronLeft, ChevronRight, PhoneCall, FileText,
-  StickyNote, Home, ListTodo, Calendar, DollarSign, TrendingUp,
-  AlertCircle, User, ExternalLink, Facebook, Instagram, Link2
+  StickyNote, Home, ListTodo, Calendar, DollarSign, TrendingUp, Send,
+  AlertCircle, User, ExternalLink, Facebook, Instagram, Link2, Clock
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +19,16 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
+import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select as UiSelect,
+  SelectContent as UiSelectContent,
+  SelectItem as UiSelectItem,
+  SelectTrigger as UiSelectTrigger,
+  SelectValue as UiSelectValue,
+} from "@/components/ui/select";
 import type { Deal, Contact, Task } from "@shared/schema";
 import ContactForm from "@/components/contacts/contact-form";
 
@@ -84,21 +95,63 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
   );
 }
 
+// ─── Activity type config ─────────────────────────────────────────────────────
+type LogType = "call" | "email_note" | "note" | "site_visit";
+
+const ACTIVITY_CONFIG: Record<string, { label: string; Icon: React.ElementType; color: string; bg: string }> = {
+  call:         { label: "Call",       Icon: PhoneCall,   color: "text-green-700 dark:text-green-300",   bg: "bg-green-100 dark:bg-green-900" },
+  email_note:   { label: "Email Note", Icon: Mail,        color: "text-indigo-700 dark:text-indigo-300", bg: "bg-indigo-100 dark:bg-indigo-900" },
+  note:         { label: "Note",       Icon: StickyNote,  color: "text-blue-700 dark:text-blue-300",     bg: "bg-blue-100 dark:bg-blue-900" },
+  site_visit:   { label: "Site Visit", Icon: Home,        color: "text-orange-700 dark:text-orange-300", bg: "bg-orange-100 dark:bg-orange-900" },
+  stage_change: { label: "Stage",      Icon: TrendingUp,  color: "text-purple-700 dark:text-purple-300", bg: "bg-purple-100 dark:bg-purple-900" },
+};
+
+const CALL_OUTCOMES = ["Answered", "Left Voicemail", "No Answer", "Busy", "Wrong Number", "Callback Requested"];
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function DealWorkspace() {
   const [, params] = useRoute("/deal/:id");
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const { user } = useAuth();
   const dealId = params?.id ?? "";
   const [activeTab, setActiveTab] = useState("activity");
   const [editContactOpen, setEditContactOpen] = useState(false);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
+
+  // Log activity form state
+  const [logType, setLogType] = useState<LogType | null>(null);
+  const [logNotes, setLogNotes] = useState("");
+  const [callOutcome, setCallOutcome] = useState("");
+  const [callDuration, setCallDuration] = useState("");
+  const [visitDate, setVisitDate] = useState("");
+
+  // Add task form state
+  const [addTaskOpen, setAddTaskOpen] = useState(false);
+  const [taskTitle, setTaskTitle] = useState("");
+  const [taskDueDate, setTaskDueDate] = useState("");
+  const [taskPriority, setTaskPriority] = useState<"low" | "medium" | "high">("medium");
+
+  function resetLogForm() {
+    setLogNotes(""); setCallOutcome(""); setCallDuration(""); setVisitDate("");
+  }
+  function resetTaskForm() {
+    setTaskTitle(""); setTaskDueDate(""); setTaskPriority("medium");
+  }
 
   // Fetch workspace data (deal + contact + tasks + activities)
   const { data, isLoading, error } = useQuery<{ deal: Deal; contact: Contact | null; tasks: Task[]; activities: any[] }>({
     queryKey: ["/api/deal-workspace", dealId],
     queryFn: () => fetch(`/api/deal-workspace/${dealId}`, { credentials: "include" }).then(r => r.json()),
     enabled: !!dealId,
+  });
+
+  // Email sequence logs for this contact (loaded lazily when tab is active)
+  const contactId = data?.contact?.id;
+  const { data: emailLogs } = useQuery<any[]>({
+    queryKey: ["/api/email-sequence-logs", contactId],
+    queryFn: () => fetch(`/api/email-sequence-logs?contactId=${contactId}`, { credentials: "include" }).then(r => r.json()),
+    enabled: !!contactId && activeTab === "email-history",
   });
 
   // Move stage mutation
@@ -123,9 +176,59 @@ export default function DealWorkspace() {
     },
   });
 
-  const handleComingSoon = () => {
-    toast({ title: "Coming in a future update", description: "This feature is being built." });
-  };
+  // Log activity mutation
+  const logActivityMutation = useMutation({
+    mutationFn: (payload: { activityType: string; contactId: string; notes?: string; metadata?: string }) =>
+      apiRequest("POST", `/api/deal-activities/${dealId}`, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deal-workspace", dealId] });
+      setLogType(null);
+      resetLogForm();
+      toast({ title: "Activity logged" });
+    },
+    onError: () => toast({ title: "Failed to log activity", variant: "destructive" }),
+  });
+
+  // Create task mutation
+  const createTaskMutation = useMutation({
+    mutationFn: (payload: object) => apiRequest("POST", "/api/tasks", payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deal-workspace", dealId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
+      setAddTaskOpen(false);
+      resetTaskForm();
+      toast({ title: "Task created" });
+    },
+    onError: () => toast({ title: "Failed to create task", variant: "destructive" }),
+  });
+
+  function handleSubmitLog() {
+    if (!logType || !data?.contact) return;
+    const meta: Record<string, string> = {};
+    if (logType === "call") {
+      if (callOutcome) meta.callOutcome = callOutcome;
+      if (callDuration) meta.callDuration = callDuration;
+    }
+    if (logType === "site_visit" && visitDate) meta.visitDate = visitDate;
+    logActivityMutation.mutate({
+      activityType: logType,
+      contactId: data.contact.id,
+      notes: logNotes || undefined,
+      metadata: Object.keys(meta).length ? JSON.stringify(meta) : undefined,
+    });
+  }
+
+  function handleSubmitTask() {
+    if (!taskTitle.trim()) return;
+    createTaskMutation.mutate({
+      title: taskTitle.trim(),
+      dealId,
+      contactId: data?.contact?.id ?? null,
+      dueDate: taskDueDate || null,
+      priority: taskPriority,
+      status: "pending",
+    });
+  }
 
   if (isLoading) {
     return (
@@ -407,39 +510,126 @@ export default function DealWorkspace() {
 
             {/* Feed area */}
             <div className="flex-1 overflow-y-auto">
-              <TabsContent value="activity" className="h-full m-0 p-4">
-                <div className="flex flex-col items-center justify-center h-full text-center py-12">
-                  <PhoneCall className="h-10 w-10 text-muted-foreground/40 mb-3" />
-                  <p className="text-sm font-medium text-muted-foreground mb-1">No activities logged yet</p>
-                  <p className="text-xs text-muted-foreground/60 max-w-xs">
-                    Log your first call, email note, or site visit using the buttons below.
-                  </p>
-                </div>
+
+              {/* ── Activity Feed ───────────────────────────────────────── */}
+              <TabsContent value="activity" className="m-0 p-4 min-h-full">
+                {data?.activities && data.activities.length > 0 ? (
+                  <div className="space-y-3">
+                    {data.activities.map((act: any) => {
+                      const cfg = ACTIVITY_CONFIG[act.activityType] ?? ACTIVITY_CONFIG.note;
+                      let meta: Record<string, string> = {};
+                      try { if (act.metadata) meta = JSON.parse(act.metadata); } catch {}
+                      return (
+                        <div key={act.id} className="flex gap-3" data-testid={`activity-${act.id}`}>
+                          <div className={`mt-0.5 shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${cfg.bg} ${cfg.color}`}>
+                            <cfg.Icon className="h-4 w-4" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                              <span className={`text-xs font-semibold ${cfg.color}`}>{cfg.label}</span>
+                              {meta.callOutcome && (
+                                <span className="text-xs bg-muted px-1.5 py-0.5 rounded">{meta.callOutcome}</span>
+                              )}
+                              {meta.callDuration && (
+                                <span className="text-xs text-muted-foreground flex items-center gap-0.5">
+                                  <Clock className="h-3 w-3" />{meta.callDuration}
+                                </span>
+                              )}
+                              {meta.visitDate && (
+                                <span className="text-xs text-muted-foreground">on {format(new Date(meta.visitDate), "MMM d, yyyy")}</span>
+                              )}
+                              <span className="text-xs text-muted-foreground ml-auto">
+                                {formatDistanceToNow(new Date(act.createdAt), { addSuffix: true })}
+                              </span>
+                            </div>
+                            {act.notes && (
+                              <p className="text-sm text-foreground whitespace-pre-wrap">{act.notes}</p>
+                            )}
+                            <p className="text-xs text-muted-foreground/60 mt-0.5">
+                              {act.createdBy === (user as any)?.id ? "You" : "Teammate"} · {format(new Date(act.createdAt), "MMM d, yyyy 'at' h:mm a")}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center py-16 text-center">
+                    <PhoneCall className="h-10 w-10 text-muted-foreground/40 mb-3" />
+                    <p className="text-sm font-medium text-muted-foreground mb-1">No activities logged yet</p>
+                    <p className="text-xs text-muted-foreground/60 max-w-xs">
+                      Log your first call, email note, or site visit using the buttons below.
+                    </p>
+                  </div>
+                )}
               </TabsContent>
-              <TabsContent value="email-history" className="h-full m-0 p-4">
-                <div className="flex flex-col items-center justify-center h-full text-center py-12">
-                  <Mail className="h-10 w-10 text-muted-foreground/40 mb-3" />
-                  <p className="text-sm font-medium text-muted-foreground mb-1">Email history coming soon</p>
-                  <p className="text-xs text-muted-foreground/60 max-w-xs">
-                    Full email sequence history and inbox messages will appear here.
-                  </p>
-                </div>
+
+              {/* ── Email History ───────────────────────────────────────── */}
+              <TabsContent value="email-history" className="m-0 p-4 min-h-full">
+                {emailLogs && emailLogs.length > 0 ? (
+                  <div className="space-y-2">
+                    {emailLogs.map((log: any) => {
+                      const statusColor =
+                        log.status === "sent"    ? "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300" :
+                        log.status === "replied" ? "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300" :
+                        log.status === "failed"  ? "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300" :
+                        "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400";
+                      const trackLabel = log.sequenceTrack === "uses_competitor" ? "Competitor Track" : "No Software Track";
+                      return (
+                        <div key={log.id} className="flex items-start gap-3 p-3 rounded-md border bg-card" data-testid={`email-log-${log.id}`}>
+                          <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900 flex items-center justify-center shrink-0 mt-0.5">
+                            <Send className="h-4 w-4 text-indigo-600 dark:text-indigo-300" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                              <span className="text-xs font-semibold">Sequence #{log.sequenceNumber}</span>
+                              <span className="text-xs text-muted-foreground">{trackLabel}</span>
+                              <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ml-auto ${statusColor}`}>
+                                {log.status.charAt(0).toUpperCase() + log.status.slice(1)}
+                              </span>
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              {log.sentAt
+                                ? `Sent ${format(new Date(log.sentAt), "MMM d, yyyy 'at' h:mm a")}`
+                                : log.scheduledSendAt
+                                ? `Scheduled ${format(new Date(log.scheduledSendAt), "MMM d, yyyy 'at' h:mm a")}`
+                                : "Pending"}
+                            </p>
+                            {log.emailResponseReceived === "true" && (
+                              <p className="text-xs text-blue-600 dark:text-blue-400 mt-0.5 font-medium">Reply received</p>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center py-16 text-center">
+                    <Mail className="h-10 w-10 text-muted-foreground/40 mb-3" />
+                    <p className="text-sm font-medium text-muted-foreground mb-1">No emails sent yet</p>
+                    <p className="text-xs text-muted-foreground/60 max-w-xs">
+                      Email sequence history for this contact will appear here once sequences are started.
+                    </p>
+                  </div>
+                )}
               </TabsContent>
-              <TabsContent value="sequences" className="h-full m-0 p-4">
-                <div className="flex flex-col items-center justify-center h-full text-center py-12">
+
+              <TabsContent value="sequences" className="m-0 p-4 min-h-full">
+                <div className="flex flex-col items-center justify-center py-16 text-center">
                   <TrendingUp className="h-10 w-10 text-muted-foreground/40 mb-3" />
-                  <p className="text-sm font-medium text-muted-foreground mb-1">Sequence management coming soon</p>
+                  <p className="text-sm font-medium text-muted-foreground mb-1">Sequence management</p>
                   <p className="text-xs text-muted-foreground/60 max-w-xs">
-                    Start, pause, and track automated sequences per contact from here.
+                    Manage this contact's email sequences from the Pipeline page.
                   </p>
                 </div>
               </TabsContent>
-              <TabsContent value="notes" className="h-full m-0 p-4">
-                <div className="flex flex-col items-center justify-center h-full text-center py-12">
+
+              <TabsContent value="notes" className="m-0 p-4 min-h-full">
+                <div className="flex flex-col items-center justify-center py-16 text-center">
                   <StickyNote className="h-10 w-10 text-muted-foreground/40 mb-3" />
                   <p className="text-sm font-medium text-muted-foreground mb-1">No notes yet</p>
                   <p className="text-xs text-muted-foreground/60 max-w-xs">
-                    Pin important notes and reminders about this deal.
+                    Use the Note button below to pin important info about this deal.
                   </p>
                 </div>
               </TabsContent>
@@ -447,19 +637,19 @@ export default function DealWorkspace() {
 
             {/* Log action bar */}
             <div className="shrink-0 border-t p-3 flex gap-2 flex-wrap bg-card">
-              <Button variant="outline" size="sm" onClick={handleComingSoon} className="flex items-center gap-1.5 text-xs" data-testid="button-log-call">
+              <Button variant="outline" size="sm" onClick={() => { setLogType("call"); setActiveTab("activity"); }} className="flex items-center gap-1.5 text-xs" data-testid="button-log-call">
                 <PhoneCall className="h-3.5 w-3.5" /> Log Call
               </Button>
-              <Button variant="outline" size="sm" onClick={handleComingSoon} className="flex items-center gap-1.5 text-xs" data-testid="button-log-email-note">
+              <Button variant="outline" size="sm" onClick={() => { setLogType("email_note"); setActiveTab("activity"); }} className="flex items-center gap-1.5 text-xs" data-testid="button-log-email-note">
                 <Mail className="h-3.5 w-3.5" /> Email Note
               </Button>
-              <Button variant="outline" size="sm" onClick={handleComingSoon} className="flex items-center gap-1.5 text-xs" data-testid="button-log-note">
+              <Button variant="outline" size="sm" onClick={() => { setLogType("note"); setActiveTab("activity"); }} className="flex items-center gap-1.5 text-xs" data-testid="button-log-note">
                 <StickyNote className="h-3.5 w-3.5" /> Note
               </Button>
-              <Button variant="outline" size="sm" onClick={handleComingSoon} className="flex items-center gap-1.5 text-xs" data-testid="button-log-site-visit">
+              <Button variant="outline" size="sm" onClick={() => { setLogType("site_visit"); setActiveTab("activity"); }} className="flex items-center gap-1.5 text-xs" data-testid="button-log-site-visit">
                 <Home className="h-3.5 w-3.5" /> Site Visit
               </Button>
-              <Button variant="outline" size="sm" onClick={handleComingSoon} className="flex items-center gap-1.5 text-xs" data-testid="button-add-task">
+              <Button variant="outline" size="sm" onClick={() => setAddTaskOpen(true)} className="flex items-center gap-1.5 text-xs" data-testid="button-add-task">
                 <ListTodo className="h-3.5 w-3.5" /> Add Task
               </Button>
             </div>
@@ -647,6 +837,148 @@ export default function DealWorkspace() {
           </div>
         </div>
       </div>
+
+      {/* ── Log Activity dialog ──────────────────────────────────────────────── */}
+      <Dialog open={!!logType} onOpenChange={(open) => { if (!open) { setLogType(null); resetLogForm(); } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {logType && ACTIVITY_CONFIG[logType] && (() => {
+                const cfg = ACTIVITY_CONFIG[logType];
+                return (
+                  <span className={`inline-flex items-center gap-1.5 ${cfg.color}`}>
+                    <cfg.Icon className="h-4 w-4" />
+                    {cfg.label}
+                  </span>
+                );
+              })()}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 pt-2">
+            {/* Call-specific fields */}
+            {logType === "call" && (
+              <>
+                <div className="space-y-1.5">
+                  <Label>Call Outcome</Label>
+                  <UiSelect value={callOutcome} onValueChange={setCallOutcome}>
+                    <UiSelectTrigger data-testid="select-call-outcome">
+                      <UiSelectValue placeholder="Select outcome…" />
+                    </UiSelectTrigger>
+                    <UiSelectContent>
+                      {CALL_OUTCOMES.map(o => (
+                        <UiSelectItem key={o} value={o}>{o}</UiSelectItem>
+                      ))}
+                    </UiSelectContent>
+                  </UiSelect>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Duration <span className="text-muted-foreground text-xs">(optional, e.g. "5 min")</span></Label>
+                  <Input
+                    value={callDuration}
+                    onChange={e => setCallDuration(e.target.value)}
+                    placeholder="e.g. 5 min"
+                    data-testid="input-call-duration"
+                  />
+                </div>
+              </>
+            )}
+            {/* Site visit date */}
+            {logType === "site_visit" && (
+              <div className="space-y-1.5">
+                <Label>Visit Date <span className="text-muted-foreground text-xs">(optional)</span></Label>
+                <Input
+                  type="date"
+                  value={visitDate}
+                  onChange={e => setVisitDate(e.target.value)}
+                  data-testid="input-visit-date"
+                />
+              </div>
+            )}
+            {/* Notes */}
+            <div className="space-y-1.5">
+              <Label>
+                Notes
+                {logType !== "call" && <span className="text-muted-foreground text-xs ml-1">(required)</span>}
+              </Label>
+              <Textarea
+                value={logNotes}
+                onChange={e => setLogNotes(e.target.value)}
+                placeholder={
+                  logType === "call"       ? "What was discussed?" :
+                  logType === "email_note" ? "Describe the email you sent or received…" :
+                  logType === "site_visit" ? "Notes from the visit…" :
+                  "Add your note…"
+                }
+                rows={4}
+                data-testid="textarea-log-notes"
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <Button variant="outline" onClick={() => { setLogType(null); resetLogForm(); }}>Cancel</Button>
+              <Button
+                onClick={handleSubmitLog}
+                disabled={logActivityMutation.isPending || (!logNotes.trim() && logType !== "call")}
+                data-testid="button-submit-log"
+              >
+                {logActivityMutation.isPending ? "Saving…" : "Save"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Add Task dialog ───────────────────────────────────────────────────── */}
+      <Dialog open={addTaskOpen} onOpenChange={(open) => { if (!open) { setAddTaskOpen(false); resetTaskForm(); } }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Add Task</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 pt-2">
+            <div className="space-y-1.5">
+              <Label>Title <span className="text-muted-foreground text-xs">(required)</span></Label>
+              <Input
+                value={taskTitle}
+                onChange={e => setTaskTitle(e.target.value)}
+                placeholder="e.g. Follow up call"
+                data-testid="input-task-title"
+                onKeyDown={e => { if (e.key === "Enter") handleSubmitTask(); }}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Due Date <span className="text-muted-foreground text-xs">(optional)</span></Label>
+              <Input
+                type="date"
+                value={taskDueDate}
+                onChange={e => setTaskDueDate(e.target.value)}
+                data-testid="input-task-due-date"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Priority</Label>
+              <UiSelect value={taskPriority} onValueChange={(v: any) => setTaskPriority(v)}>
+                <UiSelectTrigger data-testid="select-task-priority">
+                  <UiSelectValue />
+                </UiSelectTrigger>
+                <UiSelectContent>
+                  <UiSelectItem value="low">Low</UiSelectItem>
+                  <UiSelectItem value="medium">Medium</UiSelectItem>
+                  <UiSelectItem value="high">High</UiSelectItem>
+                </UiSelectContent>
+              </UiSelect>
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <Button variant="outline" onClick={() => { setAddTaskOpen(false); resetTaskForm(); }}>Cancel</Button>
+              <Button
+                onClick={handleSubmitTask}
+                disabled={createTaskMutation.isPending || !taskTitle.trim()}
+                data-testid="button-submit-task"
+              >
+                {createTaskMutation.isPending ? "Creating…" : "Create Task"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Edit Contact modal */}
       <Dialog open={editContactOpen} onOpenChange={setEditContactOpen}>
