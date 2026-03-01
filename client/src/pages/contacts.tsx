@@ -49,6 +49,7 @@ export default function Contacts() {
       const queryString = params.toString();
       const url = queryString ? `/api/contacts?${queryString}` : "/api/contacts";
       const response = await fetch(url);
+      if (!response.ok) throw new Error("Failed to fetch contacts");
       return response.json();
     },
   });
@@ -61,6 +62,7 @@ export default function Contacts() {
       const queryString = params.toString();
       const url = queryString ? `/api/deals?${queryString}` : "/api/deals";
       const response = await fetch(url);
+      if (!response.ok) throw new Error("Failed to fetch deals");
       return response.json();
     },
   });
@@ -164,7 +166,7 @@ export default function Contacts() {
   };
 
   const sortedContacts = useMemo(() => {
-    if (!contacts) return [];
+    if (!contacts || !Array.isArray(contacts)) return [];
     let list = [...contacts];
 
     if (sortColumn) {
