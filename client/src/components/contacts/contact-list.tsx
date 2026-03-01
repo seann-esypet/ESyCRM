@@ -159,7 +159,7 @@ export default function ContactList({ contacts, deals, isLoading, isAdmin, admin
                 <TableHead>Address</TableHead>
                 <TableHead>Email</TableHead>
                 <TableHead>Phone</TableHead>
-                <SortableHead col="lastContact" label="Last Contact" />
+                <SortableHead col="lastContact" label="Last Updated" />
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
