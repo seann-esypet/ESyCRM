@@ -290,6 +290,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.delete('/api/admin/users/:id', isAdmin, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const currentUserId = req.user.claims.sub;
+      if (id === currentUserId) {
+        return res.status(400).json({ message: "You cannot delete your own account" });
+      }
+      const deleted = await storage.deleteUser(id);
+      if (!deleted) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      res.status(204).send();
+    } catch (error: any) {
+      if (error?.code === "23503") {
+        return res.status(409).json({
+          message: "This user has contacts, deals, or other data linked to their account. Reassign or delete their data first before removing the user.",
+        });
+      }
+      console.error("Error deleting user:", error);
+      res.status(500).json({ message: "Failed to delete user" });
+    }
+  });
+
   // Contacts routes - All protected with isAuthenticated
   app.get("/api/contacts", isAuthenticated, async (req: any, res) => {
     try {

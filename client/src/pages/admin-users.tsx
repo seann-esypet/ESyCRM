@@ -16,7 +16,8 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { Users, Shield, UserCog, Plus, Loader2, Copy, Check, Contact, Handshake } from "lucide-react";
+import { Users, Shield, UserCog, Plus, Loader2, Copy, Check, Contact, Handshake, Trash2 } from "lucide-react";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { format } from "date-fns";
 import { useLocation } from "wouter";
 
@@ -53,6 +54,7 @@ export default function AdminUsers() {
   const [isOnboardingDialogOpen, setIsOnboardingDialogOpen] = useState(false);
   const [newUserEmail, setNewUserEmail] = useState("");
   const [copied, setCopied] = useState(false);
+  const [deleteConfirmUser, setDeleteConfirmUser] = useState<User | null>(null);
 
   const { data: users, isLoading, isError, error } = useQuery<User[]>({
     queryKey: ["/api/admin/users"],
@@ -150,6 +152,25 @@ export default function AdminUsers() {
         description: error.message || "Failed to update user",
         variant: "destructive",
       });
+    },
+  });
+
+  const deleteUserMutation = useMutation({
+    mutationFn: async (userId: string) => {
+      const response = await apiRequest("DELETE", `/api/admin/users/${userId}`);
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ message: "Failed to delete user" }));
+        throw new Error(err.message);
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      toast({ title: "User deleted", description: "The user has been removed from the system." });
+      setDeleteConfirmUser(null);
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+      setDeleteConfirmUser(null);
     },
   });
 
@@ -599,6 +620,18 @@ export default function AdminUsers() {
                           <Handshake className="h-4 w-4 mr-1" />
                           Pipeline
                         </Button>
+                        {user.id !== currentUser?.id && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setDeleteConfirmUser(user)}
+                            data-testid={`button-delete-${user.id}`}
+                            title="Delete user"
+                            className="text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/30"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -677,6 +710,35 @@ export default function AdminUsers() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Delete confirmation */}
+      <AlertDialog open={!!deleteConfirmUser} onOpenChange={(open) => { if (!open) setDeleteConfirmUser(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete User</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete{" "}
+              <strong>
+                {deleteConfirmUser?.firstName && deleteConfirmUser?.lastName
+                  ? `${deleteConfirmUser.firstName} ${deleteConfirmUser.lastName}`
+                  : deleteConfirmUser?.email}
+              </strong>
+              ? This action cannot be undone. Their contacts, deals, and data will remain in the system but the user account will be removed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-delete-cancel">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deleteConfirmUser && deleteUserMutation.mutate(deleteConfirmUser.id)}
+              disabled={deleteUserMutation.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              data-testid="button-delete-confirm"
+            >
+              {deleteUserMutation.isPending ? "Deleting…" : "Delete User"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

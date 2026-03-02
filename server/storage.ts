@@ -57,7 +57,8 @@ export interface IStorage {
   updateUserAdmin(id: string, userData: { email?: string; firstName?: string; lastName?: string; phone?: string; workEmail?: string; replyToEmail?: string; role?: string }): Promise<User | undefined>;
   getAllUsers(): Promise<User[]>;
   updateUserRole(id: string, role: string): Promise<User | undefined>;
-  
+  deleteUser(id: string): Promise<boolean>;
+
   // Contact Groups (userId can be null for admins to get all data)
   getContactGroups(userId: string | null): Promise<ContactGroup[]>;
   getContactGroup(id: string, userId: string | null): Promise<ContactGroup | undefined>;
@@ -267,6 +268,11 @@ export class DatabaseStorage implements IStorage {
       .where(eq(users.id, id))
       .returning();
     return updated;
+  }
+
+  async deleteUser(id: string): Promise<boolean> {
+    const result = await db.delete(users).where(eq(users.id, id));
+    return (result.rowCount ?? 0) > 0;
   }
 
   // Contact Groups
