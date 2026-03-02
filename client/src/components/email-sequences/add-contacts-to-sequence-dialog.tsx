@@ -28,16 +28,9 @@ export default function AddContactsToSequenceDialog({
     queryKey: ["/api/contacts"],
   });
 
-  // Filter contacts to only show those matching the sequence track
-  const contacts = allContacts?.filter(contact => {
-    // If contact has a sequenceTrack assigned, it must match the sequence track
-    if (contact.sequenceTrack) {
-      return contact.sequenceTrack === sequence.sequenceTrack;
-    }
-    // If contact has no track assigned yet, show in "no_software" by default
-    // This allows manually adding contacts before they're marked as qualified
-    return sequence.sequenceTrack === "no_software";
-  });
+  // Show all contacts — manual selection is unrestricted.
+  // Auto-track assignment (sequenceTrack field) is only used by the automated qualified-lead flow.
+  const contacts = allContacts;
 
   const addContactsMutation = useMutation({
     mutationFn: async (contactIds: string[]) => {
@@ -181,12 +174,8 @@ export default function AddContactsToSequenceDialog({
               </div>
             ) : (
               <div className="p-8 text-center text-muted-foreground">
-                <p>No contacts found for this track.</p>
-                <p className="text-sm mt-2">
-                  {sequence.sequenceTrack === "uses_competitor" 
-                    ? "Contacts are assigned to this track when their deal is marked as 'Qualified Lead' and they use competitor software."
-                    : "Contacts are assigned to this track when their deal is marked as 'Qualified Lead' and they don't use software."}
-                </p>
+                <p>No contacts found.</p>
+                <p className="text-sm mt-2">Add contacts in the Contacts section first.</p>
               </div>
             )}
           </ScrollArea>
