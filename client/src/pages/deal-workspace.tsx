@@ -32,6 +32,7 @@ import {
 import type { Deal, Contact } from "@shared/schema";
 import ContactForm from "@/components/contacts/contact-form";
 import DealTaskPanel from "@/components/tasks/deal-task-panel";
+import DealSequencePanel from "@/components/email-sequences/deal-sequence-panel";
 
 // ─── Stage helpers ────────────────────────────────────────────────────────────
 const STAGES: { value: string; label: string; color: string; bg: string }[] = [
@@ -571,13 +572,14 @@ export default function DealWorkspace() {
               </TabsContent>
 
               <TabsContent value="sequences" className="m-0 p-4 min-h-full">
-                <div className="flex flex-col items-center justify-center py-16 text-center">
-                  <TrendingUp className="h-10 w-10 text-muted-foreground/40 mb-3" />
-                  <p className="text-sm font-medium text-muted-foreground mb-1">Sequence management</p>
-                  <p className="text-xs text-muted-foreground/60 max-w-xs">
-                    Manage this contact's email sequences from the Pipeline page.
-                  </p>
-                </div>
+                {contact ? (
+                  <DealSequencePanel contact={contact} />
+                ) : (
+                  <div className="flex flex-col items-center justify-center py-16 text-center">
+                    <TrendingUp className="h-10 w-10 text-muted-foreground/40 mb-3" />
+                    <p className="text-sm text-muted-foreground">No contact linked to this deal.</p>
+                  </div>
+                )}
               </TabsContent>
 
               <TabsContent value="notes" className="m-0 p-4 min-h-full">
