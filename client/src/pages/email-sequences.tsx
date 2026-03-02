@@ -8,7 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Mail, Edit, CheckCircle, XCircle, Users, Plus, Clock, Trash2 } from "lucide-react";
-import type { EmailSequence, EmailSequenceLog, Contact } from "@shared/schema";
+import type { EmailSequence, EmailSequenceLog, Contact, ContactGroup } from "@shared/schema";
 import EmailSequenceForm from "@/components/email-sequences/email-sequence-form";
 import AddContactsToSequenceDialog from "@/components/email-sequences/add-contacts-to-sequence-dialog";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -65,6 +65,10 @@ export default function EmailSequences() {
 
   const { data: contacts } = useQuery<Contact[]>({
     queryKey: ["/api/contacts"],
+  });
+
+  const { data: groups } = useQuery<ContactGroup[]>({
+    queryKey: ["/api/contact-groups"],
   });
 
   const cancelLogMutation = useMutation({
@@ -350,15 +354,23 @@ export default function EmailSequences() {
                 )
               : [];
 
+            const getContact = (contactId: string) =>
+              contacts?.find(x => x.id === contactId);
+
             const getContactName = (contactId: string) => {
-              const c = contacts?.find(x => x.id === contactId);
+              const c = getContact(contactId);
               if (!c) return contactId;
               return `${c.firstName} ${c.lastName}`.trim() || c.email || contactId;
             };
 
             const getContactEmail = (contactId: string) => {
-              const c = contacts?.find(x => x.id === contactId);
-              return c?.email ?? "";
+              return getContact(contactId)?.email ?? "";
+            };
+
+            const getGroupName = (contactId: string) => {
+              const c = getContact(contactId);
+              if (!c?.groupId) return null;
+              return groups?.find(g => g.id === c.groupId)?.name ?? null;
             };
 
             if (queueLogs.length === 0) {
@@ -372,10 +384,19 @@ export default function EmailSequences() {
             return (
               <ScrollArea className="max-h-[420px]">
                 <div className="divide-y">
-                  {queueLogs.map(log => (
+                  {queueLogs.map(log => {
+                    const groupName = getGroupName(log.contactId);
+                    return (
                     <div key={log.id} className="flex items-center gap-3 px-1 py-3" data-testid={`queue-item-${log.id}`}>
                       <div className="flex-1 min-w-0">
-                        <div className="font-medium text-sm">{getContactName(log.contactId)}</div>
+                        <div className="font-medium text-sm flex items-center gap-2 flex-wrap">
+                          {getContactName(log.contactId)}
+                          {groupName && (
+                            <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-normal">
+                              {groupName}
+                            </span>
+                          )}
+                        </div>
                         <div className="text-xs text-muted-foreground">
                           {getContactEmail(log.contactId)}
                         </div>
@@ -412,7 +433,8 @@ export default function EmailSequences() {
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </ScrollArea>
             );

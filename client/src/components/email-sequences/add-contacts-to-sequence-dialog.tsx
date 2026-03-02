@@ -165,10 +165,56 @@ export default function AddContactsToSequenceDialog({
       const groupLabel = groupMode === "new"
         ? ` Group "${newGroupName.trim()}" created.`
         : groupMode === "existing" ? " Contacts added to group." : "";
-      toast({
-        title: "Sequence scheduled",
-        description: `${data.successful || 0} contact(s) added to Sequence ${sequence.sequenceNumber}.${groupLabel}`,
-      });
+
+      // Show success toast
+      if (data.successful > 0) {
+        toast({
+          title: "Sequence scheduled",
+          description: `${data.successful} contact(s) added to Sequence ${sequence.sequenceNumber}.${groupLabel}`,
+        });
+      }
+
+      // Show track mismatch warnings
+      const trackErrors: Array<{ contactId: string; error: string }> = data.errors ?? [];
+      const trackMismatches = trackErrors.filter((e: { contactId: string; error: string }) =>
+        e.error.includes("does not match sequence track")
+      );
+      const alreadyQueued = trackErrors.filter((e: { contactId: string; error: string }) =>
+        e.error.includes("already in this email sequence")
+      );
+
+      if (trackMismatches.length > 0) {
+        const names = trackMismatches.map(e => {
+          const c = allContacts?.find(x => x.id === e.contactId);
+          return c ? `${c.firstName} ${c.lastName}`.trim() : e.contactId;
+        });
+        const trackName = sequence.sequenceTrack === "uses_competitor" ? "Uses Competitor" : "No Software";
+        toast({
+          title: `${trackMismatches.length} contact(s) skipped — wrong track`,
+          description: `These contacts don't match the "${trackName}" track and were not queued: ${names.join(", ")}`,
+          variant: "destructive",
+        });
+      }
+
+      if (alreadyQueued.length > 0) {
+        const names = alreadyQueued.map(e => {
+          const c = allContacts?.find(x => x.id === e.contactId);
+          return c ? `${c.firstName} ${c.lastName}`.trim() : e.contactId;
+        });
+        toast({
+          title: `${alreadyQueued.length} contact(s) already in queue`,
+          description: `Skipped (already scheduled): ${names.join(", ")}`,
+        });
+      }
+
+      if (data.successful === 0 && trackMismatches.length === 0 && alreadyQueued.length === 0) {
+        toast({
+          title: "Nothing scheduled",
+          description: "No contacts were added. Check the errors above.",
+          variant: "destructive",
+        });
+      }
+
       handleOpenChange(false);
     },
     onError: (err: Error) => {
