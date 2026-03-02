@@ -143,9 +143,22 @@ export default function AddContactsToSequenceDialog({
         });
       }
 
-      // Build an ISO string in Eastern Time: treat the picked date+time as ET
-      // We just send the ISO string; the server stores it as-is (scheduler interprets in ET)
-      const scheduledSendAt = `${sendDate}T${sendTime}:00`;
+      // Build an ISO string with the correct Eastern Time offset (handles DST automatically).
+      // Probe: take noon UTC on the chosen date, see what hour ET shows — that gives us the offset.
+      const refUtc = new Date(`${sendDate}T12:00:00Z`);
+      const etHour = parseInt(
+        new Intl.DateTimeFormat("en-US", {
+          timeZone: "America/New_York",
+          hour: "2-digit",
+          hour12: false,
+        }).format(refUtc),
+        10
+      );
+      // etHour = 12 + offset  →  offset = etHour - 12  (e.g. 7 for EST = -5, 8 for EDT = -4)
+      const offsetHours = etHour - 12; // negative for ET (e.g. -5 or -4)
+      const sign = offsetHours >= 0 ? "+" : "-";
+      const etOffsetStr = `${sign}${String(Math.abs(offsetHours)).padStart(2, "0")}:00`;
+      const scheduledSendAt = `${sendDate}T${sendTime}:00${etOffsetStr}`;
 
       const bulkRes = await apiRequest("POST", "/api/email-sequence-logs/bulk", {
         sequenceId: sequence.id,
