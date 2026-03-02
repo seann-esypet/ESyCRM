@@ -206,6 +206,7 @@ export default function AddContactsToSequenceDialog({
           title: `${trackMismatches.length} contact(s) skipped — wrong track`,
           description: `These contacts don't match the "${trackName}" track and were not queued: ${names.join(", ")}`,
           variant: "destructive",
+          duration: Infinity,
         });
       }
 
@@ -217,6 +218,7 @@ export default function AddContactsToSequenceDialog({
         toast({
           title: `${alreadyQueued.length} contact(s) already in queue`,
           description: `Skipped (already scheduled): ${names.join(", ")}`,
+          duration: Infinity,
         });
       }
 
