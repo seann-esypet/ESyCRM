@@ -20,6 +20,14 @@ interface AddContactsToSequenceDialogProps {
 }
 
 type GroupMode = "new" | "existing" | "none";
+type SoftwareFilter = "all" | "yes" | "no" | "unknown";
+
+const SOFTWARE_FILTERS: { value: SoftwareFilter; label: string }[] = [
+  { value: "all",     label: "All" },
+  { value: "yes",     label: "✓ Uses Software" },
+  { value: "no",      label: "✗ No Software" },
+  { value: "unknown", label: "? Unknown" },
+];
 
 export default function AddContactsToSequenceDialog({
   sequence,
@@ -28,6 +36,7 @@ export default function AddContactsToSequenceDialog({
 }: AddContactsToSequenceDialogProps) {
   const [selectedContacts, setSelectedContacts] = useState<string[]>([]);
   const [search, setSearch] = useState("");
+  const [softwareFilter, setSoftwareFilter] = useState<SoftwareFilter>("all");
   const [groupMode, setGroupMode] = useState<GroupMode>("new");
   const [newGroupName, setNewGroupName] = useState("");
   const [existingGroupId, setExistingGroupId] = useState("");
@@ -45,19 +54,41 @@ export default function AddContactsToSequenceDialog({
 
   const filteredContacts = useMemo(() => {
     if (!allContacts) return [];
+    let list = allContacts;
+
+    // Software filter
+    if (softwareFilter === "yes")     list = list.filter(c => c.usesSoftware === "Yes");
+    if (softwareFilter === "no")      list = list.filter(c => c.usesSoftware === "No");
+    if (softwareFilter === "unknown") list = list.filter(c => !c.usesSoftware || c.usesSoftware === "Unknown");
+
+    // Text search
     const q = search.trim().toLowerCase();
-    if (!q) return allContacts;
-    return allContacts.filter(c =>
-      `${c.firstName} ${c.lastName}`.toLowerCase().includes(q) ||
-      (c.email ?? "").toLowerCase().includes(q) ||
-      (c.company ?? "").toLowerCase().includes(q)
-    );
-  }, [allContacts, search]);
+    if (q) {
+      list = list.filter(c =>
+        `${c.firstName} ${c.lastName}`.toLowerCase().includes(q) ||
+        (c.email ?? "").toLowerCase().includes(q) ||
+        (c.company ?? "").toLowerCase().includes(q)
+      );
+    }
+    return list;
+  }, [allContacts, search, softwareFilter]);
+
+  // Counts per software filter for badges
+  const softwareCounts = useMemo(() => {
+    if (!allContacts) return { all: 0, yes: 0, no: 0, unknown: 0 };
+    return {
+      all:     allContacts.length,
+      yes:     allContacts.filter(c => c.usesSoftware === "Yes").length,
+      no:      allContacts.filter(c => c.usesSoftware === "No").length,
+      unknown: allContacts.filter(c => !c.usesSoftware || c.usesSoftware === "Unknown").length,
+    };
+  }, [allContacts]);
 
   const handleOpenChange = (val: boolean) => {
     if (!val) {
       setSelectedContacts([]);
       setSearch("");
+      setSoftwareFilter("all");
       setGroupMode("new");
       setNewGroupName("");
       setExistingGroupId("");
@@ -142,7 +173,7 @@ export default function AddContactsToSequenceDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
+      <DialogContent className="max-w-2xl w-full">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Mail className="h-5 w-5" />
@@ -154,41 +185,27 @@ export default function AddContactsToSequenceDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex-1 overflow-hidden flex flex-col gap-4">
+        <div className="space-y-4">
           {/* Subject preview */}
           <div className="rounded-md border bg-muted/40 px-4 py-2.5 text-sm">
             <span className="font-medium">Subject:</span> {sequence.subject}
           </div>
 
           {/* ── Group section ───────────────────────────────────────── */}
-          <div className="rounded-md border p-4 space-y-3">
+          <div className="rounded-md border p-3 space-y-3">
             <p className="text-sm font-medium">Group Assignment</p>
             <div className="flex gap-2 flex-wrap">
-              <Button
-                size="sm"
-                variant={groupMode === "new" ? "default" : "outline"}
-                onClick={() => setGroupMode("new")}
-                data-testid="button-group-new"
-              >
-                <Plus className="h-3.5 w-3.5 mr-1.5" />
-                Create New Group
+              <Button size="sm" variant={groupMode === "new" ? "default" : "outline"}
+                onClick={() => setGroupMode("new")} data-testid="button-group-new">
+                <Plus className="h-3.5 w-3.5 mr-1.5" /> Create New Group
               </Button>
-              <Button
-                size="sm"
-                variant={groupMode === "existing" ? "default" : "outline"}
-                onClick={() => setGroupMode("existing")}
-                data-testid="button-group-existing"
-                disabled={!groups || groups.length === 0}
-              >
-                <FolderOpen className="h-3.5 w-3.5 mr-1.5" />
-                Add to Existing Group
+              <Button size="sm" variant={groupMode === "existing" ? "default" : "outline"}
+                onClick={() => setGroupMode("existing")} data-testid="button-group-existing"
+                disabled={!groups || groups.length === 0}>
+                <FolderOpen className="h-3.5 w-3.5 mr-1.5" /> Add to Existing Group
               </Button>
-              <Button
-                size="sm"
-                variant={groupMode === "none" ? "default" : "outline"}
-                onClick={() => setGroupMode("none")}
-                data-testid="button-group-none"
-              >
+              <Button size="sm" variant={groupMode === "none" ? "default" : "outline"}
+                onClick={() => setGroupMode("none")} data-testid="button-group-none">
                 No Group
               </Button>
             </div>
@@ -196,13 +213,9 @@ export default function AddContactsToSequenceDialog({
             {groupMode === "new" && (
               <div className="space-y-1.5">
                 <Label htmlFor="group-name">Group Name</Label>
-                <Input
-                  id="group-name"
-                  placeholder="e.g. Spring 2026 Campaign"
-                  value={newGroupName}
-                  onChange={e => setNewGroupName(e.target.value)}
-                  data-testid="input-group-name"
-                />
+                <Input id="group-name" placeholder="e.g. Spring 2026 Campaign"
+                  value={newGroupName} onChange={e => setNewGroupName(e.target.value)}
+                  data-testid="input-group-name" />
               </div>
             )}
 
@@ -228,17 +241,14 @@ export default function AddContactsToSequenceDialog({
           </div>
 
           {/* ── Contact picker ──────────────────────────────────────── */}
-          <div className="flex-1 overflow-hidden flex flex-col gap-2">
+          <div className="space-y-2">
+            {/* Search + selected count */}
             <div className="flex items-center gap-3">
               <div className="relative flex-1">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Search contacts…"
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                  className="pl-8"
-                  data-testid="input-contact-search"
-                />
+                <Input placeholder="Search by name, email, or company…"
+                  value={search} onChange={e => setSearch(e.target.value)}
+                  className="pl-8" data-testid="input-contact-search" />
               </div>
               {selectedContacts.length > 0 && (
                 <Badge variant="secondary" data-testid="badge-selected-count">
@@ -247,68 +257,98 @@ export default function AddContactsToSequenceDialog({
               )}
             </div>
 
+            {/* Software filter tabs */}
+            <div className="flex gap-1.5 flex-wrap">
+              {SOFTWARE_FILTERS.map(f => (
+                <button
+                  key={f.value}
+                  onClick={() => setSoftwareFilter(f.value)}
+                  data-testid={`filter-software-${f.value}`}
+                  className={`text-xs px-3 py-1 rounded-full border transition-colors ${
+                    softwareFilter === f.value
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "bg-background text-muted-foreground border-border hover:bg-muted"
+                  }`}
+                >
+                  {f.label}
+                  <span className="ml-1 opacity-70">({softwareCounts[f.value]})</span>
+                </button>
+              ))}
+            </div>
+
+            {/* Select all row */}
             <div className="flex items-center gap-2 px-1">
-              <Checkbox
-                id="select-all"
-                checked={allVisibleSelected}
-                onCheckedChange={toggleAll}
-                disabled={filteredContacts.length === 0}
-                data-testid="checkbox-select-all"
-              />
+              <Checkbox id="select-all" checked={allVisibleSelected}
+                onCheckedChange={toggleAll} disabled={filteredContacts.length === 0}
+                data-testid="checkbox-select-all" />
               <label htmlFor="select-all" className="text-sm cursor-pointer text-muted-foreground">
                 Select all visible ({filteredContacts.length} shown)
               </label>
             </div>
 
-            <ScrollArea className="flex-1 border rounded-md">
-              {isLoadingContacts ? (
-                <div className="p-8 text-center text-muted-foreground text-sm">Loading contacts…</div>
-              ) : filteredContacts.length === 0 ? (
-                <div className="p-8 text-center text-muted-foreground text-sm">
-                  {search ? "No contacts match your search." : "No contacts found. Add contacts first."}
-                </div>
-              ) : (
-                <div className="divide-y">
-                  {filteredContacts.map(contact => (
-                    <div
-                      key={contact.id}
-                      className={`flex items-center gap-3 px-4 py-3 hover:bg-muted/50 transition-colors cursor-pointer ${
-                        selectedContacts.includes(contact.id) ? "bg-muted/30" : ""
-                      }`}
-                      onClick={() => toggleContact(contact.id)}
-                      data-testid={`contact-item-${contact.id}`}
-                    >
-                      <Checkbox
-                        checked={selectedContacts.includes(contact.id)}
-                        onCheckedChange={() => toggleContact(contact.id)}
-                        onClick={e => e.stopPropagation()}
-                        data-testid={`checkbox-contact-${contact.id}`}
-                      />
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium text-sm">
-                          {contact.firstName} {contact.lastName}
+            {/* Contact list — fixed height with scroll */}
+            <div className="border rounded-md overflow-hidden">
+              <ScrollArea className="h-64">
+                {isLoadingContacts ? (
+                  <div className="p-8 text-center text-muted-foreground text-sm">Loading contacts…</div>
+                ) : filteredContacts.length === 0 ? (
+                  <div className="p-8 text-center text-muted-foreground text-sm">
+                    {search || softwareFilter !== "all"
+                      ? "No contacts match your filters."
+                      : "No contacts found. Add contacts first."}
+                  </div>
+                ) : (
+                  <div className="divide-y">
+                    {filteredContacts.map(contact => (
+                      <div
+                        key={contact.id}
+                        className={`flex items-center gap-3 px-4 py-3 hover:bg-muted/50 transition-colors cursor-pointer ${
+                          selectedContacts.includes(contact.id) ? "bg-muted/30" : ""
+                        }`}
+                        onClick={() => toggleContact(contact.id)}
+                        data-testid={`contact-item-${contact.id}`}
+                      >
+                        <Checkbox
+                          checked={selectedContacts.includes(contact.id)}
+                          onCheckedChange={() => toggleContact(contact.id)}
+                          onClick={e => e.stopPropagation()}
+                          data-testid={`checkbox-contact-${contact.id}`}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-sm">
+                            {contact.firstName} {contact.lastName}
+                          </div>
+                          <div className="text-xs text-muted-foreground truncate">
+                            {contact.email || <span className="italic">no email</span>}
+                            {contact.company && ` · ${contact.company}`}
+                          </div>
                         </div>
-                        <div className="text-xs text-muted-foreground truncate">
-                          {contact.email ?? <span className="italic">no email</span>}
-                          {contact.company && ` · ${contact.company}`}
-                        </div>
+                        {contact.usesSoftware === "Yes" && (
+                          <Badge variant="outline" className="text-xs shrink-0 text-orange-600 border-orange-300">
+                            ✓ Has Software
+                          </Badge>
+                        )}
+                        {contact.usesSoftware === "No" && (
+                          <Badge variant="outline" className="text-xs shrink-0 text-green-600 border-green-300">
+                            ✗ No Software
+                          </Badge>
+                        )}
+                        {(!contact.usesSoftware || contact.usesSoftware === "Unknown") && (
+                          <Badge variant="outline" className="text-xs shrink-0 text-muted-foreground">
+                            ? Unknown
+                          </Badge>
+                        )}
                       </div>
-                      {contact.usesSoftware === "Yes" && (
-                        <Badge variant="outline" className="text-xs shrink-0">Has Software</Badge>
-                      )}
-                      {contact.usesSoftware === "No" && (
-                        <Badge variant="outline" className="text-xs shrink-0 text-green-600">No Software</Badge>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </ScrollArea>
+                    ))}
+                  </div>
+                )}
+              </ScrollArea>
+            </div>
           </div>
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between pt-4 border-t">
+        <div className="flex items-center justify-between pt-2 border-t mt-2">
           <p className="text-xs text-muted-foreground">
             {selectedContacts.length} of {allContacts?.length ?? 0} contacts selected
           </p>
