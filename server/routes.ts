@@ -1237,7 +1237,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/email-sequence-logs/bulk", isAuthenticated, async (req: any, res) => {
     try {
       const userId = getUserIdForQuery(req.user); // null for admin, user ID for salesperson
-      const { sequenceId, contactIds } = req.body;
+      const { sequenceId, contactIds, scheduledSendAt } = req.body;
       
       if (!sequenceId || typeof sequenceId !== 'string') {
         return res.status(400).json({ message: "Invalid sequenceId" });
@@ -1246,8 +1246,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!Array.isArray(contactIds) || contactIds.length === 0) {
         return res.status(400).json({ message: "Invalid contactIds. Expected a non-empty array." });
       }
+
+      const scheduledDate = scheduledSendAt ? new Date(scheduledSendAt) : null;
       
-      const result = await storage.bulkCreateEmailSequenceLogs(sequenceId, contactIds, userId);
+      const result = await storage.bulkCreateEmailSequenceLogs(sequenceId, contactIds, userId, scheduledDate);
       
       res.status(201).json({
         total: contactIds.length,
@@ -1259,6 +1261,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error adding contacts to email sequence:", error);
       res.status(500).json({ message: "Failed to add contacts to email sequence" });
+    }
+  });
+
+  app.delete("/api/email-sequence-logs/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const log = await storage.getEmailSequenceLogById(req.params.id, userId);
+      if (!log) {
+        return res.status(404).json({ message: "Email sequence log not found" });
+      }
+      if (log.status !== "pending") {
+        return res.status(400).json({ message: "Only pending emails can be cancelled" });
+      }
+      await storage.deleteEmailSequenceLog(req.params.id, userId);
+      res.json({ message: "Email cancelled successfully" });
+    } catch (error) {
+      console.error("Error cancelling email sequence log:", error);
+      res.status(500).json({ message: "Failed to cancel email" });
     }
   });
 

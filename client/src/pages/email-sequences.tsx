@@ -1,14 +1,18 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import Header from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Mail, Edit, CheckCircle, XCircle, Users, Plus } from "lucide-react";
-import type { EmailSequence, EmailSequenceLog } from "@shared/schema";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Badge } from "@/components/ui/badge";
+import { Mail, Edit, CheckCircle, XCircle, Users, Plus, Clock, Trash2 } from "lucide-react";
+import type { EmailSequence, EmailSequenceLog, Contact } from "@shared/schema";
 import EmailSequenceForm from "@/components/email-sequences/email-sequence-form";
 import AddContactsToSequenceDialog from "@/components/email-sequences/add-contacts-to-sequence-dialog";
+import { queryClient, apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 type SequenceTrack = "no_software" | "uses_competitor";
 
@@ -18,6 +22,9 @@ export default function EmailSequences() {
   const [selectedSequence, setSelectedSequence] = useState<EmailSequence | undefined>();
   const [isAddContactsOpen, setIsAddContactsOpen] = useState(false);
   const [sequenceForContacts, setSequenceForContacts] = useState<EmailSequence | undefined>();
+  const [queueViewerSequence, setQueueViewerSequence] = useState<EmailSequence | undefined>();
+  const [isQueueViewerOpen, setIsQueueViewerOpen] = useState(false);
+  const { toast } = useToast();
 
   const { data: noSoftwareSequences, isLoading: isLoadingNoSoftware } = useQuery<EmailSequence[]>({
     queryKey: ["/api/email-sequences?track=no_software"],
@@ -50,6 +57,32 @@ export default function EmailSequences() {
     setSequenceForContacts(sequence);
     setIsAddContactsOpen(true);
   };
+
+  const handleViewQueue = (sequence: EmailSequence) => {
+    setQueueViewerSequence(sequence);
+    setIsQueueViewerOpen(true);
+  };
+
+  const { data: contacts } = useQuery<Contact[]>({
+    queryKey: ["/api/contacts"],
+  });
+
+  const cancelLogMutation = useMutation({
+    mutationFn: async (logId: string) => {
+      const res = await apiRequest("DELETE", `/api/email-sequence-logs/${logId}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: "Failed to cancel" }));
+        throw new Error(err.message);
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/email-sequence-logs"] });
+      toast({ title: "Email cancelled", description: "Removed from queue." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
 
   const getQueueCount = (sequenceId: string | undefined) => {
     if (!sequenceId) return null;
@@ -145,9 +178,14 @@ export default function EmailSequences() {
                       </td>
                       <td className="px-6 py-4">
                         {sequence ? (
-                          <div className="flex items-center space-x-2">
-                            <Users className="h-4 w-4 text-muted-foreground" />
-                            <span className="text-sm font-medium" data-testid={`queue-count-${track}-${sequenceNumber}`}>
+                          <button
+                            className="flex items-center space-x-2 hover:text-primary transition-colors group"
+                            onClick={() => handleViewQueue(sequence)}
+                            data-testid={`queue-count-${track}-${sequenceNumber}`}
+                            title="Click to view queue"
+                          >
+                            <Users className="h-4 w-4 text-muted-foreground group-hover:text-primary" />
+                            <span className="text-sm font-medium underline-offset-2 group-hover:underline">
                               {isLogsLoading ? (
                                 "Loading..."
                               ) : isLogsError ? (
@@ -156,7 +194,7 @@ export default function EmailSequences() {
                                 `${getQueueCount(sequence.id) ?? 0} queued`
                               )}
                             </span>
-                          </div>
+                          </button>
                         ) : (
                           <span className="text-sm text-muted-foreground">-</span>
                         )}
@@ -284,6 +322,109 @@ export default function EmailSequences() {
           onOpenChange={setIsAddContactsOpen}
         />
       )}
+
+      {/* Queue Viewer Dialog */}
+      <Dialog open={isQueueViewerOpen} onOpenChange={setIsQueueViewerOpen}>
+        <DialogContent className="max-w-2xl w-full">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Clock className="h-5 w-5" />
+              Queue — Sequence {queueViewerSequence?.sequenceNumber}
+              {queueViewerSequence?.sequenceTrack && (
+                <Badge variant="outline" className="text-xs">
+                  {queueViewerSequence.sequenceTrack === "uses_competitor" ? "Uses Competitor" : "No Software"}
+                </Badge>
+              )}
+            </DialogTitle>
+            <DialogDescription>
+              Pending emails scheduled for this sequence. Click the trash icon to cancel individual sends.
+            </DialogDescription>
+          </DialogHeader>
+
+          {(() => {
+            const queueLogs = queueViewerSequence
+              ? (logs ?? []).filter(
+                  l =>
+                    l.sequenceId === queueViewerSequence.id &&
+                    (l.status === "pending" || l.status === "processing")
+                )
+              : [];
+
+            const getContactName = (contactId: string) => {
+              const c = contacts?.find(x => x.id === contactId);
+              if (!c) return contactId;
+              return `${c.firstName} ${c.lastName}`.trim() || c.email || contactId;
+            };
+
+            const getContactEmail = (contactId: string) => {
+              const c = contacts?.find(x => x.id === contactId);
+              return c?.email ?? "";
+            };
+
+            if (queueLogs.length === 0) {
+              return (
+                <div className="py-12 text-center text-muted-foreground text-sm">
+                  No emails pending in the queue for this sequence.
+                </div>
+              );
+            }
+
+            return (
+              <ScrollArea className="max-h-[420px]">
+                <div className="divide-y">
+                  {queueLogs.map(log => (
+                    <div key={log.id} className="flex items-center gap-3 px-1 py-3" data-testid={`queue-item-${log.id}`}>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-sm">{getContactName(log.contactId)}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {getContactEmail(log.contactId)}
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
+                          <Clock className="h-3 w-3" />
+                          {log.scheduledSendAt
+                            ? new Date(log.scheduledSendAt).toLocaleString("en-US", {
+                                dateStyle: "medium",
+                                timeStyle: "short",
+                                timeZone: "America/New_York",
+                              }) + " ET"
+                            : "No send time set"}
+                        </div>
+                      </div>
+                      <Badge
+                        variant="outline"
+                        className={
+                          log.status === "processing"
+                            ? "text-blue-600 border-blue-300"
+                            : "text-amber-600 border-amber-300"
+                        }
+                      >
+                        {log.status}
+                      </Badge>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-destructive hover:bg-destructive/10"
+                        disabled={cancelLogMutation.isPending || log.status !== "pending"}
+                        onClick={() => cancelLogMutation.mutate(log.id)}
+                        data-testid={`button-cancel-log-${log.id}`}
+                        title={log.status !== "pending" ? "Can only cancel pending emails" : "Cancel this email"}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
+            );
+          })()}
+
+          <div className="flex justify-end pt-2 border-t">
+            <Button variant="outline" onClick={() => setIsQueueViewerOpen(false)} data-testid="button-close-queue">
+              Close
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

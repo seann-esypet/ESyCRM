@@ -128,8 +128,9 @@ export interface IStorage {
   getEmailSequenceLogs(userId: string | null, contactId?: string): Promise<EmailSequenceLog[]>;
   getEmailSequenceLogById(id: string, userId: string | null): Promise<EmailSequenceLog | undefined>;
   createEmailSequenceLog(log: InsertEmailSequenceLog, userId: string): Promise<EmailSequenceLog>;
-  bulkCreateEmailSequenceLogs(sequenceId: string, contactIds: string[], userId: string | null): Promise<{ successful: EmailSequenceLog[], failed: Array<{ contactId: string, error: string }> }>;
+  bulkCreateEmailSequenceLogs(sequenceId: string, contactIds: string[], userId: string | null, scheduledSendAt?: Date | null): Promise<{ successful: EmailSequenceLog[], failed: Array<{ contactId: string, error: string }> }>;
   updateEmailSequenceLog(id: string, log: Partial<InsertEmailSequenceLog>, userId: string | null): Promise<EmailSequenceLog | undefined>;
+  deleteEmailSequenceLog(id: string, userId: string | null): Promise<boolean>;
   
   // Inbox Messages (userId can be null for admins to get all data)
   getInboxMessages(userId: string | null, contactId?: string): Promise<InboxMessage[]>;
@@ -1042,7 +1043,7 @@ export class DatabaseStorage implements IStorage {
     return log;
   }
 
-  async bulkCreateEmailSequenceLogs(sequenceId: string, contactIds: string[], userId: string | null): Promise<{ successful: EmailSequenceLog[], failed: Array<{ contactId: string, error: string }> }> {
+  async bulkCreateEmailSequenceLogs(sequenceId: string, contactIds: string[], userId: string | null, scheduledSendAt?: Date | null): Promise<{ successful: EmailSequenceLog[], failed: Array<{ contactId: string, error: string }> }> {
     const successful: EmailSequenceLog[] = [];
     const failed: Array<{ contactId: string, error: string }> = [];
     
@@ -1111,7 +1112,8 @@ export class DatabaseStorage implements IStorage {
             sequenceNumber: sequence.sequenceNumber,
             status: "pending",
             emailResponseReceived: "false",
-            userId: sequenceOwnerId
+            userId: sequenceOwnerId,
+            ...(scheduledSendAt ? { scheduledSendAt } : {}),
           })
           .returning();
         
@@ -1139,6 +1141,15 @@ export class DatabaseStorage implements IStorage {
       .returning();
     
     return updated;
+  }
+
+  async deleteEmailSequenceLog(id: string, userId: string | null): Promise<boolean> {
+    const whereClause = userId === null
+      ? eq(emailSequenceLogs.id, id)
+      : and(eq(emailSequenceLogs.id, id), eq(emailSequenceLogs.userId, userId));
+
+    const result = await db.delete(emailSequenceLogs).where(whereClause).returning();
+    return result.length > 0;
   }
 
   // Inbox Messages

@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { Mail, Users, Search, Plus, FolderOpen } from "lucide-react";
+import { Mail, Users, Search, Plus, FolderOpen, CalendarClock } from "lucide-react";
 import type { EmailSequence, Contact, ContactGroup } from "@shared/schema";
 
 interface AddContactsToSequenceDialogProps {
@@ -40,6 +40,8 @@ export default function AddContactsToSequenceDialog({
   const [groupMode, setGroupMode] = useState<GroupMode>("new");
   const [newGroupName, setNewGroupName] = useState("");
   const [existingGroupId, setExistingGroupId] = useState("");
+  const [sendDate, setSendDate] = useState("");
+  const [sendTime, setSendTime] = useState("09:00");
   const { toast } = useToast();
 
   const { data: allContacts, isLoading: isLoadingContacts } = useQuery<Contact[]>({
@@ -92,6 +94,8 @@ export default function AddContactsToSequenceDialog({
       setGroupMode("new");
       setNewGroupName("");
       setExistingGroupId("");
+      setSendDate("");
+      setSendTime("09:00");
     }
     onOpenChange(val);
   };
@@ -118,6 +122,7 @@ export default function AddContactsToSequenceDialog({
   const submitMutation = useMutation({
     mutationFn: async () => {
       if (selectedContacts.length === 0) throw new Error("No contacts selected");
+      if (!sendDate) throw new Error("Please pick a send date");
 
       let groupId: string | null = null;
 
@@ -138,9 +143,14 @@ export default function AddContactsToSequenceDialog({
         });
       }
 
+      // Build an ISO string in Eastern Time: treat the picked date+time as ET
+      // We just send the ISO string; the server stores it as-is (scheduler interprets in ET)
+      const scheduledSendAt = `${sendDate}T${sendTime}:00`;
+
       const bulkRes = await apiRequest("POST", "/api/email-sequence-logs/bulk", {
         sequenceId: sequence.id,
         contactIds: selectedContacts,
+        scheduledSendAt,
       });
       if (!bulkRes.ok) {
         const err = await bulkRes.json().catch(() => ({ message: "Failed to schedule sequence" }));
@@ -189,6 +199,40 @@ export default function AddContactsToSequenceDialog({
           {/* Subject preview */}
           <div className="rounded-md border bg-muted/40 px-4 py-2.5 text-sm">
             <span className="font-medium">Subject:</span> {sequence.subject}
+          </div>
+
+          {/* ── Send Date & Time ─────────────────────────────────────── */}
+          <div className="rounded-md border p-3 space-y-2">
+            <p className="text-sm font-medium flex items-center gap-1.5">
+              <CalendarClock className="h-4 w-4 text-muted-foreground" />
+              Send Date &amp; Time <span className="text-xs text-muted-foreground font-normal">(Eastern Time)</span>
+            </p>
+            <div className="flex gap-3">
+              <div className="flex-1 space-y-1">
+                <Label htmlFor="send-date" className="text-xs">Date</Label>
+                <Input
+                  id="send-date"
+                  type="date"
+                  value={sendDate}
+                  onChange={e => setSendDate(e.target.value)}
+                  min={new Date().toISOString().slice(0, 10)}
+                  data-testid="input-send-date"
+                />
+              </div>
+              <div className="w-36 space-y-1">
+                <Label htmlFor="send-time" className="text-xs">Time (ET)</Label>
+                <Input
+                  id="send-time"
+                  type="time"
+                  value={sendTime}
+                  onChange={e => setSendTime(e.target.value)}
+                  data-testid="input-send-time"
+                />
+              </div>
+            </div>
+            {!sendDate && (
+              <p className="text-xs text-amber-600 dark:text-amber-400">A send date is required before scheduling.</p>
+            )}
           </div>
 
           {/* ── Group section ───────────────────────────────────────── */}
@@ -361,6 +405,7 @@ export default function AddContactsToSequenceDialog({
               disabled={
                 selectedContacts.length === 0 ||
                 submitMutation.isPending ||
+                !sendDate ||
                 (groupMode === "new" && !newGroupName.trim()) ||
                 (groupMode === "existing" && !existingGroupId)
               }
