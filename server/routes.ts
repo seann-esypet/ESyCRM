@@ -944,7 +944,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const userId = req.user.claims.sub;
       const body = req.body;
-      const dueDate = body.dueDate ? new Date(body.dueDate) : null;
+      const dueDate = body.dueDate ? new Date(String(body.dueDate).slice(0, 10) + "T12:00:00.000Z") : null;
       const reminderDatetime = body.reminderDatetime ? new Date(body.reminderDatetime) : null;
       const task = await storage.createDealTask({
         ...body,
@@ -976,7 +976,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { id } = req.params;
       const userId = req.user.claims.sub;
       const body = { ...req.body };
-      if (body.dueDate) body.dueDate = new Date(body.dueDate);
+      if (body.dueDate) body.dueDate = new Date(String(body.dueDate).slice(0, 10) + "T12:00:00.000Z");
       if (body.reminderDatetime) body.reminderDatetime = new Date(body.reminderDatetime);
       const existing = await storage.getDealTask(id);
       if (!existing) return res.status(404).json({ message: "Task not found" });

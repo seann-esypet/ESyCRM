@@ -3,7 +3,14 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import { format, isToday, isPast, startOfDay } from "date-fns";
+import { format, isToday, isPast, startOfDay, parseISO } from "date-fns";
+
+// Parse a date stored as UTC ISO (from DB) into a local Date at noon to avoid timezone-shift issues
+function parseDateSafe(d: string | Date | null | undefined): Date | null {
+  if (!d) return null;
+  const s = String(d).slice(0, 10); // "YYYY-MM-DD" from ISO string, no TZ shift
+  return parseISO(s + "T12:00:00"); // noon local — never crosses midnight in any timezone
+}
 import type { DealTask } from "@shared/schema";
 import {
   CheckSquare, Square, ListTodo, Phone, Mail, Video, RefreshCw,
@@ -90,14 +97,15 @@ function TaskCard({
 }) {
   const typeInfo = taskTypeInfo(task.taskType);
   const isCompleted = task.completed === "true";
-  const isOverdue = !isCompleted && task.dueDate && isPast(startOfDay(new Date(task.dueDate))) && !isToday(new Date(task.dueDate));
+  const parsedDue = parseDateSafe(task.dueDate);
+  const isOverdue = !isCompleted && parsedDue && isPast(startOfDay(parsedDue)) && !isToday(parsedDue);
   const hasReminder = task.reminderTiming && task.reminderTiming !== "none";
   const isLegacy = !!(task as any)._legacy;
 
-  const dueDateStr = task.dueDate
-    ? isToday(new Date(task.dueDate))
+  const dueDateStr = parsedDue
+    ? isToday(parsedDue)
       ? `Today${task.dueTime ? ` at ${task.dueTime}` : ""}`
-      : `${format(new Date(task.dueDate), "MMM d")}${task.dueTime ? ` at ${task.dueTime}` : ""}`
+      : `${format(parsedDue, "MMM d")}${task.dueTime ? ` at ${task.dueTime}` : ""}`
     : null;
 
   return (
@@ -267,16 +275,16 @@ export default function DealTaskPanel({ dealId, contactId }: Props) {
 
   // Group tasks into sections
   const { overdue, dueToday, upcoming, completed } = useMemo(() => {
-    const now = new Date();
-    const today = startOfDay(now);
     return {
-      overdue:   tasks.filter(t => t.completed !== "true" && t.dueDate && isPast(startOfDay(new Date(t.dueDate))) && !isToday(new Date(t.dueDate))),
-      dueToday:  tasks.filter(t => t.completed !== "true" && t.dueDate && isToday(new Date(t.dueDate))),
-      upcoming:  tasks.filter(t => t.completed !== "true" && (!t.dueDate || (!isPast(startOfDay(new Date(t.dueDate))) && !isToday(new Date(t.dueDate))))).sort((a, b) => {
-        if (!a.dueDate && !b.dueDate) return 0;
-        if (!a.dueDate) return 1;
-        if (!b.dueDate) return -1;
-        return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
+      overdue:   tasks.filter(t => { const d = parseDateSafe(t.dueDate); return t.completed !== "true" && d && isPast(startOfDay(d)) && !isToday(d); }),
+      dueToday:  tasks.filter(t => { const d = parseDateSafe(t.dueDate); return t.completed !== "true" && !!d && isToday(d); }),
+      upcoming:  tasks.filter(t => { const d = parseDateSafe(t.dueDate); return t.completed !== "true" && (!d || (!isPast(startOfDay(d)) && !isToday(d))); }).sort((a, b) => {
+        const da = parseDateSafe(a.dueDate);
+        const db = parseDateSafe(b.dueDate);
+        if (!da && !db) return 0;
+        if (!da) return 1;
+        if (!db) return -1;
+        return da.getTime() - db.getTime();
       }),
       completed: tasks.filter(t => t.completed === "true").sort((a, b) => {
         if (!a.completedAt && !b.completedAt) return 0;
@@ -342,7 +350,7 @@ export default function DealTaskPanel({ dealId, contactId }: Props) {
       title: task.title,
       taskType: task.taskType,
       priority: task.priority,
-      dueDate: task.dueDate ? format(new Date(task.dueDate), "yyyy-MM-dd") : "",
+      dueDate: task.dueDate ? String(task.dueDate).slice(0, 10) : "",
       dueTime: task.dueTime ?? "",
       assignedTo: task.assignedTo ?? user?.id ?? "",
       assignedEmail: task.assignedEmail ?? "",
@@ -362,7 +370,7 @@ export default function DealTaskPanel({ dealId, contactId }: Props) {
       title: `${task.title} (copy)`,
       taskType: task.taskType,
       priority: task.priority,
-      dueDate: task.dueDate ? format(new Date(task.dueDate), "yyyy-MM-dd") : "",
+      dueDate: task.dueDate ? String(task.dueDate).slice(0, 10) : "",
       dueTime: task.dueTime ?? "",
       assignedTo: task.assignedTo ?? user?.id ?? "",
       assignedEmail: task.assignedEmail ?? "",
