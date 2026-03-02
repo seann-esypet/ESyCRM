@@ -294,6 +294,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { id } = req.params;
       const force = req.query.force === "true";
+      console.log(`[deleteUser] id=${id} force=${force} query=`, req.query);
       const currentUserId = req.user.claims.sub;
       if (id === currentUserId) {
         return res.status(400).json({ message: "You cannot delete your own account" });

@@ -45,7 +45,7 @@ import {
 } from "@shared/schema";
 import { normalizePhoneNumber, normalizeName, normalizeEmail } from "@shared/utils";
 import { db } from "./db";
-import { eq, desc, and, sql, gte, lte, or, ne } from "drizzle-orm";
+import { eq, desc, and, sql, gte, lte, or, ne, inArray } from "drizzle-orm";
 
 export interface IStorage {
   // User operations - From Replit Auth blueprint
@@ -277,18 +277,64 @@ export class DatabaseStorage implements IStorage {
   }
 
   async forceDeleteUser(id: string): Promise<boolean> {
-    // Delete in FK-safe order: children first, then parents
+    // Step 1: Collect all IDs owned by this user so we can clean up cross-user FK references
+    const ownedContacts = await db.select({ id: contacts.id }).from(contacts).where(eq(contacts.userId, id));
+    const contactIds = ownedContacts.map((c) => c.id);
+
+    const ownedDeals = await db.select({ id: deals.id }).from(deals).where(eq(deals.userId, id));
+    const dealIds = ownedDeals.map((d) => d.id);
+
+    const ownedTasks = await db.select({ id: tasks.id }).from(tasks).where(eq(tasks.userId, id));
+    const taskIds = ownedTasks.map((t) => t.id);
+
+    const ownedSequences = await db.select({ id: emailSequences.id }).from(emailSequences).where(eq(emailSequences.userId, id));
+    const sequenceIds = ownedSequences.map((s) => s.id);
+
+    // Step 2: deal_activities — references deals, contacts, createdBy (users)
+    if (dealIds.length > 0) await db.delete(dealActivities).where(inArray(dealActivities.dealId, dealIds));
+    if (contactIds.length > 0) await db.delete(dealActivities).where(inArray(dealActivities.contactId, contactIds));
     await db.delete(dealActivities).where(eq(dealActivities.createdBy, id));
+
+    // Step 3: inbox_messages — references users and contacts
+    //         Must come before email_sequence_logs (inboxMessages.emailSequenceLogId → emailSequenceLogs.id)
     await db.delete(inboxMessages).where(eq(inboxMessages.userId, id));
+    if (contactIds.length > 0) await db.delete(inboxMessages).where(inArray(inboxMessages.contactId, contactIds));
+
+    // Step 4: email_sequence_logs — references users, contacts, emailSequences
     await db.delete(emailSequenceLogs).where(eq(emailSequenceLogs.userId, id));
+    if (contactIds.length > 0) await db.delete(emailSequenceLogs).where(inArray(emailSequenceLogs.contactId, contactIds));
+    if (sequenceIds.length > 0) await db.delete(emailSequenceLogs).where(inArray(emailSequenceLogs.sequenceId, sequenceIds));
+
+    // Step 5: email_sequences — references users
     await db.delete(emailSequences).where(eq(emailSequences.userId, id));
+
+    // Step 6: lead discovery — references users (results cascade from jobs)
     await db.delete(leadDiscoveryResults).where(eq(leadDiscoveryResults.userId, id));
     await db.delete(leadDiscoveryJobs).where(eq(leadDiscoveryJobs.userId, id));
-    await db.delete(tasks).where(eq(tasks.userId, id));
+
+    // Step 7: activities — references users, contacts, deals, AND tasks
+    //         Must be deleted BEFORE tasks (activities.taskId → tasks.id)
     await db.delete(activities).where(eq(activities.userId, id));
+    if (contactIds.length > 0) await db.delete(activities).where(inArray(activities.contactId, contactIds));
+    if (dealIds.length > 0) await db.delete(activities).where(inArray(activities.dealId, dealIds));
+    if (taskIds.length > 0) await db.delete(activities).where(inArray(activities.taskId, taskIds));
+
+    // Step 8: tasks — references users, contacts, deals
+    await db.delete(tasks).where(eq(tasks.userId, id));
+    if (contactIds.length > 0) await db.delete(tasks).where(inArray(tasks.contactId, contactIds));
+    if (dealIds.length > 0) await db.delete(tasks).where(inArray(tasks.dealId, dealIds));
+
+    // Step 9: deals — references users and contacts (other users' deals may reference this user's contacts)
+    if (contactIds.length > 0) await db.delete(deals).where(inArray(deals.contactId, contactIds));
     await db.delete(deals).where(eq(deals.userId, id));
+
+    // Step 10: contacts — references users and contactGroups
     await db.delete(contacts).where(eq(contacts.userId, id));
+
+    // Step 11: contactGroups — references users
     await db.delete(contactGroups).where(eq(contactGroups.userId, id));
+
+    // Step 12: delete the user
     const result = await db.delete(users).where(eq(users.id, id));
     return (result.rowCount ?? 0) > 0;
   }
