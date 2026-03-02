@@ -58,6 +58,7 @@ export interface IStorage {
   getAllUsers(): Promise<User[]>;
   updateUserRole(id: string, role: string): Promise<User | undefined>;
   deleteUser(id: string): Promise<boolean>;
+  forceDeleteUser(id: string): Promise<boolean>;
 
   // Contact Groups (userId can be null for admins to get all data)
   getContactGroups(userId: string | null): Promise<ContactGroup[]>;
@@ -271,6 +272,23 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteUser(id: string): Promise<boolean> {
+    const result = await db.delete(users).where(eq(users.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async forceDeleteUser(id: string): Promise<boolean> {
+    // Delete in FK-safe order: children first, then parents
+    await db.delete(dealActivities).where(eq(dealActivities.createdBy, id));
+    await db.delete(inboxMessages).where(eq(inboxMessages.userId, id));
+    await db.delete(emailSequenceLogs).where(eq(emailSequenceLogs.userId, id));
+    await db.delete(emailSequences).where(eq(emailSequences.userId, id));
+    await db.delete(leadDiscoveryResults).where(eq(leadDiscoveryResults.userId, id));
+    await db.delete(leadDiscoveryJobs).where(eq(leadDiscoveryJobs.userId, id));
+    await db.delete(tasks).where(eq(tasks.userId, id));
+    await db.delete(activities).where(eq(activities.userId, id));
+    await db.delete(deals).where(eq(deals.userId, id));
+    await db.delete(contacts).where(eq(contacts.userId, id));
+    await db.delete(contactGroups).where(eq(contactGroups.userId, id));
     const result = await db.delete(users).where(eq(users.id, id));
     return (result.rowCount ?? 0) > 0;
   }

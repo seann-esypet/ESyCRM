@@ -293,11 +293,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete('/api/admin/users/:id', isAdmin, async (req: any, res) => {
     try {
       const { id } = req.params;
+      const force = req.query.force === "true";
       const currentUserId = req.user.claims.sub;
       if (id === currentUserId) {
         return res.status(400).json({ message: "You cannot delete your own account" });
       }
-      const deleted = await storage.deleteUser(id);
+      const deleted = force
+        ? await storage.forceDeleteUser(id)
+        : await storage.deleteUser(id);
       if (!deleted) {
         return res.status(404).json({ message: "User not found" });
       }
@@ -305,7 +308,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       if (error?.code === "23503") {
         return res.status(409).json({
-          message: "This user has contacts, deals, or other data linked to their account. Reassign or delete their data first before removing the user.",
+          message: "This user has linked data. Use force delete to remove them and all their data.",
+          canForce: true,
         });
       }
       console.error("Error deleting user:", error);

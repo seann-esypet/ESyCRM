@@ -156,21 +156,27 @@ export default function AdminUsers() {
   });
 
   const deleteUserMutation = useMutation({
-    mutationFn: async (userId: string) => {
-      const response = await apiRequest("DELETE", `/api/admin/users/${userId}`);
+    mutationFn: async ({ userId, force }: { userId: string; force: boolean }) => {
+      const url = `/api/admin/users/${userId}${force ? "?force=true" : ""}`;
+      const response = await apiRequest("DELETE", url);
       if (!response.ok) {
         const err = await response.json().catch(() => ({ message: "Failed to delete user" }));
-        throw new Error(err.message);
+        // Surface whether force is available
+        throw Object.assign(new Error(err.message), { canForce: err.canForce });
       }
     },
-    onSuccess: () => {
+    onSuccess: (_data, { force }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
-      toast({ title: "User deleted", description: "The user has been removed from the system." });
+      toast({
+        title: "User deleted",
+        description: force
+          ? "User and all their data have been permanently removed."
+          : "User account has been removed.",
+      });
       setDeleteConfirmUser(null);
     },
-    onError: (error: Error) => {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
-      setDeleteConfirmUser(null);
+    onError: (error: any) => {
+      toast({ title: "Delete failed", description: error.message, variant: "destructive" });
     },
   });
 
@@ -716,26 +722,47 @@ export default function AdminUsers() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete User</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete{" "}
-              <strong>
-                {deleteConfirmUser?.firstName && deleteConfirmUser?.lastName
-                  ? `${deleteConfirmUser.firstName} ${deleteConfirmUser.lastName}`
-                  : deleteConfirmUser?.email}
-              </strong>
-              ? This action cannot be undone. Their contacts, deals, and data will remain in the system but the user account will be removed.
+            <AlertDialogDescription asChild>
+              <div className="space-y-3">
+                <p>
+                  You are about to delete{" "}
+                  <strong>
+                    {deleteConfirmUser?.firstName && deleteConfirmUser?.lastName
+                      ? `${deleteConfirmUser.firstName} ${deleteConfirmUser.lastName}`
+                      : deleteConfirmUser?.email}
+                  </strong>.
+                  Choose how to handle their data:
+                </p>
+                <div className="rounded-md border bg-muted/40 p-3 space-y-2 text-sm">
+                  <p><strong>Delete Account Only</strong> — removes the login. Works only if they have no contacts, deals, or history.</p>
+                  <p><strong>Delete User &amp; All Data</strong> — permanently removes the account plus all their contacts, deals, tasks, emails, and activity history. Cannot be undone.</p>
+                </div>
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel data-testid="button-delete-cancel">Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => deleteConfirmUser && deleteUserMutation.mutate(deleteConfirmUser.id)}
+          <AlertDialogFooter className="flex-col sm:flex-row gap-2">
+            <AlertDialogCancel data-testid="button-delete-cancel" disabled={deleteUserMutation.isPending}>
+              Cancel
+            </AlertDialogCancel>
+            <Button
+              variant="outline"
+              onClick={() => deleteConfirmUser && deleteUserMutation.mutate({ userId: deleteConfirmUser.id, force: false })}
+              disabled={deleteUserMutation.isPending}
+              className="border-destructive/40 text-destructive hover:bg-destructive/10"
+              data-testid="button-delete-account-only"
+            >
+              {deleteUserMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              Delete Account Only
+            </Button>
+            <Button
+              onClick={() => deleteConfirmUser && deleteUserMutation.mutate({ userId: deleteConfirmUser.id, force: true })}
               disabled={deleteUserMutation.isPending}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              data-testid="button-delete-confirm"
+              data-testid="button-delete-force"
             >
-              {deleteUserMutation.isPending ? "Deleting…" : "Delete User"}
-            </AlertDialogAction>
+              {deleteUserMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              Delete User &amp; All Data
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
