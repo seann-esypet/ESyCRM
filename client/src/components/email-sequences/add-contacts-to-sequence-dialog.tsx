@@ -183,8 +183,8 @@ export default function AddContactsToSequenceDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-2xl w-full">
-        <DialogHeader>
+      <DialogContent className="max-w-2xl w-full max-h-[90vh] flex flex-col">
+        <DialogHeader className="shrink-0">
           <DialogTitle className="flex items-center gap-2">
             <Mail className="h-5 w-5" />
             Add Contacts to Sequence {sequence.sequenceNumber}
@@ -195,7 +195,7 @@ export default function AddContactsToSequenceDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
+        <div className="space-y-4 overflow-y-auto flex-1 pr-1">
           {/* Subject preview */}
           <div className="rounded-md border bg-muted/40 px-4 py-2.5 text-sm">
             <span className="font-medium">Subject:</span> {sequence.subject}
@@ -392,7 +392,7 @@ export default function AddContactsToSequenceDialog({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between pt-2 border-t mt-2">
+        <div className="flex items-center justify-between pt-2 border-t mt-2 shrink-0">
           <p className="text-xs text-muted-foreground">
             {selectedContacts.length} of {allContacts?.length ?? 0} contacts selected
           </p>
