@@ -247,6 +247,8 @@ export async function processEmailSequences(): Promise<{
           contact,
           salesperson,
           sequence,
+          customSubject: log.customSubject,
+          customBody: log.customBody,
         });
 
         if (result.success) {

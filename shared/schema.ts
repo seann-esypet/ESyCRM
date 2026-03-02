@@ -157,6 +157,8 @@ export const emailSequenceLogs = pgTable("email_sequence_logs", {
   lastCheckedAt: timestamp("last_checked_at"),
   processingStartedAt: timestamp("processing_started_at"), // Track when log transitions to "processing"
   scheduledSendAt: timestamp("scheduled_send_at"), // Per-log override: don't send until this time (Eastern Time interpreted)
+  customSubject: text("custom_subject"), // Per-contact email subject override (used for "custom" track)
+  customBody: text("custom_body"),       // Per-contact email body override (used for "custom" track)
   createdAt: timestamp("created_at").defaultNow(),
 });
 

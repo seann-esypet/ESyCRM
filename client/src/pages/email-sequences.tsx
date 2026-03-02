@@ -14,7 +14,7 @@ import AddContactsToSequenceDialog from "@/components/email-sequences/add-contac
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
-type SequenceTrack = "no_software" | "uses_competitor";
+type SequenceTrack = "no_software" | "uses_competitor" | "custom";
 
 export default function EmailSequences() {
   const [activeTrack, setActiveTrack] = useState<SequenceTrack>("no_software");
@@ -32,6 +32,10 @@ export default function EmailSequences() {
 
   const { data: competitorSequences, isLoading: isLoadingCompetitor } = useQuery<EmailSequence[]>({
     queryKey: ["/api/email-sequences?track=uses_competitor"],
+  });
+
+  const { data: customSequences, isLoading: isLoadingCustom } = useQuery<EmailSequence[]>({
+    queryKey: ["/api/email-sequences?track=custom"],
   });
 
   const { data: logs, isLoading: isLogsLoading, isError: isLogsError } = useQuery<EmailSequenceLog[]>({
@@ -254,12 +258,15 @@ export default function EmailSequences() {
       <main className="flex-1 overflow-y-auto p-6 bg-muted/30" data-testid="email-sequences-content">
         <div className="max-w-6xl mx-auto">
           <Tabs value={activeTrack} onValueChange={(v) => setActiveTrack(v as SequenceTrack)} className="space-y-6">
-            <TabsList className="grid w-full grid-cols-2 max-w-md">
+            <TabsList className="grid w-full grid-cols-3 max-w-lg">
               <TabsTrigger value="no_software" data-testid="tab-no-software">
                 No Software
               </TabsTrigger>
               <TabsTrigger value="uses_competitor" data-testid="tab-uses-competitor">
                 Uses Competitor
+              </TabsTrigger>
+              <TabsTrigger value="custom" data-testid="tab-custom">
+                Custom / General
               </TabsTrigger>
             </TabsList>
 
@@ -281,6 +288,16 @@ export default function EmailSequences() {
                 </p>
               </div>
               {renderSequenceTable(competitorSequences, isLoadingCompetitor, "uses_competitor")}
+            </TabsContent>
+
+            <TabsContent value="custom" className="space-y-6">
+              <div className="p-4 bg-purple-50 dark:bg-purple-950 border border-purple-200 dark:border-purple-800 rounded-lg">
+                <h3 className="font-semibold text-purple-900 dark:text-purple-100 mb-1">Custom / General Track</h3>
+                <p className="text-sm text-purple-800 dark:text-purple-200">
+                  These sequences accept any contact regardless of software status. When adding contacts, you can write a unique email per contact — perfect for personalized one-on-one outreach.
+                </p>
+              </div>
+              {renderSequenceTable(customSequences, isLoadingCustom, "custom")}
             </TabsContent>
           </Tabs>
 
@@ -306,7 +323,7 @@ export default function EmailSequences() {
                 : `Configure Sequence ${selectedSequence?.sequenceNumber || 1}`}
               {selectedSequence?.sequenceTrack && (
                 <span className="ml-2 text-sm font-normal text-muted-foreground">
-                  ({selectedSequence.sequenceTrack === "no_software" ? "No Software" : "Uses Competitor"} Track)
+                  ({selectedSequence.sequenceTrack === "no_software" ? "No Software" : selectedSequence.sequenceTrack === "uses_competitor" ? "Uses Competitor" : "Custom / General"} Track)
                 </span>
               )}
             </DialogTitle>

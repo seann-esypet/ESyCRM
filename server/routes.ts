@@ -1237,7 +1237,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/email-sequence-logs/bulk", isAuthenticated, async (req: any, res) => {
     try {
       const userId = getUserIdForQuery(req.user); // null for admin, user ID for salesperson
-      const { sequenceId, contactIds, scheduledSendAt } = req.body;
+      const { sequenceId, contactIds, scheduledSendAt, customSubject, customBody } = req.body;
       
       if (!sequenceId || typeof sequenceId !== 'string') {
         return res.status(400).json({ message: "Invalid sequenceId" });
@@ -1249,7 +1249,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const scheduledDate = scheduledSendAt ? new Date(scheduledSendAt) : null;
       
-      const result = await storage.bulkCreateEmailSequenceLogs(sequenceId, contactIds, userId, scheduledDate);
+      const result = await storage.bulkCreateEmailSequenceLogs(
+        sequenceId, contactIds, userId, scheduledDate,
+        customSubject || undefined, customBody || undefined
+      );
       
       res.status(201).json({
         total: contactIds.length,

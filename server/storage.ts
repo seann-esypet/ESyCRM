@@ -128,7 +128,7 @@ export interface IStorage {
   getEmailSequenceLogs(userId: string | null, contactId?: string): Promise<EmailSequenceLog[]>;
   getEmailSequenceLogById(id: string, userId: string | null): Promise<EmailSequenceLog | undefined>;
   createEmailSequenceLog(log: InsertEmailSequenceLog, userId: string): Promise<EmailSequenceLog>;
-  bulkCreateEmailSequenceLogs(sequenceId: string, contactIds: string[], userId: string | null, scheduledSendAt?: Date | null): Promise<{ successful: EmailSequenceLog[], failed: Array<{ contactId: string, error: string }> }>;
+  bulkCreateEmailSequenceLogs(sequenceId: string, contactIds: string[], userId: string | null, scheduledSendAt?: Date | null, customSubject?: string, customBody?: string): Promise<{ successful: EmailSequenceLog[], failed: Array<{ contactId: string, error: string }> }>;
   updateEmailSequenceLog(id: string, log: Partial<InsertEmailSequenceLog>, userId: string | null): Promise<EmailSequenceLog | undefined>;
   deleteEmailSequenceLog(id: string, userId: string | null): Promise<boolean>;
   
@@ -1043,7 +1043,7 @@ export class DatabaseStorage implements IStorage {
     return log;
   }
 
-  async bulkCreateEmailSequenceLogs(sequenceId: string, contactIds: string[], userId: string | null, scheduledSendAt?: Date | null): Promise<{ successful: EmailSequenceLog[], failed: Array<{ contactId: string, error: string }> }> {
+  async bulkCreateEmailSequenceLogs(sequenceId: string, contactIds: string[], userId: string | null, scheduledSendAt?: Date | null, customSubject?: string, customBody?: string): Promise<{ successful: EmailSequenceLog[], failed: Array<{ contactId: string, error: string }> }> {
     const successful: EmailSequenceLog[] = [];
     const failed: Array<{ contactId: string, error: string }> = [];
     
@@ -1075,15 +1075,17 @@ export class DatabaseStorage implements IStorage {
           continue;
         }
         
-        // Enforce track matching: contact's track must match sequence's track
-        // Contacts without a track are allowed in "no_software" sequences by default
-        const contactTrack = contact.sequenceTrack || "no_software";
-        if (contactTrack !== sequence.sequenceTrack) {
-          failed.push({
-            contactId,
-            error: `Contact track (${contactTrack}) does not match sequence track (${sequence.sequenceTrack})`
-          });
-          continue;
+        // Enforce track matching only for non-custom tracks
+        // "custom" track sequences accept any contact regardless of their track
+        if (sequence.sequenceTrack !== "custom") {
+          const contactTrack = contact.sequenceTrack || "no_software";
+          if (contactTrack !== sequence.sequenceTrack) {
+            failed.push({
+              contactId,
+              error: `Contact track (${contactTrack}) does not match sequence track (${sequence.sequenceTrack})`
+            });
+            continue;
+          }
         }
         
         // Check if this contact is already in the queue for this sequence
@@ -1114,6 +1116,8 @@ export class DatabaseStorage implements IStorage {
             emailResponseReceived: "false",
             userId: sequenceOwnerId,
             ...(scheduledSendAt ? { scheduledSendAt } : {}),
+            ...(customSubject ? { customSubject } : {}),
+            ...(customBody ? { customBody } : {}),
           })
           .returning();
         

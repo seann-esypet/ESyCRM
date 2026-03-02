@@ -5,12 +5,13 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { Mail, Users, Search, Plus, FolderOpen, CalendarClock } from "lucide-react";
+import { Mail, Users, Search, Plus, FolderOpen, CalendarClock, Pencil } from "lucide-react";
 import type { EmailSequence, Contact, ContactGroup } from "@shared/schema";
 
 interface AddContactsToSequenceDialogProps {
@@ -29,11 +30,15 @@ const SOFTWARE_FILTERS: { value: SoftwareFilter; label: string }[] = [
   { value: "unknown", label: "? Unknown" },
 ];
 
+const PLACEHOLDERS_HELP = "[Contact_First_Name], [Sales_Person], [Business_Name]";
+
 export default function AddContactsToSequenceDialog({
   sequence,
   open,
   onOpenChange,
 }: AddContactsToSequenceDialogProps) {
+  const isCustomTrack = sequence.sequenceTrack === "custom";
+
   const [selectedContacts, setSelectedContacts] = useState<string[]>([]);
   const [search, setSearch] = useState("");
   const [softwareFilter, setSoftwareFilter] = useState<SoftwareFilter>("all");
@@ -42,6 +47,9 @@ export default function AddContactsToSequenceDialog({
   const [existingGroupId, setExistingGroupId] = useState("");
   const [sendDate, setSendDate] = useState("");
   const [sendTime, setSendTime] = useState("09:00");
+  // Custom track fields
+  const [customSubject, setCustomSubject] = useState("");
+  const [customBody, setCustomBody] = useState("");
   const { toast } = useToast();
 
   const { data: allContacts, isLoading: isLoadingContacts } = useQuery<Contact[]>({
@@ -58,12 +66,10 @@ export default function AddContactsToSequenceDialog({
     if (!allContacts) return [];
     let list = allContacts;
 
-    // Software filter
     if (softwareFilter === "yes")     list = list.filter(c => c.usesSoftware === "Yes");
     if (softwareFilter === "no")      list = list.filter(c => c.usesSoftware === "No");
     if (softwareFilter === "unknown") list = list.filter(c => !c.usesSoftware || c.usesSoftware === "Unknown");
 
-    // Text search
     const q = search.trim().toLowerCase();
     if (q) {
       list = list.filter(c =>
@@ -75,7 +81,6 @@ export default function AddContactsToSequenceDialog({
     return list;
   }, [allContacts, search, softwareFilter]);
 
-  // Counts per software filter for badges
   const softwareCounts = useMemo(() => {
     if (!allContacts) return { all: 0, yes: 0, no: 0, unknown: 0 };
     return {
@@ -96,6 +101,8 @@ export default function AddContactsToSequenceDialog({
       setExistingGroupId("");
       setSendDate("");
       setSendTime("09:00");
+      setCustomSubject("");
+      setCustomBody("");
     }
     onOpenChange(val);
   };
@@ -123,6 +130,8 @@ export default function AddContactsToSequenceDialog({
     mutationFn: async () => {
       if (selectedContacts.length === 0) throw new Error("No contacts selected");
       if (!sendDate) throw new Error("Please pick a send date");
+      if (isCustomTrack && !customSubject.trim()) throw new Error("Please enter a custom email subject");
+      if (isCustomTrack && !customBody.trim()) throw new Error("Please enter a custom email body");
 
       let groupId: string | null = null;
 
@@ -144,7 +153,6 @@ export default function AddContactsToSequenceDialog({
       }
 
       // Build an ISO string with the correct Eastern Time offset (handles DST automatically).
-      // Probe: take noon UTC on the chosen date, see what hour ET shows — that gives us the offset.
       const refUtc = new Date(`${sendDate}T12:00:00Z`);
       const etHour = parseInt(
         new Intl.DateTimeFormat("en-US", {
@@ -154,17 +162,23 @@ export default function AddContactsToSequenceDialog({
         }).format(refUtc),
         10
       );
-      // etHour = 12 + offset  →  offset = etHour - 12  (e.g. 7 for EST = -5, 8 for EDT = -4)
-      const offsetHours = etHour - 12; // negative for ET (e.g. -5 or -4)
+      const offsetHours = etHour - 12;
       const sign = offsetHours >= 0 ? "+" : "-";
       const etOffsetStr = `${sign}${String(Math.abs(offsetHours)).padStart(2, "0")}:00`;
       const scheduledSendAt = `${sendDate}T${sendTime}:00${etOffsetStr}`;
 
-      const bulkRes = await apiRequest("POST", "/api/email-sequence-logs/bulk", {
+      const payload: Record<string, unknown> = {
         sequenceId: sequence.id,
         contactIds: selectedContacts,
         scheduledSendAt,
-      });
+      };
+
+      if (isCustomTrack) {
+        payload.customSubject = customSubject.trim();
+        payload.customBody = customBody.trim();
+      }
+
+      const bulkRes = await apiRequest("POST", "/api/email-sequence-logs/bulk", payload);
       if (!bulkRes.ok) {
         const err = await bulkRes.json().catch(() => ({ message: "Failed to schedule sequence" }));
         throw new Error(err.message);
@@ -179,7 +193,6 @@ export default function AddContactsToSequenceDialog({
         ? ` Group "${newGroupName.trim()}" created.`
         : groupMode === "existing" ? " Contacts added to group." : "";
 
-      // Show success toast
       if (data.successful > 0) {
         toast({
           title: "Sequence scheduled",
@@ -187,7 +200,6 @@ export default function AddContactsToSequenceDialog({
         });
       }
 
-      // Show track mismatch warnings
       const trackErrors: Array<{ contactId: string; error: string }> = data.errors ?? [];
       const trackMismatches = trackErrors.filter((e: { contactId: string; error: string }) =>
         e.error.includes("does not match sequence track")
@@ -237,10 +249,23 @@ export default function AddContactsToSequenceDialog({
     },
   });
 
-  const trackLabel = sequence.sequenceTrack === "uses_competitor" ? "Uses Competitor" : "No Software";
-  const trackColor = sequence.sequenceTrack === "uses_competitor"
-    ? "bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-300"
-    : "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300";
+  const trackLabel = isCustomTrack
+    ? "Custom / General"
+    : sequence.sequenceTrack === "uses_competitor" ? "Uses Competitor" : "No Software";
+  const trackColor = isCustomTrack
+    ? "bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300"
+    : sequence.sequenceTrack === "uses_competitor"
+      ? "bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-300"
+      : "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300";
+
+  const isSubmitDisabled =
+    selectedContacts.length === 0 ||
+    submitMutation.isPending ||
+    !sendDate ||
+    (groupMode === "new" && !newGroupName.trim()) ||
+    (groupMode === "existing" && !existingGroupId) ||
+    (isCustomTrack && !customSubject.trim()) ||
+    (isCustomTrack && !customBody.trim());
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -252,15 +277,51 @@ export default function AddContactsToSequenceDialog({
             <span className={`text-xs px-2 py-0.5 rounded-full ${trackColor}`}>{trackLabel}</span>
           </DialogTitle>
           <DialogDescription>
-            Create or select a group, then pick contacts to schedule for this sequence.
+            {isCustomTrack
+              ? "Write a custom email, then pick contacts. The same email will be sent to all selected contacts."
+              : "Create or select a group, then pick contacts to schedule for this sequence."}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 overflow-y-auto flex-1 pr-1">
-          {/* Subject preview */}
-          <div className="rounded-md border bg-muted/40 px-4 py-2.5 text-sm">
-            <span className="font-medium">Subject:</span> {sequence.subject}
-          </div>
+          {/* Subject preview (non-custom) or Custom email editor (custom track) */}
+          {!isCustomTrack ? (
+            <div className="rounded-md border bg-muted/40 px-4 py-2.5 text-sm">
+              <span className="font-medium">Subject:</span> {sequence.subject}
+            </div>
+          ) : (
+            <div className="rounded-md border p-3 space-y-3 bg-purple-50/50 dark:bg-purple-950/20 border-purple-200 dark:border-purple-800">
+              <p className="text-sm font-medium flex items-center gap-1.5 text-purple-800 dark:text-purple-200">
+                <Pencil className="h-4 w-4" />
+                Custom Email Content
+              </p>
+              <p className="text-xs text-purple-700 dark:text-purple-300">
+                Personalization tokens: <span className="font-mono bg-purple-100 dark:bg-purple-900 px-1 rounded">{PLACEHOLDERS_HELP}</span>
+              </p>
+              <div className="space-y-1.5">
+                <Label htmlFor="custom-subject" className="text-xs">Subject <span className="text-destructive">*</span></Label>
+                <Input
+                  id="custom-subject"
+                  placeholder="e.g. Quick question about [Business_Name]"
+                  value={customSubject}
+                  onChange={e => setCustomSubject(e.target.value)}
+                  data-testid="input-custom-subject"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="custom-body" className="text-xs">Body <span className="text-destructive">*</span></Label>
+                <Textarea
+                  id="custom-body"
+                  placeholder={`Hi [Contact_First_Name],\n\nWrite your personalized message here…`}
+                  value={customBody}
+                  onChange={e => setCustomBody(e.target.value)}
+                  rows={6}
+                  className="resize-none text-sm"
+                  data-testid="textarea-custom-body"
+                />
+              </div>
+            </div>
+          )}
 
           {/* ── Send Date & Time ─────────────────────────────────────── */}
           <div className="rounded-md border p-3 space-y-2">
@@ -347,7 +408,6 @@ export default function AddContactsToSequenceDialog({
 
           {/* ── Contact picker ──────────────────────────────────────── */}
           <div className="space-y-2">
-            {/* Search + selected count */}
             <div className="flex items-center gap-3">
               <div className="relative flex-1">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -391,9 +451,9 @@ export default function AddContactsToSequenceDialog({
               </label>
             </div>
 
-            {/* Contact list — fixed height with scroll */}
+            {/* Contact list */}
             <div className="border rounded-md overflow-hidden">
-              <ScrollArea className="h-64">
+              <ScrollArea className="h-56">
                 {isLoadingContacts ? (
                   <div className="p-8 text-center text-muted-foreground text-sm">Loading contacts…</div>
                 ) : filteredContacts.length === 0 ? (
@@ -463,13 +523,7 @@ export default function AddContactsToSequenceDialog({
             </Button>
             <Button
               onClick={() => submitMutation.mutate()}
-              disabled={
-                selectedContacts.length === 0 ||
-                submitMutation.isPending ||
-                !sendDate ||
-                (groupMode === "new" && !newGroupName.trim()) ||
-                (groupMode === "existing" && !existingGroupId)
-              }
+              disabled={isSubmitDisabled}
               data-testid="button-submit"
             >
               <Users className="h-4 w-4 mr-2" />

@@ -98,18 +98,24 @@ export async function sendSequenceEmail({
   contact,
   salesperson,
   sequence,
+  customSubject,
+  customBody,
 }: {
   contact: Contact;
   salesperson: User;
   sequence: EmailSequence;
+  customSubject?: string | null;
+  customBody?: string | null;
 }): Promise<{ success: boolean; error?: string }> {
   if (!contact.email) {
     return { success: false, error: "Contact has no email address" };
   }
 
-  // Replace template variables
-  const subject = replaceTemplateVariables(sequence.subject, contact, salesperson);
-  const body = replaceTemplateVariables(sequence.body, contact, salesperson);
+  // Use per-contact custom email if provided (custom track), otherwise use sequence template
+  const rawSubject = customSubject || sequence.subject;
+  const rawBody = customBody || sequence.body;
+  const subject = replaceTemplateVariables(rawSubject, contact, salesperson);
+  const body = replaceTemplateVariables(rawBody, contact, salesperson);
 
   const salespersonName = `${salesperson.firstName || ''} ${salesperson.lastName || ''}`.trim() || salesperson.email || 'Sales Team';
   
