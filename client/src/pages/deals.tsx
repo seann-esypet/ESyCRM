@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Edit, Trash2, Calendar, DollarSign, Handshake, LayoutGrid, List, ArrowUpDown, ArrowUp, ArrowDown, RotateCcw, Download, Users, Mail, MessageSquare, Send, Clock, CheckCircle, XCircle, AlertCircle, CalendarClock, Play } from "lucide-react";
+import { Edit, Trash2, Calendar, DollarSign, Handshake, LayoutGrid, List, ArrowUpDown, ArrowUp, ArrowDown, RotateCcw, Download, Users, Mail, MessageSquare, Send, Clock, CheckCircle, XCircle, AlertCircle, CalendarClock, Play, Search, X } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -43,6 +43,7 @@ export default function Deals() {
   const [initiateTime, setInitiateTime] = useState("09:00");
   const [showInitiateForm, setShowInitiateForm] = useState(false);
 
+  const [searchTerm, setSearchTerm] = useState("");
   const initialFilterUserId = isAdmin ? new URLSearchParams(window.location.search).get("filterUserId") || "" : "";
   const [filterUserId, setFilterUserId] = useState(initialFilterUserId);
 
@@ -376,6 +377,19 @@ export default function Deals() {
 
     let sorted = [...deals];
 
+    // Search filter
+    if (searchTerm.trim()) {
+      const q = searchTerm.toLowerCase();
+      sorted = sorted.filter(deal => {
+        const contactName = getContactName(deal.contactId).toLowerCase();
+        return (
+          deal.title?.toLowerCase().includes(q) ||
+          contactName.includes(q) ||
+          deal.description?.toLowerCase().includes(q)
+        );
+      });
+    }
+
     // Default sort: open deals first (by stage), then newest first (by createdAt)
     if (!sortColumn) {
       sorted.sort((a, b) => {
@@ -434,7 +448,7 @@ export default function Deals() {
     });
 
     return sorted;
-  }, [deals, sortColumn, sortDirection, contacts]);
+  }, [deals, sortColumn, sortDirection, contacts, searchTerm]);
 
   const SortIcon = ({ column }: { column: SortColumn }) => {
     if (sortColumn !== column) {
@@ -476,6 +490,26 @@ export default function Deals() {
         addButtonText="New Deal"
         customActions={
           <div className="flex gap-2 items-center">
+            {/* Search */}
+            <div className="relative">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                placeholder="Search deals…"
+                value={searchTerm}
+                onChange={e => setSearchTerm(e.target.value)}
+                className="pl-7 pr-7 h-8 w-48 text-sm"
+                data-testid="input-search-deals"
+              />
+              {searchTerm && (
+                <button
+                  onClick={() => setSearchTerm("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  data-testid="button-clear-search"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
             {isAdmin && (
               <div className="flex items-center gap-2">
                 <Users className="h-4 w-4 text-muted-foreground" />
@@ -552,6 +586,15 @@ export default function Deals() {
               <p className="text-muted-foreground">
                 Start tracking your sales pipeline by creating your first deal.
               </p>
+            </CardContent>
+          </Card>
+        ) : sortedDeals.length === 0 && searchTerm ? (
+          <Card>
+            <CardContent className="p-12 text-center">
+              <Search className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
+              <h3 className="text-lg font-medium text-foreground mb-2">No results for "{searchTerm}"</h3>
+              <p className="text-muted-foreground">Try a different search term or clear the search.</p>
+              <Button variant="outline" size="sm" className="mt-4" onClick={() => setSearchTerm("")}>Clear search</Button>
             </CardContent>
           </Card>
         ) : viewType === "card" ? (

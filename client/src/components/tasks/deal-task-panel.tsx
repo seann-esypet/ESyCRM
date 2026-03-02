@@ -70,6 +70,8 @@ function PriorityBadge({ priority }: { priority: string }) {
   );
 }
 
+type AnyTask = DealTask & { _legacy?: boolean };
+
 // ─── Task Card ────────────────────────────────────────────────────────────────
 function TaskCard({
   task,
@@ -79,7 +81,7 @@ function TaskCard({
   onDelete,
   isCompleting,
 }: {
-  task: DealTask;
+  task: AnyTask;
   onComplete: (completed: boolean) => void;
   onEdit: () => void;
   onDuplicate: () => void;
@@ -90,6 +92,7 @@ function TaskCard({
   const isCompleted = task.completed === "true";
   const isOverdue = !isCompleted && task.dueDate && isPast(startOfDay(new Date(task.dueDate))) && !isToday(new Date(task.dueDate));
   const hasReminder = task.reminderTiming && task.reminderTiming !== "none";
+  const isLegacy = !!(task as any)._legacy;
 
   const dueDateStr = task.dueDate
     ? isToday(new Date(task.dueDate))
@@ -134,10 +137,12 @@ function TaskCard({
                 <MoreHorizontal className="h-3.5 w-3.5" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-40">
-              <DropdownMenuItem onClick={onEdit} data-testid={`menuitem-edit-task-${task.id}`}>
-                <Pencil className="h-3.5 w-3.5 mr-2" /> Edit
-              </DropdownMenuItem>
+            <DropdownMenuContent align="end" className="w-44">
+              {!isLegacy && (
+                <DropdownMenuItem onClick={onEdit} data-testid={`menuitem-edit-task-${task.id}`}>
+                  <Pencil className="h-3.5 w-3.5 mr-2" /> Edit
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onClick={onDuplicate} data-testid={`menuitem-duplicate-task-${task.id}`}>
                 <Copy className="h-3.5 w-3.5 mr-2" /> Duplicate
               </DropdownMenuItem>
@@ -179,6 +184,12 @@ function TaskCard({
           {hasReminder && (
             <span className="text-xs text-amber-500 flex items-center gap-0.5" title="Reminder scheduled">
               <Bell className="h-3 w-3" />
+            </span>
+          )}
+          {/* Legacy badge */}
+          {isLegacy && (
+            <span className="text-xs text-muted-foreground bg-muted px-1 rounded" title="Created from the Tasks page">
+              from Tasks
             </span>
           )}
           {/* Completed timestamp */}
@@ -285,9 +296,14 @@ export default function DealTaskPanel({ dealId, contactId }: Props) {
   };
 
   const completeMutation = useMutation({
-    mutationFn: ({ id, completed }: { id: string; completed: boolean }) =>
-      apiRequest("PATCH", `/api/deal-tasks/${id}`, { completed: completed ? "true" : "false" }),
-    onSuccess: invalidate,
+    mutationFn: ({ id, completed, isLegacy }: { id: string; completed: boolean; isLegacy?: boolean }) =>
+      isLegacy
+        ? apiRequest("PUT", `/api/tasks/${id}`, { status: completed ? "completed" : "pending" })
+        : apiRequest("PATCH", `/api/deal-tasks/${id}`, { completed: completed ? "true" : "false" }),
+    onSuccess: () => {
+      invalidate();
+      queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
+    },
     onError: () => toast({ title: "Failed to update task", variant: "destructive" }),
   });
 
@@ -305,7 +321,10 @@ export default function DealTaskPanel({ dealId, contactId }: Props) {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => apiRequest("DELETE", `/api/deal-tasks/${id}`),
+    mutationFn: ({ id, isLegacy }: { id: string; isLegacy?: boolean }) =>
+      isLegacy
+        ? apiRequest("DELETE", `/api/tasks/${id}`)
+        : apiRequest("DELETE", `/api/deal-tasks/${id}`),
     onSuccess: () => { invalidate(); toast({ title: "Task deleted" }); },
     onError: () => toast({ title: "Failed to delete task", variant: "destructive" }),
   });
@@ -449,11 +468,11 @@ export default function DealTaskPanel({ dealId, contactId }: Props) {
             <>
               <SectionLabel color="text-red-500" label="Overdue" count={overdue.length} />
               {overdue.map(task => (
-                <TaskCard key={task.id} task={task}
-                  onComplete={c => completeMutation.mutate({ id: task.id, completed: c })}
-                  onEdit={() => openEdit(task)}
+                <TaskCard key={task.id} task={task as AnyTask}
+                  onComplete={c => completeMutation.mutate({ id: task.id, completed: c, isLegacy: !!(task as AnyTask)._legacy })}
+                  onEdit={() => (task as AnyTask)._legacy ? toast({ title: "Edit this task in the Tasks page" }) : openEdit(task)}
                   onDuplicate={() => openDuplicate(task)}
-                  onDelete={() => deleteMutation.mutate(task.id)}
+                  onDelete={() => deleteMutation.mutate({ id: task.id, isLegacy: !!(task as AnyTask)._legacy })}
                   isCompleting={completeMutation.isPending}
                 />
               ))}
@@ -465,11 +484,11 @@ export default function DealTaskPanel({ dealId, contactId }: Props) {
             <>
               <SectionLabel color="text-amber-500" label="Due Today" count={dueToday.length} />
               {dueToday.map(task => (
-                <TaskCard key={task.id} task={task}
-                  onComplete={c => completeMutation.mutate({ id: task.id, completed: c })}
-                  onEdit={() => openEdit(task)}
+                <TaskCard key={task.id} task={task as AnyTask}
+                  onComplete={c => completeMutation.mutate({ id: task.id, completed: c, isLegacy: !!(task as AnyTask)._legacy })}
+                  onEdit={() => (task as AnyTask)._legacy ? toast({ title: "Edit this task in the Tasks page" }) : openEdit(task)}
                   onDuplicate={() => openDuplicate(task)}
-                  onDelete={() => deleteMutation.mutate(task.id)}
+                  onDelete={() => deleteMutation.mutate({ id: task.id, isLegacy: !!(task as AnyTask)._legacy })}
                   isCompleting={completeMutation.isPending}
                 />
               ))}
@@ -483,11 +502,11 @@ export default function DealTaskPanel({ dealId, contactId }: Props) {
                 <SectionLabel color="text-muted-foreground" label="Upcoming" count={upcoming.length} />
               )}
               {upcoming.map(task => (
-                <TaskCard key={task.id} task={task}
-                  onComplete={c => completeMutation.mutate({ id: task.id, completed: c })}
-                  onEdit={() => openEdit(task)}
+                <TaskCard key={task.id} task={task as AnyTask}
+                  onComplete={c => completeMutation.mutate({ id: task.id, completed: c, isLegacy: !!(task as AnyTask)._legacy })}
+                  onEdit={() => (task as AnyTask)._legacy ? toast({ title: "Edit this task in the Tasks page" }) : openEdit(task)}
                   onDuplicate={() => openDuplicate(task)}
-                  onDelete={() => deleteMutation.mutate(task.id)}
+                  onDelete={() => deleteMutation.mutate({ id: task.id, isLegacy: !!(task as AnyTask)._legacy })}
                   isCompleting={completeMutation.isPending}
                 />
               ))}
@@ -508,11 +527,11 @@ export default function DealTaskPanel({ dealId, contactId }: Props) {
               {completedExpanded && (
                 <div className="space-y-1 mt-1">
                   {completed.map(task => (
-                    <TaskCard key={task.id} task={task}
-                      onComplete={c => completeMutation.mutate({ id: task.id, completed: c })}
-                      onEdit={() => openEdit(task)}
+                    <TaskCard key={task.id} task={task as AnyTask}
+                      onComplete={c => completeMutation.mutate({ id: task.id, completed: c, isLegacy: !!(task as AnyTask)._legacy })}
+                      onEdit={() => (task as AnyTask)._legacy ? toast({ title: "Edit this task in the Tasks page" }) : openEdit(task)}
                       onDuplicate={() => openDuplicate(task)}
-                      onDelete={() => deleteMutation.mutate(task.id)}
+                      onDelete={() => deleteMutation.mutate({ id: task.id, isLegacy: !!(task as AnyTask)._legacy })}
                       isCompleting={completeMutation.isPending}
                     />
                   ))}

@@ -897,10 +897,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ─── Deal Tasks routes ──────────────────────────────────────────────────────
   app.get("/api/deal-tasks", isAuthenticated, async (req: any, res) => {
     try {
+      const userId = getUserIdForQuery(req.user);
       const { dealId } = req.query;
       if (!dealId) return res.status(400).json({ message: "dealId required" });
-      const tasks = await storage.getDealTasks(dealId as string);
-      res.json(tasks);
+
+      // New deal_tasks table
+      const newTasks = await storage.getDealTasks(dealId as string);
+
+      // Legacy tasks from old tasks table that are linked to this deal
+      const legacyRaw = await storage.getTasksByDealId(dealId as string, userId);
+      const legacyIds = new Set(newTasks.map((t: any) => t.id));
+      const legacy = legacyRaw
+        .filter(t => !legacyIds.has(t.id))
+        .map(t => ({
+          id: t.id,
+          dealId: t.dealId,
+          contactId: t.contactId ?? null,
+          createdBy: t.userId,
+          title: t.title,
+          taskType: "other",
+          priority: t.priority ?? "medium",
+          dueDate: t.dueDate ?? null,
+          dueTime: null,
+          assignedTo: null,
+          assignedEmail: null,
+          reminderTiming: "none",
+          reminderDatetime: null,
+          reminderSent: "false",
+          notes: t.description ?? null,
+          autoFollowup: "false",
+          followupTitle: null,
+          followupDaysOut: null,
+          completed: t.status === "completed" ? "true" : "false",
+          completedAt: null,
+          createdAt: t.createdAt,
+          _legacy: true,
+        }));
+
+      res.json([...newTasks, ...legacy]);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch deal tasks" });
     }
