@@ -18,6 +18,8 @@ import {
   type InsertEmailSequence,
   type EmailSequenceLog,
   type InsertEmailSequenceLog,
+  type DealTask,
+  type InsertDealTask,
   type InboxMessage,
   type InsertInboxMessage,
   type LeadDiscoveryJob,
@@ -41,7 +43,8 @@ import {
   leadDiscoveryResults,
   serpUsage,
   serpCache,
-  leadDiscoveryConfig
+  leadDiscoveryConfig,
+  dealTasks,
 } from "@shared/schema";
 import { normalizePhoneNumber, normalizeName, normalizeEmail } from "@shared/utils";
 import { db } from "./db";
@@ -59,6 +62,14 @@ export interface IStorage {
   updateUserRole(id: string, role: string): Promise<User | undefined>;
   deleteUser(id: string): Promise<boolean>;
   forceDeleteUser(id: string): Promise<boolean>;
+
+  // Deal Tasks
+  getDealTasks(dealId: string): Promise<DealTask[]>;
+  getDealTask(id: string): Promise<DealTask | undefined>;
+  createDealTask(task: Omit<InsertDealTask, 'dueDate' | 'reminderDatetime'> & { dueDate?: Date | null; reminderDatetime?: Date | null }): Promise<DealTask>;
+  updateDealTask(id: string, updates: Partial<DealTask>): Promise<DealTask | undefined>;
+  deleteDealTask(id: string): Promise<boolean>;
+  getPendingReminderTasks(): Promise<(DealTask & { dealTitle: string; contactFirstName: string | null; contactLastName: string | null; contactPhone: string | null; assignedUserFirstName: string | null; assignedUserLastName: string | null; })[]>;
 
   // Contact Groups (userId can be null for admins to get all data)
   getContactGroups(userId: string | null): Promise<ContactGroup[]>;
@@ -1476,6 +1487,67 @@ export class DatabaseStorage implements IStorage {
         gte(leadDiscoveryJobs.createdAt, today)
       ));
     return jobs.length;
+  }
+
+  // ─── Deal Tasks ───────────────────────────────────────────────────────────
+  async getDealTasks(dealId: string): Promise<DealTask[]> {
+    return await db.select().from(dealTasks)
+      .where(eq(dealTasks.dealId, dealId))
+      .orderBy(dealTasks.createdAt);
+  }
+
+  async getDealTask(id: string): Promise<DealTask | undefined> {
+    const [task] = await db.select().from(dealTasks).where(eq(dealTasks.id, id));
+    return task;
+  }
+
+  async createDealTask(task: Omit<InsertDealTask, 'dueDate' | 'reminderDatetime'> & { dueDate?: Date | null; reminderDatetime?: Date | null }): Promise<DealTask> {
+    const [created] = await db.insert(dealTasks).values(task as any).returning();
+    return created;
+  }
+
+  async updateDealTask(id: string, updates: Partial<DealTask>): Promise<DealTask | undefined> {
+    const [updated] = await db.update(dealTasks).set(updates as any).where(eq(dealTasks.id, id)).returning();
+    return updated;
+  }
+
+  async deleteDealTask(id: string): Promise<boolean> {
+    const result = await db.delete(dealTasks).where(eq(dealTasks.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async getPendingReminderTasks() {
+    const now = new Date();
+    const rows = await db
+      .select({
+        task: dealTasks,
+        dealTitle: deals.title,
+        contactFirstName: contacts.firstName,
+        contactLastName: contacts.lastName,
+        contactPhone: contacts.phoneCell,
+        assignedUserFirstName: users.firstName,
+        assignedUserLastName: users.lastName,
+      })
+      .from(dealTasks)
+      .leftJoin(deals, eq(dealTasks.dealId, deals.id))
+      .leftJoin(contacts, eq(dealTasks.contactId, contacts.id))
+      .leftJoin(users, eq(dealTasks.assignedTo, users.id))
+      .where(
+        and(
+          eq(dealTasks.completed, "false"),
+          eq(dealTasks.reminderSent, "false"),
+          lte(dealTasks.reminderDatetime, now),
+        )
+      );
+    return rows.map(r => ({
+      ...r.task,
+      dealTitle: r.dealTitle ?? "",
+      contactFirstName: r.contactFirstName ?? null,
+      contactLastName: r.contactLastName ?? null,
+      contactPhone: r.contactPhone ?? null,
+      assignedUserFirstName: r.assignedUserFirstName ?? null,
+      assignedUserLastName: r.assignedUserLastName ?? null,
+    }));
   }
 
   async getSerpCallsInLastHour(): Promise<number> {

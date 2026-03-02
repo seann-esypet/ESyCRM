@@ -2,6 +2,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { startEmailSequenceScheduler } from "./emailScheduler";
+import { startTaskReminderScheduler } from "./taskReminderScheduler";
 
 const app = express();
 app.use(express.json());
@@ -76,5 +77,8 @@ app.use((req, res, next) => {
     } else {
       log("Email sequence scheduler disabled (SENDGRID_API_KEY not set)");
     }
+
+    // Start task reminder scheduler (always runs, checks every 15 min)
+    startTaskReminderScheduler();
   });
 })();

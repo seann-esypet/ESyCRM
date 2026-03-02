@@ -174,6 +174,43 @@ export const inboxMessages = pgTable("inbox_messages", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const dealTasks = pgTable("deal_tasks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull().references(() => deals.id, { onDelete: "cascade" }),
+  contactId: varchar("contact_id").references(() => contacts.id),
+  title: text("title").notNull(),
+  taskType: text("task_type").notNull().default("other"), // call, email, demo, follow_up, site_visit, other
+  priority: text("priority").notNull().default("medium"), // high, medium, low
+  dueDate: timestamp("due_date"),
+  dueTime: text("due_time"), // e.g. "09:00"
+  assignedTo: varchar("assigned_to").references(() => users.id),
+  assignedEmail: text("assigned_email"),
+  reminderTiming: text("reminder_timing").default("none"), // none, 15min, 1hour, 1day, custom
+  reminderDatetime: timestamp("reminder_datetime"),
+  reminderSent: text("reminder_sent").default("false"),
+  notes: text("notes"),
+  autoFollowup: text("auto_followup").default("false"),
+  followupTitle: text("followup_title"),
+  followupDaysOut: integer("followup_days_out"),
+  completed: text("completed").notNull().default("false"),
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  createdBy: varchar("created_by").references(() => users.id),
+});
+
+export type DealTask = typeof dealTasks.$inferSelect;
+export const insertDealTaskSchema = createInsertSchema(dealTasks).omit({
+  id: true,
+  completedAt: true,
+  reminderSent: true,
+  createdAt: true,
+}).extend({
+  title: z.string().min(1, "Title is required"),
+  dueDate: z.string().optional().nullable(),
+  reminderDatetime: z.string().optional().nullable(),
+});
+export type InsertDealTask = z.infer<typeof insertDealTaskSchema>;
+
 export const insertContactGroupSchema = createInsertSchema(contactGroups).omit({
   id: true,
   userId: true,

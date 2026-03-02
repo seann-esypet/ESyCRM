@@ -294,7 +294,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { id } = req.params;
       const force = req.query.force === "true";
-      console.log(`[deleteUser] id=${id} force=${force} query=`, req.query);
       const currentUserId = req.user.claims.sub;
       if (id === currentUserId) {
         return res.status(400).json({ message: "You cannot delete your own account" });
@@ -892,6 +891,112 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(204).send();
     } catch (error) {
       res.status(500).json({ message: "Failed to delete task" });
+    }
+  });
+
+  // ─── Deal Tasks routes ──────────────────────────────────────────────────────
+  app.get("/api/deal-tasks", isAuthenticated, async (req: any, res) => {
+    try {
+      const { dealId } = req.query;
+      if (!dealId) return res.status(400).json({ message: "dealId required" });
+      const tasks = await storage.getDealTasks(dealId as string);
+      res.json(tasks);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch deal tasks" });
+    }
+  });
+
+  app.post("/api/deal-tasks", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const body = req.body;
+      const dueDate = body.dueDate ? new Date(body.dueDate) : null;
+      const reminderDatetime = body.reminderDatetime ? new Date(body.reminderDatetime) : null;
+      const task = await storage.createDealTask({
+        ...body,
+        dueDate,
+        reminderDatetime,
+        createdBy: userId,
+        completed: "false",
+        reminderSent: "false",
+      });
+      // Log task_created activity
+      if (task.dealId && task.contactId) {
+        await storage.createDealActivity({
+          dealId: task.dealId,
+          contactId: task.contactId,
+          activityType: "task_created",
+          notes: task.title,
+          metadata: JSON.stringify({ taskId: task.id, taskType: task.taskType }),
+        }, userId);
+      }
+      res.status(201).json(task);
+    } catch (error) {
+      console.error("Create deal task error:", error);
+      res.status(500).json({ message: "Failed to create deal task" });
+    }
+  });
+
+  app.patch("/api/deal-tasks/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.claims.sub;
+      const body = { ...req.body };
+      if (body.dueDate) body.dueDate = new Date(body.dueDate);
+      if (body.reminderDatetime) body.reminderDatetime = new Date(body.reminderDatetime);
+      const existing = await storage.getDealTask(id);
+      if (!existing) return res.status(404).json({ message: "Task not found" });
+      // Handle completion
+      if (body.completed === "true" && existing.completed !== "true") {
+        body.completedAt = new Date();
+        // Log task_completed activity
+        if (existing.dealId && existing.contactId) {
+          await storage.createDealActivity({
+            dealId: existing.dealId,
+            contactId: existing.contactId,
+            activityType: "task_completed",
+            notes: existing.title,
+            metadata: JSON.stringify({ taskId: id, completedAt: new Date().toISOString() }),
+          }, userId);
+        }
+        // Auto-create follow-up if configured
+        if (existing.autoFollowup === "true" && existing.followupTitle && existing.followupDaysOut) {
+          const followupDate = existing.dueDate ? new Date(existing.dueDate) : new Date();
+          followupDate.setDate(followupDate.getDate() + existing.followupDaysOut);
+          await storage.createDealTask({
+            dealId: existing.dealId,
+            contactId: existing.contactId,
+            title: existing.followupTitle,
+            taskType: "follow_up",
+            priority: existing.priority,
+            dueDate: followupDate,
+            assignedTo: existing.assignedTo,
+            assignedEmail: existing.assignedEmail,
+            reminderTiming: "none",
+            completed: "false",
+            autoFollowup: "false",
+            createdBy: userId,
+          });
+        }
+      } else if (body.completed === "false") {
+        body.completedAt = null;
+      }
+      const updated = await storage.updateDealTask(id, body);
+      res.json(updated);
+    } catch (error) {
+      console.error("Update deal task error:", error);
+      res.status(500).json({ message: "Failed to update deal task" });
+    }
+  });
+
+  app.delete("/api/deal-tasks/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const deleted = await storage.deleteDealTask(id);
+      if (!deleted) return res.status(404).json({ message: "Task not found" });
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ message: "Failed to delete deal task" });
     }
   });
 

@@ -7,8 +7,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { format, formatDistanceToNow } from "date-fns";
 import {
   ArrowLeft, Phone, Mail, Globe, MapPin, Building2, Users, Monitor,
-  Pencil, CheckSquare, Square, ChevronDown, ChevronLeft, ChevronRight, PhoneCall, FileText,
-  StickyNote, Home, ListTodo, Calendar, DollarSign, TrendingUp, Send,
+  Pencil, ChevronDown, ChevronLeft, ChevronRight, PhoneCall, FileText,
+  StickyNote, Home, Calendar, DollarSign, TrendingUp, Send,
   AlertCircle, User, ExternalLink, Facebook, Instagram, Link2, Clock
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -29,8 +29,9 @@ import {
   SelectTrigger as UiSelectTrigger,
   SelectValue as UiSelectValue,
 } from "@/components/ui/select";
-import type { Deal, Contact, Task } from "@shared/schema";
+import type { Deal, Contact } from "@shared/schema";
 import ContactForm from "@/components/contacts/contact-form";
+import DealTaskPanel from "@/components/tasks/deal-task-panel";
 
 // ─── Stage helpers ────────────────────────────────────────────────────────────
 const STAGES: { value: string; label: string; color: string; bg: string }[] = [
@@ -126,21 +127,12 @@ export default function DealWorkspace() {
   const [callDuration, setCallDuration] = useState("");
   const [visitDate, setVisitDate] = useState("");
 
-  // Add task form state
-  const [addTaskOpen, setAddTaskOpen] = useState(false);
-  const [taskTitle, setTaskTitle] = useState("");
-  const [taskDueDate, setTaskDueDate] = useState("");
-  const [taskPriority, setTaskPriority] = useState<"low" | "medium" | "high">("medium");
 
   function resetLogForm() {
     setLogNotes(""); setCallOutcome(""); setCallDuration(""); setVisitDate("");
   }
-  function resetTaskForm() {
-    setTaskTitle(""); setTaskDueDate(""); setTaskPriority("medium");
-  }
-
-  // Fetch workspace data (deal + contact + tasks + activities)
-  const { data, isLoading, error } = useQuery<{ deal: Deal; contact: Contact | null; tasks: Task[]; activities: any[] }>({
+  // Fetch workspace data (deal + contact + activities)
+  const { data, isLoading, error } = useQuery<{ deal: Deal; contact: Contact | null; activities: any[] }>({
     queryKey: ["/api/deal-workspace", dealId],
     queryFn: () => fetch(`/api/deal-workspace/${dealId}`, { credentials: "include" }).then(r => r.json()),
     enabled: !!dealId,
@@ -166,15 +158,6 @@ export default function DealWorkspace() {
     onError: () => toast({ title: "Failed to update stage", variant: "destructive" }),
   });
 
-  // Complete task mutation
-  const completeTaskMutation = useMutation({
-    mutationFn: ({ taskId, completed }: { taskId: string; completed: boolean }) =>
-      apiRequest("PATCH", `/api/tasks/${taskId}`, { status: completed ? "completed" : "pending" }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/deal-workspace", dealId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
-    },
-  });
 
   // Log activity mutation
   const logActivityMutation = useMutation({
@@ -187,19 +170,6 @@ export default function DealWorkspace() {
       toast({ title: "Activity logged" });
     },
     onError: () => toast({ title: "Failed to log activity", variant: "destructive" }),
-  });
-
-  // Create task mutation
-  const createTaskMutation = useMutation({
-    mutationFn: (payload: object) => apiRequest("POST", "/api/tasks", payload),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/deal-workspace", dealId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
-      setAddTaskOpen(false);
-      resetTaskForm();
-      toast({ title: "Task created" });
-    },
-    onError: () => toast({ title: "Failed to create task", variant: "destructive" }),
   });
 
   function handleSubmitLog() {
@@ -215,18 +185,6 @@ export default function DealWorkspace() {
       contactId: data.contact.id,
       notes: logNotes || undefined,
       metadata: Object.keys(meta).length ? JSON.stringify(meta) : undefined,
-    });
-  }
-
-  function handleSubmitTask() {
-    if (!taskTitle.trim()) return;
-    createTaskMutation.mutate({
-      title: taskTitle.trim(),
-      dealId,
-      contactId: data?.contact?.id ?? null,
-      dueDate: taskDueDate || null,
-      priority: taskPriority,
-      status: "pending",
     });
   }
 
@@ -248,10 +206,8 @@ export default function DealWorkspace() {
     );
   }
 
-  const { deal, contact, tasks } = data;
+  const { deal, contact } = data;
   const stage = stageInfo(deal.stage);
-  const openTasks = tasks.filter(t => t.status === "pending");
-  const completedTasks = tasks.filter(t => t.status === "completed");
 
   const contactInitials = contact
     ? `${contact.firstName?.[0] ?? ""}${contact.lastName?.[0] ?? ""}`.toUpperCase()
@@ -649,9 +605,6 @@ export default function DealWorkspace() {
               <Button variant="outline" size="sm" onClick={() => { setLogType("site_visit"); setActiveTab("activity"); }} className="flex items-center gap-1.5 text-xs" data-testid="button-log-site-visit">
                 <Home className="h-3.5 w-3.5" /> Site Visit
               </Button>
-              <Button variant="outline" size="sm" onClick={() => setAddTaskOpen(true)} className="flex items-center gap-1.5 text-xs" data-testid="button-add-task">
-                <ListTodo className="h-3.5 w-3.5" /> Add Task
-              </Button>
             </div>
           </Tabs>
         </div>
@@ -764,76 +717,8 @@ export default function DealWorkspace() {
 
             <Separator className="my-4" />
 
-            {/* Tasks */}
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold flex items-center gap-1.5">
-                <CheckSquare className="h-4 w-4 text-muted-foreground" />
-                Tasks
-              </h3>
-              {openTasks.length > 0 && (
-                <Badge variant="secondary" className="text-xs" data-testid="text-open-tasks-count">
-                  {openTasks.length} open
-                </Badge>
-              )}
-            </div>
-
-            {tasks.length === 0 ? (
-              <div className="text-center py-6">
-                <ListTodo className="h-8 w-8 text-muted-foreground/40 mx-auto mb-2" />
-                <p className="text-xs text-muted-foreground">No tasks for this deal yet</p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {/* Open tasks first */}
-                {openTasks.map(task => (
-                  <div key={task.id} className="flex items-start gap-2 p-2 rounded-md border bg-background hover:bg-muted/40 transition-colors" data-testid={`card-task-${task.id}`}>
-                    <button
-                      onClick={() => completeTaskMutation.mutate({ taskId: task.id, completed: true })}
-                      className="mt-0.5 shrink-0 text-muted-foreground hover:text-primary"
-                      data-testid={`button-complete-task-${task.id}`}
-                    >
-                      <Square className="h-4 w-4" />
-                    </button>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium leading-snug">{task.title}</p>
-                      <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                        {task.dueDate && (
-                          <span className="text-xs text-muted-foreground">
-                            {format(new Date(task.dueDate), "MMM d")}
-                          </span>
-                        )}
-                        <span className={`text-xs px-1.5 py-0 rounded-full font-medium ${
-                          task.priority === "high"   ? "bg-red-100 text-red-600 dark:bg-red-900 dark:text-red-300" :
-                          task.priority === "medium" ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300" :
-                          "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400"
-                        }`}>
-                          {task.priority}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-
-                {/* Completed tasks (collapsed/dimmed) */}
-                {completedTasks.length > 0 && (
-                  <>
-                    <p className="text-xs text-muted-foreground/60 mt-3 mb-1">Completed ({completedTasks.length})</p>
-                    {completedTasks.map(task => (
-                      <div key={task.id} className="flex items-start gap-2 p-2 rounded-md border border-dashed opacity-50" data-testid={`card-task-completed-${task.id}`}>
-                        <button
-                          onClick={() => completeTaskMutation.mutate({ taskId: task.id, completed: false })}
-                          className="mt-0.5 shrink-0 text-green-600 dark:text-green-400"
-                          data-testid={`button-uncomplete-task-${task.id}`}
-                        >
-                          <CheckSquare className="h-4 w-4" />
-                        </button>
-                        <p className="text-xs line-through text-muted-foreground leading-snug">{task.title}</p>
-                      </div>
-                    ))}
-                  </>
-                )}
-              </div>
-            )}
+            {/* Tasks — powered by DealTaskPanel */}
+            <DealTaskPanel dealId={dealId} contactId={contact?.id ?? null} />
           </div>
         </div>
       </div>
@@ -921,59 +806,6 @@ export default function DealWorkspace() {
                 data-testid="button-submit-log"
               >
                 {logActivityMutation.isPending ? "Saving…" : "Save"}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* ── Add Task dialog ───────────────────────────────────────────────────── */}
-      <Dialog open={addTaskOpen} onOpenChange={(open) => { if (!open) { setAddTaskOpen(false); resetTaskForm(); } }}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Add Task</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 pt-2">
-            <div className="space-y-1.5">
-              <Label>Title <span className="text-muted-foreground text-xs">(required)</span></Label>
-              <Input
-                value={taskTitle}
-                onChange={e => setTaskTitle(e.target.value)}
-                placeholder="e.g. Follow up call"
-                data-testid="input-task-title"
-                onKeyDown={e => { if (e.key === "Enter") handleSubmitTask(); }}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Due Date <span className="text-muted-foreground text-xs">(optional)</span></Label>
-              <Input
-                type="date"
-                value={taskDueDate}
-                onChange={e => setTaskDueDate(e.target.value)}
-                data-testid="input-task-due-date"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Priority</Label>
-              <UiSelect value={taskPriority} onValueChange={(v: any) => setTaskPriority(v)}>
-                <UiSelectTrigger data-testid="select-task-priority">
-                  <UiSelectValue />
-                </UiSelectTrigger>
-                <UiSelectContent>
-                  <UiSelectItem value="low">Low</UiSelectItem>
-                  <UiSelectItem value="medium">Medium</UiSelectItem>
-                  <UiSelectItem value="high">High</UiSelectItem>
-                </UiSelectContent>
-              </UiSelect>
-            </div>
-            <div className="flex justify-end gap-2 pt-1">
-              <Button variant="outline" onClick={() => { setAddTaskOpen(false); resetTaskForm(); }}>Cancel</Button>
-              <Button
-                onClick={handleSubmitTask}
-                disabled={createTaskMutation.isPending || !taskTitle.trim()}
-                data-testid="button-submit-task"
-              >
-                {createTaskMutation.isPending ? "Creating…" : "Create Task"}
               </Button>
             </div>
           </div>

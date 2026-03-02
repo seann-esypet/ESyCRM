@@ -46,7 +46,7 @@ Preferred communication style: Simple, everyday language.
 - **Role-Based Access Control**: Salespeople have isolated data; Admins have full access and oversight.
 - **Contact Management**: Duplicate detection, CSV/Excel import with validation, contact grouping.
 - **Deal Pipeline**: Customizable stages, multiple views (card/table), dedicated deal workspace with contact profile, activity feed, email history, tasks, and deal info.
-- **Task Management**: Prioritized tasks with due dates.
+- **Deal Task System**: Full-featured task management within Deal Workspace. New `deal_tasks` table with task type (Call/Email/Demo/Follow-up/Site Visit/Other), priority, due date/time, assigned rep, reminder scheduling (15min/1hr/1day/custom), auto-follow-up creation on completion, overdue detection, grouped sections (Overdue/Today/Upcoming/Completed), activity feed integration, and 15-minute reminder email scheduler via SendGrid.
 - **Email Sequences**: Automated campaigns with a two-track system (No Software/Uses Competitor), 10-sequence system per salesperson, queue management, rate limiting, smart scheduling, SendGrid integration, and activity tracking.
 - **Inbox System**: Routes incoming replies to salesperson's inbox, message management, admin oversight.
 - **Analytics Dashboard**: Real-time sales performance insights for salespeople and administrators.
