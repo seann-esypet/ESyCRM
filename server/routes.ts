@@ -609,6 +609,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post("/api/contact-groups/:id/assign-contacts", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const { contactIds } = req.body;
+      if (!Array.isArray(contactIds) || contactIds.length === 0) {
+        return res.status(400).json({ message: "contactIds must be a non-empty array" });
+      }
+      const group = await storage.getContactGroup(req.params.id, userId);
+      if (!group) return res.status(404).json({ message: "Contact group not found" });
+      const results = await Promise.allSettled(
+        contactIds.map((id: string) => storage.updateContact(id, { groupId: req.params.id }, userId))
+      );
+      const successful = results.filter(r => r.status === "fulfilled").length;
+      const failed = results.filter(r => r.status === "rejected").length;
+      res.json({ successful, failed, groupId: req.params.id });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to assign contacts to group" });
+    }
+  });
+
   app.delete("/api/contact-groups/:id", isAuthenticated, async (req: any, res) => {
     try {
       const userId = getUserIdForQuery(req.user);
