@@ -1684,6 +1684,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/lead-discovery/all-results", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const results = await storage.getAllLeadDiscoveryResults(userId);
+      res.json(results);
+    } catch (error) {
+      console.error("Error fetching all results:", error);
+      res.status(500).json({ message: "Failed to fetch all results" });
+    }
+  });
+
   app.post("/api/lead-discovery/import", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;

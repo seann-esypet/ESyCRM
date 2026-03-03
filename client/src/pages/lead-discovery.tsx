@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
@@ -17,7 +18,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
-import { Search, Plus, Download, Upload, Trash2, Eye, AlertCircle, CheckCircle, Clock, XCircle, RefreshCw, Settings } from "lucide-react";
+import { Search, Plus, Download, Upload, Trash2, Eye, AlertCircle, CheckCircle, Clock, XCircle, RefreshCw, Settings, Pencil, List } from "lucide-react";
 import type { LeadDiscoveryJob, LeadDiscoveryResult } from "@shared/schema";
 
 interface LeadDiscoveryConfig {
@@ -63,6 +64,7 @@ const US_STATES = [
 export default function LeadDiscovery() {
   const { toast } = useToast();
   const { user } = useAuth();
+  const [, setLocation] = useLocation();
   const isAdmin = user?.role === "admin";
   const [showNewJobDialog, setShowNewJobDialog] = useState(false);
   const [showSettingsDialog, setShowSettingsDialog] = useState(false);
@@ -100,6 +102,11 @@ export default function LeadDiscovery() {
   const { data: results = [], isLoading: resultsLoading } = useQuery<LeadDiscoveryResult[]>({
     queryKey: ["/api/lead-discovery/jobs", selectedJob?.id, "results"],
     enabled: !!selectedJob,
+  });
+
+  const { data: allResults = [], isLoading: allResultsLoading } = useQuery<LeadDiscoveryResult[]>({
+    queryKey: ["/api/lead-discovery/all-results"],
+    enabled: activeTab === "all-results",
   });
 
   const createJobMutation = useMutation({
@@ -385,6 +392,10 @@ export default function LeadDiscovery() {
               <TabsTrigger value="results" data-testid="tab-results" disabled={!selectedJob}>
                 Results {selectedJob && `(${results.length})`}
               </TabsTrigger>
+              <TabsTrigger value="all-results" data-testid="tab-all-results">
+                <List className="h-3.5 w-3.5 mr-1.5" />
+                All Results
+              </TabsTrigger>
             </TabsList>
 
             <Dialog open={showNewJobDialog} onOpenChange={setShowNewJobDialog}>
@@ -470,10 +481,21 @@ export default function LeadDiscovery() {
                       <div className="flex justify-between items-start">
                         <div>
                           <CardTitle className="text-lg">
-                            {job.state} - {job.totalZipCodes} ZIP codes
+                            {job.state} — {job.totalZipCodes} ZIP {job.totalZipCodes === 1 ? "code" : "codes"}
                           </CardTitle>
-                          <CardDescription>
-                            Created {new Date(job.createdAt!).toLocaleString()} | Search ID: {job.id.substring(0, 8)}
+                          <CardDescription className="space-y-0.5">
+                            <span className="block">
+                              ZIPs: <span className="font-medium text-foreground/80">
+                                {(() => {
+                                  const zips = (job.zipCodes || "").split(",").map((z: string) => z.trim()).filter(Boolean);
+                                  if (zips.length <= 5) return zips.join(", ");
+                                  return `${zips.slice(0, 5).join(", ")} +${zips.length - 5} more`;
+                                })()}
+                              </span>
+                            </span>
+                            <span className="block">
+                              Created {new Date(job.createdAt!).toLocaleString()} · ID: {job.id.substring(0, 8)}
+                            </span>
                           </CardDescription>
                         </div>
                         {getStatusBadge(job.status)}
@@ -662,15 +684,28 @@ export default function LeadDiscovery() {
                                   size="sm"
                                   onClick={() => setViewDetailsResult(result)}
                                   data-testid={`btn-view-details-${result.id}`}
+                                  title="View details"
                                 >
                                   <Eye className="h-4 w-4" />
                                 </Button>
+                                {result.isImported === "true" && result.importedContactId && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => setLocation(`/contacts?edit=${result.importedContactId}`)}
+                                    data-testid={`btn-edit-contact-${result.id}`}
+                                    title="Edit contact profile"
+                                  >
+                                    <Pencil className="h-4 w-4 text-blue-500" />
+                                  </Button>
+                                )}
                                 <Button
                                   variant="ghost"
                                   size="sm"
                                   onClick={() => deleteResultMutation.mutate(result.id)}
                                   disabled={deleteResultMutation.isPending}
                                   data-testid={`btn-delete-result-${result.id}`}
+                                  title="Delete result"
                                 >
                                   <Trash2 className="h-4 w-4 text-red-500" />
                                 </Button>
@@ -683,6 +718,106 @@ export default function LeadDiscovery() {
                   </div>
                 )}
               </>
+            )}
+          </TabsContent>
+
+          {/* ── All Results Tab ─────────────────────────────────────────── */}
+          <TabsContent value="all-results" className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-medium">All Results</h3>
+                <p className="text-sm text-muted-foreground">
+                  {allResultsLoading ? "Loading…" : `${allResults.length} total results across all searches`}
+                </p>
+              </div>
+            </div>
+            {allResultsLoading ? (
+              <div className="text-center py-8 text-muted-foreground">Loading all results…</div>
+            ) : allResults.length === 0 ? (
+              <Card>
+                <CardContent className="text-center py-8 text-muted-foreground">
+                  No results found. Run a search job to discover businesses.
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="border rounded-lg overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Business</TableHead>
+                      <TableHead>Search Term</TableHead>
+                      <TableHead>Contact</TableHead>
+                      <TableHead>Website</TableHead>
+                      <TableHead>Uses Software</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {allResults.map(result => (
+                      <TableRow key={result.id} className={result.isImported === "true" ? "opacity-60" : ""}>
+                        <TableCell>
+                          <div className="font-medium">{result.company}</div>
+                          <div className="text-sm text-muted-foreground">{result.zipCode}</div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="text-xs text-muted-foreground max-w-[160px] leading-relaxed">
+                            {result.searchQuery || "—"}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="text-sm">{result.phone || "-"}</div>
+                          <div className="text-sm text-muted-foreground">{result.email || "-"}</div>
+                        </TableCell>
+                        <TableCell>
+                          {result.websiteUrl ? (
+                            <a
+                              href={result.websiteUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-500 hover:underline text-sm truncate max-w-[140px] block"
+                            >
+                              {(() => { try { return new URL(result.websiteUrl).hostname; } catch { return result.websiteUrl; } })()}
+                            </a>
+                          ) : (
+                            <span className="text-muted-foreground">-</span>
+                          )}
+                        </TableCell>
+                        <TableCell>{getSoftwareBadge(result.usesSoftware)}</TableCell>
+                        <TableCell>
+                          {result.isImported === "true" ? (
+                            <Badge variant="outline" className="text-green-600">Imported</Badge>
+                          ) : (
+                            <Badge variant="secondary">Ready</Badge>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setViewDetailsResult(result)}
+                              title="View details"
+                            >
+                              <Eye className="h-4 w-4" />
+                            </Button>
+                            {result.isImported === "true" && result.importedContactId && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setLocation(`/contacts?edit=${result.importedContactId}`)}
+                                title="Edit contact profile"
+                              >
+                                <Pencil className="h-4 w-4 text-blue-500" />
+                              </Button>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
             )}
           </TabsContent>
         </Tabs>

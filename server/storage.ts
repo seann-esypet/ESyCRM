@@ -147,6 +147,7 @@ export interface IStorage {
   updateLeadDiscoveryJob(id: string, job: Partial<LeadDiscoveryJob>, userId: string | null): Promise<LeadDiscoveryJob | undefined>;
   deleteLeadDiscoveryJob(id: string, userId: string | null): Promise<boolean>;
   getLeadDiscoveryResults(jobId: string, userId: string | null): Promise<LeadDiscoveryResult[]>;
+  getAllLeadDiscoveryResults(userId: string | null): Promise<LeadDiscoveryResult[]>;
   getLeadDiscoveryResultById(id: string): Promise<LeadDiscoveryResult | undefined>;
   deleteLeadDiscoveryResult(id: string, userId: string | null): Promise<boolean>;
   createLeadDiscoveryResult(result: InsertLeadDiscoveryResult, userId: string): Promise<LeadDiscoveryResult>;
@@ -1305,6 +1306,18 @@ export class DatabaseStorage implements IStorage {
       .from(leadDiscoveryResults)
       .where(whereClause)
       .orderBy(desc(leadDiscoveryResults.createdAt));
+  }
+
+  async getAllLeadDiscoveryResults(userId: string | null): Promise<LeadDiscoveryResult[]> {
+    const whereClause = userId === null
+      ? undefined
+      : eq(leadDiscoveryResults.userId, userId);
+
+    const query = db.select().from(leadDiscoveryResults);
+    if (whereClause) {
+      return await query.where(whereClause).orderBy(desc(leadDiscoveryResults.createdAt));
+    }
+    return await query.orderBy(desc(leadDiscoveryResults.createdAt));
   }
 
   async getLeadDiscoveryResultById(id: string): Promise<LeadDiscoveryResult | undefined> {

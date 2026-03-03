@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import Header from "@/components/layout/header";
 import ContactList from "@/components/contacts/contact-list";
@@ -31,6 +31,9 @@ export default function Contacts() {
   const initialFilterUserId = isAdmin ? new URLSearchParams(window.location.search).get("filterUserId") || "" : "";
   const [filterUserId, setFilterUserId] = useState(initialFilterUserId);
 
+  // Auto-open edit dialog when navigated here with ?edit=contactId
+  const editContactId = new URLSearchParams(window.location.search).get("edit") || "";
+
   const handleFilterChange = (value: string) => {
     setFilterUserId(value === "all" ? "" : value);
   };
@@ -54,6 +57,20 @@ export default function Contacts() {
       return response.json();
     },
   });
+
+  // Open edit dialog automatically when ?edit= param is present and contacts have loaded
+  useEffect(() => {
+    if (!editContactId || !contacts) return;
+    const contact = contacts.find(c => c.id === editContactId);
+    if (contact) {
+      setSelectedContact(contact);
+      setIsFormOpen(true);
+      // Clean up the URL param without causing a navigation
+      const url = new URL(window.location.href);
+      url.searchParams.delete("edit");
+      window.history.replaceState({}, "", url.toString());
+    }
+  }, [editContactId, contacts]);
 
   const { data: deals } = useQuery<Deal[]>({
     queryKey: ["/api/deals", filterUserId],
