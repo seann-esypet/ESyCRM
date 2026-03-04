@@ -159,6 +159,7 @@ export const emailSequenceLogs = pgTable("email_sequence_logs", {
   scheduledSendAt: timestamp("scheduled_send_at"), // Per-log override: don't send until this time (Eastern Time interpreted)
   customSubject: text("custom_subject"), // Per-contact email subject override (used for "custom" track)
   customBody: text("custom_body"),       // Per-contact email body override (used for "custom" track)
+  errorMessage: text("error_message"),   // Stores the SendGrid error if status = failed
   createdAt: timestamp("created_at").defaultNow(),
 });
 

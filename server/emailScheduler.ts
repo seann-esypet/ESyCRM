@@ -263,13 +263,15 @@ export async function processEmailSequences(): Promise<{
           stats.sent++;
           console.log(`Sent Sequence ${sequence.sequenceNumber} to ${contact.email}`);
         } else {
+          const errMsg = result.error || "Unknown SendGrid error";
+          console.error(`[EmailScheduler] FAILED to send to ${contact.email}: ${errMsg}`);
           await storage.updateEmailSequenceLog(
             log.id,
-            { status: "failed" },
+            { status: "failed", errorMessage: errMsg },
             null
           );
           stats.failed++;
-          stats.errors.push(`Failed to send to ${contact.email}: ${result.error}`);
+          stats.errors.push(`Failed to send to ${contact.email}: ${errMsg}`);
         }
 
         if (stats.processed < Math.min(pendingLogs.length, MAX_EMAILS_PER_RUN)) {
@@ -278,8 +280,9 @@ export async function processEmailSequences(): Promise<{
         }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        console.error(`[EmailScheduler] Exception processing log ${log.id}: ${errorMessage}`);
         stats.errors.push(`Error processing log ${log.id}: ${errorMessage}`);
-        await storage.updateEmailSequenceLog(log.id, { status: "failed" }, null);
+        await storage.updateEmailSequenceLog(log.id, { status: "failed", errorMessage }, null);
         stats.failed++;
       }
     }
