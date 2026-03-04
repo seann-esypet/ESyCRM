@@ -6,6 +6,9 @@ const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
 
 if (SENDGRID_API_KEY) {
   sgMail.setApiKey(SENDGRID_API_KEY);
+  console.log(`[SendGrid] API key loaded. Length: ${SENDGRID_API_KEY.length}, starts with 'SG.': ${SENDGRID_API_KEY.startsWith('SG.')}`);
+} else {
+  console.error("[SendGrid] WARNING: No API key found in environment.");
 }
 
 /**
@@ -85,7 +88,8 @@ export async function sendEmail({
     console.log(`Email sent successfully to ${to}`);
     return { success: true };
   } catch (error: any) {
-    console.error("SendGrid error:", error);
+    const fullBody = error.response?.body;
+    console.error(`[SendGrid] Send failed — HTTP ${error.code}. Full response body:`, JSON.stringify(fullBody, null, 2));
     const errorMessage = error.response?.body?.errors?.[0]?.message || error.message || "Unknown error";
     return { success: false, error: errorMessage };
   }
