@@ -8,7 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Mail, Edit, CheckCircle, XCircle, Users, Plus, Clock, Trash2 } from "lucide-react";
-import type { EmailSequence, EmailSequenceLog, Contact, ContactGroup } from "@shared/schema";
+import type { EmailSequence, EmailSequenceLog, Contact, ContactGroup, User } from "@shared/schema";
 import EmailSequenceForm from "@/components/email-sequences/email-sequence-form";
 import AddContactsToSequenceDialog from "@/components/email-sequences/add-contacts-to-sequence-dialog";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -73,6 +73,11 @@ export default function EmailSequences() {
 
   const { data: groups } = useQuery<ContactGroup[]>({
     queryKey: ["/api/contact-groups"],
+  });
+
+  const { data: allUsers } = useQuery<User[]>({
+    queryKey: ["/api/admin/users"],
+    retry: false,
   });
 
   const cancelLogMutation = useMutation({
@@ -376,8 +381,8 @@ export default function EmailSequences() {
 
             const getContactName = (contactId: string) => {
               const c = getContact(contactId);
-              if (!c) return contactId;
-              return `${c.firstName} ${c.lastName}`.trim() || c.email || contactId;
+              if (!c) return "Unknown Contact";
+              return `${c.firstName} ${c.lastName}`.trim() || c.email || "Unknown Contact";
             };
 
             const getContactEmail = (contactId: string) => {
@@ -388,6 +393,25 @@ export default function EmailSequences() {
               const c = getContact(contactId);
               if (!c?.groupId) return null;
               return groups?.find(g => g.id === c.groupId)?.name ?? null;
+            };
+
+            const allSequences = [
+              ...(noSoftwareSequences ?? []),
+              ...(competitorSequences ?? []),
+              ...(customSequences ?? []),
+            ];
+
+            const getSubject = (log: EmailSequenceLog) => {
+              if (log.customSubject) return log.customSubject;
+              return allSequences.find(s => s.id === log.sequenceId)?.subject ?? "";
+            };
+
+            const getSalesperson = (userId: string) => {
+              const u = allUsers?.find(u => u.id === userId);
+              if (!u) return null;
+              return u.firstName && u.lastName
+                ? `${u.firstName} ${u.lastName}`
+                : u.email ?? null;
             };
 
             if (queueLogs.length === 0) {
@@ -403,10 +427,12 @@ export default function EmailSequences() {
                 <div className="divide-y">
                   {queueLogs.map(log => {
                     const groupName = getGroupName(log.contactId);
+                    const subject = getSubject(log);
+                    const salesperson = getSalesperson(log.userId);
                     return (
-                    <div key={log.id} className="flex items-center gap-3 px-1 py-3" data-testid={`queue-item-${log.id}`}>
+                    <div key={log.id} className="flex items-start gap-3 px-1 py-3" data-testid={`queue-item-${log.id}`}>
                       <div className="flex-1 min-w-0">
-                        <div className="font-medium text-sm flex items-center gap-2 flex-wrap">
+                        <div className="font-semibold text-sm flex items-center gap-2 flex-wrap">
                           {getContactName(log.contactId)}
                           {groupName && (
                             <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-normal">
@@ -417,6 +443,16 @@ export default function EmailSequences() {
                         <div className="text-xs text-muted-foreground">
                           {getContactEmail(log.contactId)}
                         </div>
+                        {subject && (
+                          <div className="text-xs text-foreground mt-1 font-medium truncate" title={subject}>
+                            Subject: {subject}
+                          </div>
+                        )}
+                        {salesperson && (
+                          <div className="text-xs text-muted-foreground mt-0.5">
+                            Salesperson: {salesperson}
+                          </div>
+                        )}
                         <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
                           <Clock className="h-3 w-3" />
                           {log.scheduledSendAt
