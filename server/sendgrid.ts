@@ -7,6 +7,24 @@ const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
 if (SENDGRID_API_KEY) {
   sgMail.setApiKey(SENDGRID_API_KEY);
   console.log(`[SendGrid] API key loaded. Length: ${SENDGRID_API_KEY.length}, starts with 'SG.': ${SENDGRID_API_KEY.startsWith('SG.')}`);
+  // Diagnostic: check account profile and credits on startup
+  (async () => {
+    try {
+      const profileRes = await fetch('https://api.sendgrid.com/v3/user/profile', {
+        headers: { 'Authorization': `Bearer ${SENDGRID_API_KEY}` }
+      });
+      const profileBody = await profileRes.json() as any;
+      console.log(`[SendGrid] Profile check HTTP ${profileRes.status}:`, JSON.stringify(profileBody));
+
+      const creditsRes = await fetch('https://api.sendgrid.com/v3/user/credits', {
+        headers: { 'Authorization': `Bearer ${SENDGRID_API_KEY}` }
+      });
+      const creditsBody = await creditsRes.json() as any;
+      console.log(`[SendGrid] Credits check HTTP ${creditsRes.status}:`, JSON.stringify(creditsBody));
+    } catch (e: any) {
+      console.log('[SendGrid] Diagnostic fetch error:', e.message);
+    }
+  })();
 } else {
   console.error("[SendGrid] WARNING: No API key found in environment.");
 }
