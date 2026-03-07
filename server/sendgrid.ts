@@ -6,7 +6,8 @@ const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
 
 if (SENDGRID_API_KEY) {
   sgMail.setApiKey(SENDGRID_API_KEY);
-  console.log(`[SendGrid] API key loaded. Length: ${SENDGRID_API_KEY.length}, starts with 'SG.': ${SENDGRID_API_KEY.startsWith('SG.')}`);
+  const preview = `${SENDGRID_API_KEY.slice(0, 10)}...${SENDGRID_API_KEY.slice(-4)}`;
+  console.log(`[SendGrid] API key loaded. Length: ${SENDGRID_API_KEY.length}, starts with 'SG.': ${SENDGRID_API_KEY.startsWith('SG.')}, preview: ${preview}`);
   // Diagnostic: check account profile and credits on startup
   (async () => {
     try {
