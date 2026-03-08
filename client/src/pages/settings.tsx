@@ -178,7 +178,7 @@ export default function Settings() {
                         />
                       </FormControl>
                       <FormDescription>
-                        This address appears as the sender on all outgoing email sequences (e.g., seann@esypet.com). Must be authenticated in SendGrid.
+                        This address appears as the sender on all outgoing email sequences (e.g., seann@esypet.app). Must be a verified sender in Brevo.
                       </FormDescription>
                       <FormMessage />
                     </FormItem>
@@ -198,7 +198,7 @@ export default function Settings() {
                         />
                       </FormControl>
                       <FormDescription>
-                        Where lead replies are routed for the CRM Inbox (e.g., seann@inbound.esypet.com). Must be set up with SendGrid Inbound Parse. If left blank, replies go to your From address.
+                        Where lead replies are routed for the CRM Inbox (e.g., seann@inbound.esypet.app). Must be set up with Brevo Inbound Parsing. If left blank, replies go to your From address.
                       </FormDescription>
                       <FormMessage />
                     </FormItem>

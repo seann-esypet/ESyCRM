@@ -1,33 +1,33 @@
-import sgMail from "@sendgrid/mail";
 import type { Contact, User, EmailSequence } from "@shared/schema";
 
-// Initialize SendGrid with API key from environment
-const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
+// Brevo (formerly Sendinblue) email service
+const BREVO_API_KEY = process.env.BREVO_API_KEY;
+const BREVO_API_URL = "https://api.brevo.com/v3/smtp/email";
 
-if (SENDGRID_API_KEY) {
-  sgMail.setApiKey(SENDGRID_API_KEY);
-  const preview = `${SENDGRID_API_KEY.slice(0, 10)}...${SENDGRID_API_KEY.slice(-4)}`;
-  console.log(`[SendGrid] API key loaded. Length: ${SENDGRID_API_KEY.length}, starts with 'SG.': ${SENDGRID_API_KEY.startsWith('SG.')}, preview: ${preview}`);
-  // Diagnostic: check account profile and credits on startup
+// Verified sender on Brevo
+const DEFAULT_FROM_EMAIL = "info@esypet.app";
+const DEFAULT_FROM_NAME = "EsyPet Solutions";
+
+if (BREVO_API_KEY) {
+  console.log(`[Brevo] API key loaded. Length: ${BREVO_API_KEY.length}`);
+  // Diagnostic: verify key works on startup
   (async () => {
     try {
-      const profileRes = await fetch('https://api.sendgrid.com/v3/user/profile', {
-        headers: { 'Authorization': `Bearer ${SENDGRID_API_KEY}` }
+      const res = await fetch("https://api.brevo.com/v3/account", {
+        headers: { "api-key": BREVO_API_KEY }
       });
-      const profileBody = await profileRes.json() as any;
-      console.log(`[SendGrid] Profile check HTTP ${profileRes.status}:`, JSON.stringify(profileBody));
-
-      const creditsRes = await fetch('https://api.sendgrid.com/v3/user/credits', {
-        headers: { 'Authorization': `Bearer ${SENDGRID_API_KEY}` }
-      });
-      const creditsBody = await creditsRes.json() as any;
-      console.log(`[SendGrid] Credits check HTTP ${creditsRes.status}:`, JSON.stringify(creditsBody));
+      const body = await res.json() as any;
+      if (res.ok) {
+        console.log(`[Brevo] Account check OK — plan: ${body.plan?.[0]?.type || "unknown"}, email: ${body.email}`);
+      } else {
+        console.error(`[Brevo] Account check HTTP ${res.status}:`, JSON.stringify(body));
+      }
     } catch (e: any) {
-      console.log('[SendGrid] Diagnostic fetch error:', e.message);
+      console.error("[Brevo] Diagnostic fetch error:", e.message);
     }
   })();
 } else {
-  console.error("[SendGrid] WARNING: No API key found in environment.");
+  console.error("[Brevo] WARNING: No BREVO_API_KEY found in environment.");
 }
 
 /**
@@ -60,14 +60,14 @@ export function replaceTemplateVariables(
 }
 
 /**
- * Send email via SendGrid
+ * Send email via Brevo
  */
 export async function sendEmail({
   to,
   subject,
   body,
-  fromEmail = "noreply@esypet.com",
-  fromName = "EsyPet CRM",
+  fromEmail = DEFAULT_FROM_EMAIL,
+  fromName = DEFAULT_FROM_NAME,
   replyTo
 }: {
   to: string;
@@ -77,8 +77,8 @@ export async function sendEmail({
   fromName?: string;
   replyTo?: string;
 }): Promise<{ success: boolean; error?: string }> {
-  if (!SENDGRID_API_KEY) {
-    console.error("SendGrid API key not configured");
+  if (!BREVO_API_KEY) {
+    console.error("[Brevo] API key not configured");
     return { success: false, error: "Email service not configured" };
   }
 
@@ -86,31 +86,41 @@ export async function sendEmail({
     return { success: false, error: "Recipient email is required" };
   }
 
+  const payload: any = {
+    sender: { name: fromName, email: DEFAULT_FROM_EMAIL },
+    to: [{ email: to }],
+    subject,
+    htmlContent: body.replace(/\n/g, "<br>"),
+  };
+
+  if (replyTo) {
+    payload.replyTo = { email: replyTo };
+  }
+
   try {
-    const msg: any = {
-      to,
-      from: {
-        email: fromEmail,
-        name: fromName,
+    const res = await fetch(BREVO_API_URL, {
+      method: "POST",
+      headers: {
+        "api-key": BREVO_API_KEY,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
       },
-      subject,
-      text: body,
-      html: body.replace(/\n/g, '<br>'),
-    };
+      body: JSON.stringify(payload),
+    });
 
-    // Add reply-to if provided
-    if (replyTo) {
-      msg.replyTo = replyTo;
+    if (res.status === 201 || res.status === 200) {
+      const responseBody = await res.json() as any;
+      console.log(`[Brevo] Email sent successfully to ${to}. MessageId: ${responseBody.messageId}`);
+      return { success: true };
+    } else {
+      const errBody = await res.json().catch(() => ({})) as any;
+      console.error(`[Brevo] Send failed — HTTP ${res.status}. Body:`, JSON.stringify(errBody));
+      const errorMessage = errBody?.message || errBody?.errors?.[0]?.message || `HTTP ${res.status}`;
+      return { success: false, error: errorMessage };
     }
-
-    await sgMail.send(msg);
-    console.log(`Email sent successfully to ${to}`);
-    return { success: true };
   } catch (error: any) {
-    const fullBody = error.response?.body;
-    console.error(`[SendGrid] Send failed — HTTP ${error.code}. Full response body:`, JSON.stringify(fullBody, null, 2));
-    const errorMessage = error.response?.body?.errors?.[0]?.message || error.message || "Unknown error";
-    return { success: false, error: errorMessage };
+    console.error("[Brevo] Network error:", error.message);
+    return { success: false, error: error.message || "Network error" };
   }
 }
 
@@ -140,18 +150,13 @@ export async function sendSequenceEmail({
   const subject = replaceTemplateVariables(rawSubject, contact, salesperson);
   const body = replaceTemplateVariables(rawBody, contact, salesperson);
 
-  const salespersonName = `${salesperson.firstName || ''} ${salesperson.lastName || ''}`.trim() || salesperson.email || 'Sales Team';
-  
-  // Use workEmail as the FROM address; use replyToEmail (inbound parse address) for Reply-To if set
-  const fromEmail = salesperson.workEmail || salesperson.email || "noreply@esypet.com";
+  // Reply-To: salesperson's inbound parse address (so replies route to their inbox)
   const replyToEmail = salesperson.replyToEmail || salesperson.workEmail || salesperson.email || undefined;
 
   return await sendEmail({
     to: contact.email,
     subject,
     body,
-    fromEmail,
-    fromName: salespersonName,
     replyTo: replyToEmail,
   });
 }
@@ -177,11 +182,9 @@ export async function sendReplyNotificationEmail({
       to: notifyEmail,
       subject,
       body,
-      fromEmail: "noreply@esypet.com",
-      fromName: "EsyPet CRM",
     });
-    console.log(`Reply notification sent to ${notifyEmail} for contact ${contactName}`);
+    console.log(`[Brevo] Reply notification sent to ${notifyEmail} for contact ${contactName}`);
   } catch (error) {
-    console.error("Failed to send reply notification email:", error);
+    console.error("[Brevo] Failed to send reply notification email:", error);
   }
 }

@@ -75,7 +75,6 @@ async function runSequenceTest(run: TestRun): Promise<void> {
         to: run.toEmail,
         subject,
         body,
-        fromEmail: salesperson.workEmail || salesperson.email || "noreply@esypet.com",
         fromName: `[TEST] ${salesperson.firstName || "EsyPet"}`,
       });
 
@@ -120,8 +119,6 @@ async function runSequenceTest(run: TestRun): Promise<void> {
       to: run.adminEmail,
       subject: `EsyPet Sequence Test Complete – ${sent}/5 sent`,
       body: summaryBody,
-      fromEmail: "noreply@esypet.com",
-      fromName: "EsyPet CRM",
     });
   } catch (err) {
     run.status = "failed";
@@ -1534,18 +1531,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // SendGrid inbound parse webhook - PUBLIC endpoint with optional verification
-  // Note: For production, configure SENDGRID_WEBHOOK_VERIFY_KEY in environment
+  // Brevo inbound parse webhook - PUBLIC endpoint for receiving email replies
   app.post("/api/webhooks/sendgrid/inbound", async (req: any, res) => {
     try {
-      // Optional: Verify SendGrid webhook signature for security
-      // This prevents unauthorized parties from spoofing inbound emails
-      const verifyKey = process.env.SENDGRID_WEBHOOK_VERIFY_KEY;
-      if (verifyKey && req.headers['x-twilio-email-event-webhook-signature']) {
-        // In production, implement full signature verification here
-        // For now, we'll just log a warning if the key is set but not verified
-        console.warn("SendGrid webhook verification key is set but signature verification is not fully implemented");
-      }
       
       // SendGrid sends webhook data as form-urlencoded or multipart
       const from = req.body.from || "";
@@ -1835,7 +1823,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // ─── Admin SendGrid Connection Ping ───────────────────────────────────────
+  // ─── Admin Brevo Connection Ping ───────────────────────────────────────────
   app.post("/api/admin/sendgrid-ping", isAdmin, async (req: any, res) => {
     try {
       const adminUserId = req.user.claims.sub;
@@ -1846,10 +1834,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { sendEmail } = await import("./sendgrid");
       const result = await sendEmail({
         to: toEmail,
-        subject: "EsyPet CRM — SendGrid Connection Test",
-        body: "Your SendGrid API key is working correctly.\n\nYou can now use email sequences in EsyPet CRM.\n\nhttps://EsyPet-CRM.replit.app",
-        fromEmail: toEmail,
-        fromName: "EsyPet CRM",
+        subject: "EsyPet CRM — Brevo Connection Test",
+        body: "Your Brevo API key is working correctly.\n\nYou can now use email sequences in EsyPet CRM.\n\nhttps://EsyPet-CRM.replit.app",
       });
 
       if (result.success) {

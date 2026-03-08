@@ -263,7 +263,7 @@ export async function processEmailSequences(): Promise<{
           stats.sent++;
           console.log(`Sent Sequence ${sequence.sequenceNumber} to ${contact.email}`);
         } else {
-          const errMsg = result.error || "Unknown SendGrid error";
+          const errMsg = result.error || "Unknown Brevo error";
           console.error(`[EmailScheduler] FAILED to send to ${contact.email}: ${errMsg}`);
           await storage.updateEmailSequenceLog(
             log.id,

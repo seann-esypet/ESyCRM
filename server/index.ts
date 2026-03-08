@@ -70,12 +70,12 @@ app.use((req, res, next) => {
   }, () => {
     log(`serving on port ${port}`);
     
-    // Start email sequence scheduler if SendGrid is configured
-    if (process.env.SENDGRID_NEWAPI_KEY_ || process.env.SENDGRID_NEW_API_KEY || process.env.SENDGRID_API_KEY) {
+    // Start email sequence scheduler if Brevo is configured
+    if (process.env.BREVO_API_KEY) {
       log("Starting email sequence scheduler...");
       startEmailSequenceScheduler();
     } else {
-      log("Email sequence scheduler disabled (SENDGRID_API_KEY not set)");
+      log("Email sequence scheduler disabled (BREVO_API_KEY not set)");
     }
 
     // Start task reminder scheduler (always runs, checks every 15 min)

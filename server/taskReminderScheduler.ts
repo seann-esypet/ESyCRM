@@ -76,8 +76,6 @@ async function processTaskReminders() {
       try {
         await sendEmail({
           to: assignedEmail,
-          fromEmail: "noreply@esypet.com",
-          fromName: "EsyPet CRM",
           subject,
           body: html,
         });

@@ -141,7 +141,7 @@ export default function AdminSequenceTest() {
       toast({ title: "Connection successful!", description: data.message });
     },
     onError: async (error: any) => {
-      let message = "Could not connect to SendGrid";
+      let message = "Could not connect to Brevo";
       try { const body = await error.json?.(); message = body?.message || message; } catch {}
       toast({ title: "Connection failed", description: message, variant: "destructive" });
     },
