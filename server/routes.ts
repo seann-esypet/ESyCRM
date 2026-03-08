@@ -1534,51 +1534,78 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Brevo inbound parse webhook - PUBLIC endpoint for receiving email replies
   app.post("/api/webhooks/sendgrid/inbound", async (req: any, res) => {
     try {
-      
-      // SendGrid sends webhook data as form-urlencoded or multipart
-      const from = req.body.from || "";
-      const to = req.body.to || "";
-      const subject = req.body.subject || "";
-      const text = req.body.text || "";
-      const html = req.body.html || "";
-      
-      // Extract email address from "Name <email@domain.com>" format
-      const fromEmail = from.match(/<(.+?)>/) ? from.match(/<(.+?)>/)[1] : from;
-      
-      // Try to find the contact by email
-      const contacts = await storage.getContacts(null); // Get all contacts (admin view)
-      const contact = contacts.find(c => c.email?.toLowerCase() === fromEmail.toLowerCase());
-      
-      if (!contact) {
-        console.log(`Inbox: Received email from unknown sender: ${fromEmail}`);
-        return res.status(200).send("OK"); // Acknowledge receipt but don't create message
+      console.log("[Inbound] Received webhook. Content-Type:", req.headers["content-type"]);
+      console.log("[Inbound] Body type:", Array.isArray(req.body) ? "array" : typeof req.body);
+
+      // Brevo sends inbound emails as a JSON array of message objects
+      // Fall back to legacy form-urlencoded format (SendGrid-style) if not Brevo format
+      let from = "";
+      let subject = "";
+      let text = "";
+      let html = "";
+
+      const body = req.body;
+
+      if (Array.isArray(body) && body.length > 0) {
+        // Brevo inbound JSON format
+        const msg = body[0];
+        const fromAddr = msg.From?.Address || "";
+        const fromName = msg.From?.Name || "";
+        from = fromName ? `${fromName} <${fromAddr}>` : fromAddr;
+        subject = msg.Subject || "";
+        text = msg.RawTextBody || "";
+        html = msg.RawHtmlBody || "";
+        console.log(`[Inbound] Brevo format — from: ${from}, subject: ${subject}`);
+      } else if (typeof body === "object" && body.from) {
+        // Legacy form-urlencoded format
+        from = body.from || "";
+        subject = body.subject || "";
+        text = body.text || "";
+        html = body.html || "";
+        console.log(`[Inbound] Legacy format — from: ${from}, subject: ${subject}`);
+      } else {
+        console.log("[Inbound] Unrecognized body format, ignoring.");
+        return res.status(200).send("OK");
       }
-      
+
+      // Extract plain email address from "Name <email@domain.com>" format
+      const fromEmailMatch = from.match(/<(.+?)>/);
+      const fromEmail = fromEmailMatch ? fromEmailMatch[1] : from.trim();
+
+      // Try to find the contact by email
+      const contacts = await storage.getContacts(null);
+      const contact = contacts.find(c => c.email?.toLowerCase() === fromEmail.toLowerCase());
+
+      if (!contact) {
+        console.log(`[Inbound] Email from unknown sender: ${fromEmail} — ignoring`);
+        return res.status(200).send("OK");
+      }
+
       // Create inbox message for the contact's owner (salesperson)
       await storage.createInboxMessage({
         contactId: contact.id,
         emailSequenceLogId: null,
-        from: from,
-        subject: subject,
+        from,
+        subject,
         bodyText: text,
         bodyHtml: html,
         isRead: "false"
       }, contact.userId);
-      
-      console.log(`Inbox: Created message from ${fromEmail} for user ${contact.userId}`);
 
-      // Send notification email to the salesperson
+      console.log(`[Inbound] Created inbox message from ${fromEmail} for salesperson ${contact.userId}`);
+
+      // Notify the salesperson
       const salesperson = await storage.getUser(contact.userId);
       if (salesperson) {
-        const contactName = `${contact.firstName} ${contact.lastName || ''}`.trim();
+        const contactName = `${contact.firstName} ${contact.lastName || ""}`.trim();
         sendReplyNotificationEmail({ salesperson, contactName }).catch(err => {
-          console.error("Failed to send reply notification:", err);
+          console.error("[Inbound] Failed to send reply notification:", err);
         });
       }
 
       res.status(200).send("OK");
     } catch (error) {
-      console.error("Error processing inbound email:", error);
+      console.error("[Inbound] Error processing inbound email:", error);
       res.status(500).json({ message: "Failed to process inbound email" });
     }
   });
