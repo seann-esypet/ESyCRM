@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import Header from "@/components/layout/header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { DollarSign, CheckCircle2, TrendingUp, Calendar, RefreshCw } from "lucide-react";
+import { DollarSign, TrendingUp, Calendar, RefreshCw, Award } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { format } from "date-fns";
 import { useAuth } from "@/hooks/useAuth";
@@ -18,6 +18,16 @@ type EnrichedCommission = {
   salespersonName: string;
 };
 
+type MonthlyPayment = {
+  id: string;
+  commissionId: string;
+  dealId: string;
+  userId: string;
+  amount: string;
+  periodNumber: number;
+  paidAt: string;
+};
+
 export default function Commissions() {
   const { user } = useAuth();
   const isAdmin = (user as any)?.role === "admin";
@@ -26,16 +36,36 @@ export default function Commissions() {
     queryKey: ["/api/commissions"],
   });
 
-  const totalUpfront = commissions?.reduce((sum, c) => sum + parseFloat(c.upfrontAmount || "0"), 0) || 0;
-  const totalMonthly = commissions?.reduce((sum, c) => sum + parseFloat(c.monthlyAmount || "0"), 0) || 0;
+  const { data: monthlyPayments } = useQuery<MonthlyPayment[]>({
+    queryKey: ["/api/commissions/monthly-payments"],
+  });
 
-  const thisMonthCommissions = commissions?.filter(c => {
-    if (!c.confirmedAt) return false;
-    const d = new Date(c.confirmedAt);
-    const now = new Date();
+  const totalUpfront = commissions?.reduce((sum, c) => sum + parseFloat(c.upfrontAmount || "0"), 0) || 0;
+  const totalMonthlyRate = commissions?.reduce((sum, c) => sum + parseFloat(c.monthlyAmount || "0"), 0) || 0;
+  const totalMonthlyAccumulated = monthlyPayments?.reduce((sum, p) => sum + parseFloat(p.amount || "0"), 0) || 0;
+  const totalEarned = totalUpfront + totalMonthlyAccumulated;
+
+  const now = new Date();
+  const thisMonthPayments = monthlyPayments?.filter((p) => {
+    const d = new Date(p.paidAt);
     return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
   }) || [];
-  const thisMonthTotal = thisMonthCommissions.reduce((sum, c) => sum + parseFloat(c.upfrontAmount || "0"), 0);
+  const thisMonthUpfront = commissions?.filter((c) => {
+    if (!c.confirmedAt) return false;
+    const d = new Date(c.confirmedAt);
+    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+  }).reduce((sum, c) => sum + parseFloat(c.upfrontAmount || "0"), 0) || 0;
+  const thisMonthTotal = thisMonthPayments.reduce((sum, p) => sum + parseFloat(p.amount || "0"), 0) + thisMonthUpfront;
+
+  function getMonthlyCountForCommission(commissionId: string) {
+    return monthlyPayments?.filter((p) => p.commissionId === commissionId).length || 0;
+  }
+
+  function getMonthlyEarnedForCommission(commissionId: string) {
+    return monthlyPayments
+      ?.filter((p) => p.commissionId === commissionId)
+      .reduce((sum, p) => sum + parseFloat(p.amount || "0"), 0) || 0;
+  }
 
   if (isLoading) {
     return (
@@ -66,32 +96,39 @@ export default function Commissions() {
       <main className="flex-1 overflow-y-auto p-6 bg-muted/30" data-testid="commissions-content">
         {/* Summary Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          <Card data-testid="total-commission-card">
+          <Card data-testid="total-earned-card">
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">Total Upfront Earned</p>
+                  <p className="text-sm font-medium text-muted-foreground">Total Earned to Date</p>
                   <p className="text-3xl font-bold text-foreground">
-                    ${totalUpfront.toFixed(2)}
+                    ${totalEarned.toFixed(2)}
                   </p>
                 </div>
                 <div className="p-3 bg-green-500/10 rounded-full">
-                  <DollarSign className="h-6 w-6 text-green-600" />
+                  <Award className="h-6 w-6 text-green-600" />
                 </div>
               </div>
-              <div className="mt-4 flex items-center text-sm">
-                <span className="text-muted-foreground">One-time upfront payments (90%)</span>
+              <div className="mt-4 space-y-1 text-xs text-muted-foreground">
+                <div className="flex justify-between">
+                  <span>Upfront (one-time 90%)</span>
+                  <span className="font-medium">${totalUpfront.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Monthly accumulated (10%)</span>
+                  <span className="font-medium text-blue-600">+${totalMonthlyAccumulated.toFixed(2)}</span>
+                </div>
               </div>
             </CardContent>
           </Card>
 
-          <Card data-testid="monthly-commission-card">
+          <Card data-testid="monthly-rate-card">
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">Monthly Recurring</p>
+                  <p className="text-sm font-medium text-muted-foreground">Monthly Recurring Rate</p>
                   <p className="text-3xl font-bold text-foreground">
-                    ${totalMonthly.toFixed(2)}<span className="text-base font-normal text-muted-foreground">/mo</span>
+                    ${totalMonthlyRate.toFixed(2)}<span className="text-base font-normal text-muted-foreground">/mo</span>
                   </p>
                 </div>
                 <div className="p-3 bg-blue-500/10 rounded-full">
@@ -99,12 +136,12 @@ export default function Commissions() {
                 </div>
               </div>
               <div className="mt-4 flex items-center text-sm">
-                <span className="text-muted-foreground">Recurring monthly (10% per deal)</span>
+                <span className="text-muted-foreground">Added every 30 days per active deal (10%)</span>
               </div>
             </CardContent>
           </Card>
 
-          <Card data-testid="month-commission-card">
+          <Card data-testid="this-month-card">
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
@@ -118,7 +155,7 @@ export default function Commissions() {
                 </div>
               </div>
               <div className="mt-4 flex items-center text-sm">
-                <span className="text-muted-foreground">{thisMonthCommissions.length} deal{thisMonthCommissions.length !== 1 ? "s" : ""} this month</span>
+                <span className="text-muted-foreground">{thisMonthPayments.length} recurring + new deals</span>
               </div>
             </CardContent>
           </Card>
@@ -133,7 +170,7 @@ export default function Commissions() {
                 <span>Commission Details</span>
               </CardTitle>
               <p className="text-sm text-muted-foreground mt-2">
-                All won deals with commission breakdown
+                Won deals — 90% upfront on close, then 10% added every 30 days
               </p>
             </CardHeader>
             <CardContent>
@@ -145,34 +182,47 @@ export default function Commissions() {
                     <TableHead>Plan</TableHead>
                     <TableHead>Won Date</TableHead>
                     <TableHead className="text-right">Upfront (90%)</TableHead>
-                    <TableHead className="text-right">Monthly (10%)</TableHead>
+                    <TableHead className="text-right">Rate/mo (10%)</TableHead>
+                    <TableHead className="text-right">Months Paid</TableHead>
+                    <TableHead className="text-right">Total Earned</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {commissions.map((c) => (
-                    <TableRow key={c.id} data-testid={`commission-row-${c.id}`}>
-                      <TableCell className="font-medium">{c.dealTitle}</TableCell>
-                      {isAdmin && <TableCell>{c.salespersonName}</TableCell>}
-                      <TableCell>
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                          c.planName.includes("Solo") ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300" :
-                          c.planName.includes("Salon") ? "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300" :
-                          "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300"
-                        }`}>
-                          {c.planName}
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        {c.confirmedAt ? format(new Date(c.confirmedAt), "MMM d, yyyy") : "—"}
-                      </TableCell>
-                      <TableCell className="text-right font-semibold text-green-600">
-                        ${parseFloat(c.upfrontAmount).toFixed(2)}
-                      </TableCell>
-                      <TableCell className="text-right font-semibold text-blue-600">
-                        ${parseFloat(c.monthlyAmount).toFixed(2)}/mo
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                  {commissions.map((c) => {
+                    const monthsPaid = getMonthlyCountForCommission(c.id);
+                    const monthlyEarned = getMonthlyEarnedForCommission(c.id);
+                    const dealTotal = parseFloat(c.upfrontAmount) + monthlyEarned;
+                    return (
+                      <TableRow key={c.id} data-testid={`commission-row-${c.id}`}>
+                        <TableCell className="font-medium">{c.dealTitle}</TableCell>
+                        {isAdmin && <TableCell>{c.salespersonName}</TableCell>}
+                        <TableCell>
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                            c.planName.includes("Solo") ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300" :
+                            c.planName.includes("Salon") ? "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300" :
+                            "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300"
+                          }`}>
+                            {c.planName}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          {c.confirmedAt ? format(new Date(c.confirmedAt), "MMM d, yyyy") : "—"}
+                        </TableCell>
+                        <TableCell className="text-right font-semibold text-green-600">
+                          ${parseFloat(c.upfrontAmount).toFixed(2)}
+                        </TableCell>
+                        <TableCell className="text-right text-blue-600">
+                          ${parseFloat(c.monthlyAmount).toFixed(2)}/mo
+                        </TableCell>
+                        <TableCell className="text-right text-muted-foreground">
+                          {monthsPaid}
+                        </TableCell>
+                        <TableCell className="text-right font-bold">
+                          ${dealTotal.toFixed(2)}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </CardContent>

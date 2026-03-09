@@ -31,6 +31,8 @@ import {
   type LeadDiscoveryConfig,
   type Commission,
   type InsertCommission,
+  type CommissionMonthlyPayment,
+  type InsertCommissionMonthlyPayment,
   users,
   contacts,
   contactGroups,
@@ -48,6 +50,7 @@ import {
   leadDiscoveryConfig,
   dealTasks,
   commissions,
+  commissionMonthlyPayments,
 } from "@shared/schema";
 import { normalizePhoneNumber, normalizeName, normalizeEmail } from "@shared/utils";
 import { db } from "./db";
@@ -69,6 +72,9 @@ export interface IStorage {
   // Commissions
   createCommission(data: InsertCommission): Promise<Commission>;
   getCommissions(userId: string | null): Promise<Commission[]>;
+  createMonthlyPayment(data: InsertCommissionMonthlyPayment): Promise<CommissionMonthlyPayment>;
+  getMonthlyPaymentsForCommission(commissionId: string): Promise<CommissionMonthlyPayment[]>;
+  getMonthlyPayments(userId: string | null): Promise<CommissionMonthlyPayment[]>;
 
   // Deal Tasks
   getDealTasks(dealId: string): Promise<DealTask[]>;
@@ -1595,6 +1601,26 @@ export class DatabaseStorage implements IStorage {
       return db.select().from(commissions).where(eq(commissions.userId, userId)).orderBy(desc(commissions.confirmedAt));
     }
     return db.select().from(commissions).orderBy(desc(commissions.confirmedAt));
+  }
+
+  async createMonthlyPayment(data: InsertCommissionMonthlyPayment): Promise<CommissionMonthlyPayment> {
+    const [payment] = await db.insert(commissionMonthlyPayments).values(data).returning();
+    return payment;
+  }
+
+  async getMonthlyPaymentsForCommission(commissionId: string): Promise<CommissionMonthlyPayment[]> {
+    return db.select().from(commissionMonthlyPayments)
+      .where(eq(commissionMonthlyPayments.commissionId, commissionId))
+      .orderBy(commissionMonthlyPayments.periodNumber);
+  }
+
+  async getMonthlyPayments(userId: string | null): Promise<CommissionMonthlyPayment[]> {
+    if (userId) {
+      return db.select().from(commissionMonthlyPayments)
+        .where(eq(commissionMonthlyPayments.userId, userId))
+        .orderBy(desc(commissionMonthlyPayments.paidAt));
+    }
+    return db.select().from(commissionMonthlyPayments).orderBy(desc(commissionMonthlyPayments.paidAt));
   }
 
   async getSerpCallsInLastHour(): Promise<number> {

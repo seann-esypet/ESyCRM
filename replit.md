@@ -42,6 +42,7 @@ Preferred communication style: Simple, everyday language.
 - Email Sequence Logs (queue, delivery status)
 - Inbox Messages (replies, linked to contacts)
 - Commissions (dealId, userId, planName, upfrontAmount, monthlyAmount, confirmedAt)
+- CommissionMonthlyPayments (commissionId, dealId, userId, amount, periodNumber, paidAt)
 
 ### Pipeline Stages (11 stages)
 `new_lead_unqualified` → `qualified_lead` → `contacted_emailed` → `contacted_phone_spoke_decision_maker` → `contacted_phone_spoke_non_decision_maker` → `contacted_phone_left_message` → `trial_period_started` → `pending_commitment` → `in_negotiation` → `won` / `lost`
@@ -55,7 +56,7 @@ Preferred communication style: Simple, everyday language.
 - **Role-Based Access Control**: Salespeople have isolated data; Admins have full access and oversight.
 - **Contact Management**: Duplicate detection, CSV/Excel import with validation, contact grouping.
 - **Deal Pipeline**: 11 customizable stages, multiple views (card/table), dedicated deal workspace with contact profile, activity feed, email history, tasks, and deal info. New default stage: `new_lead_unqualified`.
-- **Commission System**: When a deal is marked as Won, a popup confirms the plan and records a commission (90% upfront + 10% monthly). Commissions stored in `commissions` table. Salesperson commission page shows upfront/monthly breakdown. Admin rankings show total deal values.
+- **Commission System**: When a deal is marked as Won, a popup confirms the plan and records a commission. Initial payment: salesperson earns 90% of plan price (one-time upfront). Then every 30 days, salesperson earns 10% of plan price as a recurring payment. A daily scheduler (`commissionScheduler.ts`) automatically creates `commission_monthly_payments` records for each elapsed 30-day period. Commissions page shows Total Earned to Date (upfront + all accumulated monthly), Monthly Recurring Rate, and a per-deal breakdown with months paid. Admin rankings show total deal values.
 - **Admin Stage Notifications**: Emails sent to seann@esypet.com, ravin@esypet.com, srinath@esyntaxis.com on any stage change (except to `new_lead_unqualified`). Won deals include commission details in the email.
 - **Deal Task System**: Full-featured task management within Deal Workspace. New `deal_tasks` table with task type (Call/Email/Demo/Follow-up/Site Visit/Other), priority, due date/time, assigned rep, reminder scheduling (15min/1hr/1day/custom), auto-follow-up creation on completion, overdue detection, grouped sections (Overdue/Today/Upcoming/Completed), activity feed integration, and 15-minute reminder email scheduler.
 - **Email Sequences**: Automated campaigns with a three-track system (No Software / Uses Competitor / Custom General), 10-sequence system per salesperson, queue management, rate limiting, smart scheduling, Brevo integration, and activity tracking. Custom track sequences skip contact-track matching and accept per-contact custom subject/body email content (snapshotted in `emailSequenceLogs.customSubject`/`customBody`).

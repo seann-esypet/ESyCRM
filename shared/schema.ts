@@ -455,5 +455,20 @@ export const insertCommissionSchema = createInsertSchema(commissions).omit({ id:
 export type Commission = typeof commissions.$inferSelect;
 export type InsertCommission = z.infer<typeof insertCommissionSchema>;
 
+// Monthly recurring commission payments — added every 30 days after the initial won date
+export const commissionMonthlyPayments = pgTable("commission_monthly_payments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  commissionId: varchar("commission_id").notNull().references(() => commissions.id),
+  dealId: varchar("deal_id").notNull().references(() => deals.id),
+  userId: varchar("user_id").notNull().references(() => users.id, { onUpdate: "cascade" }),
+  amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
+  periodNumber: integer("period_number").notNull(),
+  paidAt: timestamp("paid_at").notNull(),
+});
+
+export const insertCommissionMonthlyPaymentSchema = createInsertSchema(commissionMonthlyPayments).omit({ id: true });
+export type CommissionMonthlyPayment = typeof commissionMonthlyPayments.$inferSelect;
+export type InsertCommissionMonthlyPayment = z.infer<typeof insertCommissionMonthlyPaymentSchema>;
+
 export type User = typeof users.$inferSelect;
 export type UpsertUser = typeof users.$inferInsert;

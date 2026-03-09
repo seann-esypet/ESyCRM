@@ -3,6 +3,7 @@ import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { startEmailSequenceScheduler } from "./emailScheduler";
 import { startTaskReminderScheduler } from "./taskReminderScheduler";
+import { startCommissionScheduler } from "./commissionScheduler";
 
 const app = express();
 app.use(express.json());
@@ -80,5 +81,8 @@ app.use((req, res, next) => {
 
     // Start task reminder scheduler (always runs, checks every 15 min)
     startTaskReminderScheduler();
+
+    // Start commission monthly payment scheduler (always runs, checks every 24 hours)
+    startCommissionScheduler();
   });
 })();

@@ -1249,6 +1249,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get monthly recurring commission payments
+  app.get("/api/commissions/monthly-payments", isAuthenticated, async (req: any, res) => {
+    try {
+      const isAdminUser = (req.user as any)?.claims?.role === "admin";
+      const userId = isAdminUser ? null : req.user.claims.sub;
+      const payments = await storage.getMonthlyPayments(userId);
+      res.json(payments);
+    } catch (error) {
+      console.error("Error fetching monthly commission payments:", error);
+      res.status(500).json({ message: "Failed to fetch monthly payments" });
+    }
+  });
+
   // Email Sequences routes - All protected with isAuthenticated
   app.get("/api/email-sequences", isAuthenticated, async (req: any, res) => {
     try {
