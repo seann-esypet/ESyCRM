@@ -165,13 +165,26 @@ export default function Inbox() {
               </div>
             </div>
             <ScrollArea className="flex-1 p-6">
-              <div className="prose max-w-none dark:prose-invert" data-testid="text-message-body">
-                {selectedMessage.bodyHtml ? (
-                  <div dangerouslySetInnerHTML={{ __html: selectedMessage.bodyHtml }} />
-                ) : (
-                  <pre className="whitespace-pre-wrap font-sans">
+              <div className="max-w-none" data-testid="text-message-body">
+                {selectedMessage.bodyText ? (
+                  <pre className="whitespace-pre-wrap font-sans text-sm text-foreground leading-relaxed">
                     {selectedMessage.bodyText}
                   </pre>
+                ) : selectedMessage.bodyHtml ? (
+                  <iframe
+                    srcDoc={`<!DOCTYPE html><html><head><style>body{font-family:sans-serif;font-size:14px;color:#111;background:#fff;margin:0;padding:8px;word-break:break-word;}*{max-width:100%;}</style></head><body>${selectedMessage.bodyHtml}</body></html>`}
+                    sandbox="allow-same-origin"
+                    className="w-full border-none"
+                    style={{ minHeight: "300px" }}
+                    onLoad={(e) => {
+                      const iframe = e.currentTarget;
+                      if (iframe.contentDocument?.body) {
+                        iframe.style.height = iframe.contentDocument.body.scrollHeight + 32 + "px";
+                      }
+                    }}
+                  />
+                ) : (
+                  <p className="text-muted-foreground">No message content</p>
                 )}
               </div>
             </ScrollArea>
