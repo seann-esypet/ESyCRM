@@ -36,28 +36,30 @@ const getStageLabel = (stage: string) => {
   switch (stage) {
     case "new_lead_unqualified": return "New Lead Unqualified";
     case "qualified_lead": return "Qualified Lead";
-    case "contacted_left_message": return "Contacted (Left Message)";
-    case "contacted_spoke_to_decision_maker": return "Contacted (Spoke to Owner/Decision Maker)";
-    case "onboarded_form_completed": return "Onboarded Form Completed";
-    case "demo_scheduled": return "Demo Scheduled";
-    case "demo_completed": return "Demo Completed";
-    case "decision_pending": return "Decision Pending";
+    case "contacted_emailed": return "Contacted - Emailed";
+    case "contacted_phone_spoke_decision_maker": return "Contacted - Phone Spoke To Decision Maker";
+    case "contacted_phone_spoke_non_decision_maker": return "Contacted - Phone Spoke To Non-Decision Maker";
+    case "contacted_phone_left_message": return "Contacted - Phone Left Message";
+    case "trial_period_started": return "Trial Period Started";
+    case "pending_commitment": return "Pending Commitment";
+    case "in_negotiation": return "In Negotiation";
     case "won": return "Won";
     case "lost": return "Lost";
-    default: return stage.replace('_', ' ').toUpperCase();
+    default: return stage.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
   }
 };
 
 const getStageColor = (stage: string) => {
   switch (stage) {
-    case "new_lead_unqualified": return "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300";
-    case "qualified_lead": return "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300";
-    case "contacted_left_message": return "bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-300";
-    case "contacted_spoke_to_decision_maker": return "bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-300";
-    case "onboarded_form_completed": return "bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-300";
-    case "demo_scheduled": return "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300";
-    case "demo_completed": return "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300";
-    case "decision_pending": return "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300";
+    case "new_lead_unqualified": return "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300";
+    case "qualified_lead": return "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300";
+    case "contacted_emailed": return "bg-sky-100 text-sky-800 dark:bg-sky-900 dark:text-sky-300";
+    case "contacted_phone_spoke_decision_maker": return "bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-300";
+    case "contacted_phone_spoke_non_decision_maker": return "bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-300";
+    case "contacted_phone_left_message": return "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300";
+    case "trial_period_started": return "bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-300";
+    case "pending_commitment": return "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300";
+    case "in_negotiation": return "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300";
     case "won": return "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-300";
     case "lost": return "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300";
     default: return "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-300";

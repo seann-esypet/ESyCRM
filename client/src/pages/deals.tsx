@@ -4,7 +4,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import Header from "@/components/layout/header";
 import DealForm from "@/components/deals/deal-form";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +18,7 @@ import { Separator } from "@/components/ui/separator";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import type { Deal, Contact, User, EmailSequenceLog, EmailSequence, InboxMessage } from "@shared/schema";
+import { getCommissionAmounts } from "@shared/utils";
 
 type ViewType = "card" | "table";
 type SortColumn = "title" | "value" | "expectedCloseDate" | "stage" | "contact" | "probability";
@@ -46,6 +47,10 @@ export default function Deals() {
   const [searchTerm, setSearchTerm] = useState("");
   const initialFilterUserId = isAdmin ? new URLSearchParams(window.location.search).get("filterUserId") || "" : "";
   const [filterUserId, setFilterUserId] = useState(initialFilterUserId);
+
+  const [wonPopupOpen, setWonPopupOpen] = useState(false);
+  const [wonPopupDealId, setWonPopupDealId] = useState<string>("");
+  const [wonPlanChoice, setWonPlanChoice] = useState("");
 
   const handleFilterChange = (value: string) => {
     setFilterUserId(value === "all" ? "" : value);
@@ -167,6 +172,22 @@ export default function Deals() {
     },
   });
 
+  const commissionMutation = useMutation({
+    mutationFn: ({ dealId, planName }: { dealId: string; planName: string }) =>
+      apiRequest("POST", "/api/commissions", { dealId, planName }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deals"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/commissions"] });
+      setWonPopupOpen(false);
+      setWonPopupDealId("");
+      setWonPlanChoice("");
+      toast({ title: "Deal marked as Won!", description: "Commission has been recorded." });
+    },
+    onError: (error: any) => {
+      toast({ title: "Error", description: error.message || "Failed to record commission", variant: "destructive" });
+    },
+  });
+
   const getContactName = (contactId: string | null) => {
     if (!contactId || !contacts) return "No contact";
     const contact = contacts.find(c => c.id === contactId);
@@ -181,59 +202,46 @@ export default function Deals() {
 
   const getStageLabel = (stage: string) => {
     switch (stage) {
-      case "new_lead_unqualified":
-        return "New Lead Unqualified";
-      case "qualified_lead":
-        return "Qualified Lead";
-      case "contacted_left_message":
-        return "Contacted (Left Message)";
-      case "contacted_spoke_to_decision_maker":
-        return "Contacted (Spoke to Owner/Decision Maker)";
-      case "onboarded_form_completed":
-        return "Onboarded Form Completed";
-      case "demo_scheduled":
-        return "Demo Scheduled";
-      case "demo_completed":
-        return "Demo Completed";
-      case "decision_pending":
-        return "Decision Pending";
-      case "won":
-        return "Won";
-      case "lost":
-        return "Lost";
-      default:
-        return stage.replace('_', ' ').toUpperCase();
+      case "new_lead_unqualified": return "New Lead Unqualified";
+      case "qualified_lead": return "Qualified Lead";
+      case "contacted_emailed": return "Contacted - Emailed";
+      case "contacted_phone_spoke_decision_maker": return "Contacted - Phone Spoke To Decision Maker";
+      case "contacted_phone_spoke_non_decision_maker": return "Contacted - Phone Spoke To Non-Decision Maker";
+      case "contacted_phone_left_message": return "Contacted - Phone Left Message";
+      case "trial_period_started": return "Trial Period Started";
+      case "pending_commitment": return "Pending Commitment";
+      case "in_negotiation": return "In Negotiation";
+      case "won": return "Won";
+      case "lost": return "Lost";
+      default: return stage.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
     }
   };
 
   const handleStageChange = (dealId: string, newStage: string) => {
-    stageChangeMutation.mutate({ id: dealId, stage: newStage });
+    if (newStage === "won") {
+      const deal = deals?.find(d => d.id === dealId);
+      setWonPopupDealId(dealId);
+      setWonPlanChoice(deal?.plan ?? "");
+      setWonPopupOpen(true);
+    } else {
+      stageChangeMutation.mutate({ id: dealId, stage: newStage });
+    }
   };
 
   const getStageColor = (stage: string) => {
     switch (stage) {
-      case "new_lead_unqualified":
-        return "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300";
-      case "qualified_lead":
-        return "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300";
-      case "contacted_left_message":
-        return "bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-300";
-      case "contacted_spoke_to_decision_maker":
-        return "bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-300";
-      case "onboarded_form_completed":
-        return "bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-300";
-      case "demo_scheduled":
-        return "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300";
-      case "demo_completed":
-        return "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300";
-      case "decision_pending":
-        return "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300";
-      case "won":
-        return "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-300";
-      case "lost":
-        return "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300";
-      default:
-        return "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-300";
+      case "new_lead_unqualified": return "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300";
+      case "qualified_lead": return "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300";
+      case "contacted_emailed": return "bg-sky-100 text-sky-800 dark:bg-sky-900 dark:text-sky-300";
+      case "contacted_phone_spoke_decision_maker": return "bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-300";
+      case "contacted_phone_spoke_non_decision_maker": return "bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-300";
+      case "contacted_phone_left_message": return "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300";
+      case "trial_period_started": return "bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-300";
+      case "pending_commitment": return "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300";
+      case "in_negotiation": return "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300";
+      case "won": return "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-300";
+      case "lost": return "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300";
+      default: return "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-300";
     }
   };
 
@@ -646,12 +654,13 @@ export default function Deals() {
                         <SelectContent>
                           <SelectItem value="new_lead_unqualified">New Lead Unqualified</SelectItem>
                           <SelectItem value="qualified_lead">Qualified Lead</SelectItem>
-                          <SelectItem value="contacted_left_message">Contacted (Left Message)</SelectItem>
-                          <SelectItem value="contacted_spoke_to_decision_maker">Contacted (Spoke to Owner/Decision Maker)</SelectItem>
-                          <SelectItem value="onboarded_form_completed">Onboarded Form Completed</SelectItem>
-                          <SelectItem value="demo_scheduled">Demo Scheduled</SelectItem>
-                          <SelectItem value="demo_completed">Demo Completed</SelectItem>
-                          <SelectItem value="decision_pending">Decision Pending</SelectItem>
+                          <SelectItem value="contacted_emailed">Contacted - Emailed</SelectItem>
+                          <SelectItem value="contacted_phone_spoke_decision_maker">Contacted - Phone Spoke To Decision Maker</SelectItem>
+                          <SelectItem value="contacted_phone_spoke_non_decision_maker">Contacted - Phone Spoke To Non-Decision Maker</SelectItem>
+                          <SelectItem value="contacted_phone_left_message">Contacted - Phone Left Message</SelectItem>
+                          <SelectItem value="trial_period_started">Trial Period Started</SelectItem>
+                          <SelectItem value="pending_commitment">Pending Commitment</SelectItem>
+                          <SelectItem value="in_negotiation">In Negotiation</SelectItem>
                           <SelectItem value="won">Won</SelectItem>
                           <SelectItem value="lost">Lost</SelectItem>
                         </SelectContent>
@@ -819,12 +828,13 @@ export default function Deals() {
                           <SelectContent>
                             <SelectItem value="new_lead_unqualified">New Lead Unqualified</SelectItem>
                             <SelectItem value="qualified_lead">Qualified Lead</SelectItem>
-                            <SelectItem value="contacted_left_message">Contacted (Left Message)</SelectItem>
-                            <SelectItem value="contacted_spoke_to_decision_maker">Contacted (Spoke to Owner/Decision Maker)</SelectItem>
-                            <SelectItem value="onboarded_form_completed">Onboarded Form Completed</SelectItem>
-                            <SelectItem value="demo_scheduled">Demo Scheduled</SelectItem>
-                            <SelectItem value="demo_completed">Demo Completed</SelectItem>
-                            <SelectItem value="decision_pending">Decision Pending</SelectItem>
+                            <SelectItem value="contacted_emailed">Contacted - Emailed</SelectItem>
+                            <SelectItem value="contacted_phone_spoke_decision_maker">Contacted - Phone Spoke To Decision Maker</SelectItem>
+                            <SelectItem value="contacted_phone_spoke_non_decision_maker">Contacted - Phone Spoke To Non-Decision Maker</SelectItem>
+                            <SelectItem value="contacted_phone_left_message">Contacted - Phone Left Message</SelectItem>
+                            <SelectItem value="trial_period_started">Trial Period Started</SelectItem>
+                            <SelectItem value="pending_commitment">Pending Commitment</SelectItem>
+                            <SelectItem value="in_negotiation">In Negotiation</SelectItem>
                             <SelectItem value="won">Won</SelectItem>
                             <SelectItem value="lost">Lost</SelectItem>
                           </SelectContent>
@@ -1146,6 +1156,64 @@ export default function Deals() {
               </div>
             </div>
           </ScrollArea>
+        </DialogContent>
+      </Dialog>
+
+      {/* ─── Won Commission Popup ────────────────────────────────────────────── */}
+      <Dialog open={wonPopupOpen} onOpenChange={(open) => { if (!commissionMutation.isPending) setWonPopupOpen(open); }}>
+        <DialogContent className="max-w-md" data-testid="dialog-won-commission-deals">
+          <DialogHeader>
+            <DialogTitle className="text-green-600 flex items-center gap-2">
+              <DollarSign className="h-5 w-5" /> Deal Won — Confirm Commission Plan
+            </DialogTitle>
+            <DialogDescription>
+              Select the plan to calculate and record the salesperson's commission.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div>
+              <Label className="mb-2 block">Deal Plan</Label>
+              <Select value={wonPlanChoice} onValueChange={setWonPlanChoice}>
+                <SelectTrigger data-testid="select-won-plan-deals">
+                  <SelectValue placeholder="Select plan…" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Solo - $79/mo or $2 / Appoint">Solo - $79/mo or $2 / Appoint</SelectItem>
+                  <SelectItem value="Salon - $149/mo or $3 / Appoint">Salon - $149/mo or $3 / Appoint</SelectItem>
+                  <SelectItem value="Signature - $229/mo">Signature - $229/mo</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {wonPlanChoice && (() => {
+              const { upfront, monthly } = getCommissionAmounts(wonPlanChoice);
+              return (
+                <div className="rounded-lg bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 p-4 space-y-1">
+                  <p className="text-sm font-semibold text-green-800 dark:text-green-300">Commission Breakdown</p>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Upfront (90%)</span>
+                    <span className="font-bold text-green-700 dark:text-green-400">${upfront.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Monthly recurring (10%)</span>
+                    <span className="font-semibold text-green-700 dark:text-green-400">${monthly.toFixed(2)}/mo</span>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setWonPopupOpen(false)} disabled={commissionMutation.isPending}>
+              Cancel
+            </Button>
+            <Button
+              className="bg-green-600 hover:bg-green-700 text-white"
+              onClick={() => { if (wonPopupDealId && wonPlanChoice) commissionMutation.mutate({ dealId: wonPopupDealId, planName: wonPlanChoice }); }}
+              disabled={!wonPlanChoice || commissionMutation.isPending}
+              data-testid="button-confirm-won-deals"
+            >
+              {commissionMutation.isPending ? "Saving…" : "Confirm & Record Commission"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </>

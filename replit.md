@@ -35,29 +35,40 @@ Preferred communication style: Simple, everyday language.
 - Users (roles, professional email)
 - Contacts (customer info, groups)
 - Contact Groups (campaigns)
-- Deals (pipeline stages)
+- Deals (pipeline stages, plan, won_date)
 - Tasks (priorities, due dates)
 - Activities (audit trail)
 - Email Sequences (templates, scheduling)
 - Email Sequence Logs (queue, delivery status)
 - Inbox Messages (replies, linked to contacts)
+- Commissions (dealId, userId, planName, upfrontAmount, monthlyAmount, confirmedAt)
+
+### Pipeline Stages (11 stages)
+`new_lead_unqualified` → `qualified_lead` → `contacted_emailed` → `contacted_phone_spoke_decision_maker` → `contacted_phone_spoke_non_decision_maker` → `contacted_phone_left_message` → `trial_period_started` → `pending_commitment` → `in_negotiation` → `won` / `lost`
+
+### Deal Plans
+- Solo - $79/mo or $2 / Appoint (upfront: $71.10, monthly: $7.90)
+- Salon - $149/mo or $3 / Appoint (upfront: $134.10, monthly: $14.90)
+- Signature - $229/mo (upfront: $206.10, monthly: $22.90)
 
 ### Features & Implementations
 - **Role-Based Access Control**: Salespeople have isolated data; Admins have full access and oversight.
 - **Contact Management**: Duplicate detection, CSV/Excel import with validation, contact grouping.
-- **Deal Pipeline**: Customizable stages, multiple views (card/table), dedicated deal workspace with contact profile, activity feed, email history, tasks, and deal info.
-- **Deal Task System**: Full-featured task management within Deal Workspace. New `deal_tasks` table with task type (Call/Email/Demo/Follow-up/Site Visit/Other), priority, due date/time, assigned rep, reminder scheduling (15min/1hr/1day/custom), auto-follow-up creation on completion, overdue detection, grouped sections (Overdue/Today/Upcoming/Completed), activity feed integration, and 15-minute reminder email scheduler via SendGrid.
-- **Email Sequences**: Automated campaigns with a three-track system (No Software / Uses Competitor / Custom General), 10-sequence system per salesperson, queue management, rate limiting, smart scheduling, SendGrid integration, and activity tracking. Custom track sequences skip contact-track matching and accept per-contact custom subject/body email content (snapshotted in `emailSequenceLogs.customSubject`/`customBody`).
+- **Deal Pipeline**: 11 customizable stages, multiple views (card/table), dedicated deal workspace with contact profile, activity feed, email history, tasks, and deal info. New default stage: `new_lead_unqualified`.
+- **Commission System**: When a deal is marked as Won, a popup confirms the plan and records a commission (90% upfront + 10% monthly). Commissions stored in `commissions` table. Salesperson commission page shows upfront/monthly breakdown. Admin rankings show total deal values.
+- **Admin Stage Notifications**: Emails sent to seann@esypet.com, ravin@esypet.com, srinath@esyntaxis.com on any stage change (except to `new_lead_unqualified`). Won deals include commission details in the email.
+- **Deal Task System**: Full-featured task management within Deal Workspace. New `deal_tasks` table with task type (Call/Email/Demo/Follow-up/Site Visit/Other), priority, due date/time, assigned rep, reminder scheduling (15min/1hr/1day/custom), auto-follow-up creation on completion, overdue detection, grouped sections (Overdue/Today/Upcoming/Completed), activity feed integration, and 15-minute reminder email scheduler.
+- **Email Sequences**: Automated campaigns with a three-track system (No Software / Uses Competitor / Custom General), 10-sequence system per salesperson, queue management, rate limiting, smart scheduling, Brevo integration, and activity tracking. Custom track sequences skip contact-track matching and accept per-contact custom subject/body email content (snapshotted in `emailSequenceLogs.customSubject`/`customBody`).
 - **Inbox System**: Routes incoming replies to salesperson's inbox, message management, admin oversight.
 - **Analytics Dashboard**: Real-time sales performance insights for salespeople and administrators.
-- **Admin Tools**: User management (create, edit, roles), CSV data export.
+- **Admin Tools**: User management (create, edit, roles), CSV data export, salesperson rankings with total deal values.
 - **Lead Discovery Module**: Automated business discovery (pet grooming) by ZIP code using SerpAPI (Google/Bing), website crawling, software detection, contact extraction, and direct CRM import/export.
 - **Secure Authentication**: Replit Auth with various providers, secure session management, protected API routes.
 
 ## External Dependencies
 
 - **Database**: Neon Database, PostgreSQL
-- **Email Service**: SendGrid (@sendgrid/mail)
+- **Email Service**: Brevo (outbound), Mailgun (inbound replies)
 - **Search API**: SerpAPI
 - **Frontend Build**: Vite
 - **Backend Runtime**: Node.js, Express.js

@@ -168,14 +168,9 @@ export default function DealForm({ deal, onSuccess, onCancel }: DealFormProps) {
                 <Select 
                   onValueChange={(value) => {
                     field.onChange(value);
-                    // Set numeric value based on plan
-                    if (value.includes("Plan 1")) {
-                      form.setValue("value", "2");
-                    } else if (value.includes("Plan 2")) {
-                      form.setValue("value", "99");
-                    } else if (value.includes("Plan 3")) {
-                      form.setValue("value", "99");
-                    }
+                    if (value.includes("Solo")) form.setValue("value", "79");
+                    else if (value.includes("Salon")) form.setValue("value", "149");
+                    else if (value.includes("Signature")) form.setValue("value", "229");
                   }} 
                   defaultValue={field.value || ""}
                 >
@@ -185,9 +180,9 @@ export default function DealForm({ deal, onSuccess, onCancel }: DealFormProps) {
                     </SelectTrigger>
                   </FormControl>
                   <SelectContent>
-                    <SelectItem value="Plan 1 - $2/appoint">Plan 1 - $2/appoint</SelectItem>
-                    <SelectItem value="Plan 2 - $99/mo">Plan 2 - $99/mo</SelectItem>
-                    <SelectItem value="Plan 3. $99 + Credit Card">Plan 3. $99 + Credit Card</SelectItem>
+                    <SelectItem value="Solo - $79/mo or $2 / Appoint">Solo - $79/mo or $2 / Appoint</SelectItem>
+                    <SelectItem value="Salon - $149/mo or $3 / Appoint">Salon - $149/mo or $3 / Appoint</SelectItem>
+                    <SelectItem value="Signature - $229/mo">Signature - $229/mo</SelectItem>
                     <SelectItem value="Unknown">Unknown</SelectItem>
                   </SelectContent>
                 </Select>
@@ -213,12 +208,13 @@ export default function DealForm({ deal, onSuccess, onCancel }: DealFormProps) {
                   <SelectContent>
                     <SelectItem value="new_lead_unqualified">New Lead Unqualified</SelectItem>
                     <SelectItem value="qualified_lead">Qualified Lead</SelectItem>
-                    <SelectItem value="contacted_left_message">Contacted (Left Message)</SelectItem>
-                    <SelectItem value="contacted_spoke_to_decision_maker">Contacted (Spoke to Owner/Decision Maker)</SelectItem>
-                    <SelectItem value="onboarded_form_completed">Onboarded Form Completed</SelectItem>
-                    <SelectItem value="demo_scheduled">Demo Scheduled</SelectItem>
-                    <SelectItem value="demo_completed">Demo Completed</SelectItem>
-                    <SelectItem value="decision_pending">Decision Pending</SelectItem>
+                    <SelectItem value="contacted_emailed">Contacted - Emailed</SelectItem>
+                    <SelectItem value="contacted_phone_spoke_decision_maker">Contacted - Phone Spoke To Decision Maker</SelectItem>
+                    <SelectItem value="contacted_phone_spoke_non_decision_maker">Contacted - Phone Spoke To Non-Decision Maker</SelectItem>
+                    <SelectItem value="contacted_phone_left_message">Contacted - Phone Left Message</SelectItem>
+                    <SelectItem value="trial_period_started">Trial Period Started</SelectItem>
+                    <SelectItem value="pending_commitment">Pending Commitment</SelectItem>
+                    <SelectItem value="in_negotiation">In Negotiation</SelectItem>
                     <SelectItem value="won">Won</SelectItem>
                     <SelectItem value="lost">Lost</SelectItem>
                   </SelectContent>

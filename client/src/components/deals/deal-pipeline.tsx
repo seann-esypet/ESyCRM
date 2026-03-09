@@ -24,55 +24,35 @@ export default function DealPipeline() {
 
   const getStageColor = (stage: string) => {
     switch (stage) {
-      case "new_lead_unqualified":
-        return "bg-blue-500";
-      case "qualified_lead":
-        return "bg-green-500";
-      case "contacted_left_message":
-        return "bg-cyan-500";
-      case "contacted_spoke_to_decision_maker":
-        return "bg-teal-500";
-      case "onboarded_form_completed":
-        return "bg-indigo-500";
-      case "demo_scheduled":
-        return "bg-purple-500";
-      case "demo_completed":
-        return "bg-yellow-500";
-      case "decision_pending":
-        return "bg-orange-500";
-      case "won":
-        return "bg-emerald-500";
-      case "lost":
-        return "bg-red-500";
-      default:
-        return "bg-muted";
+      case "new_lead_unqualified": return "bg-gray-400";
+      case "qualified_lead": return "bg-blue-500";
+      case "contacted_emailed": return "bg-sky-500";
+      case "contacted_phone_spoke_decision_maker": return "bg-teal-500";
+      case "contacted_phone_spoke_non_decision_maker": return "bg-cyan-500";
+      case "contacted_phone_left_message": return "bg-yellow-500";
+      case "trial_period_started": return "bg-indigo-500";
+      case "pending_commitment": return "bg-purple-500";
+      case "in_negotiation": return "bg-orange-500";
+      case "won": return "bg-emerald-500";
+      case "lost": return "bg-red-500";
+      default: return "bg-muted";
     }
   };
 
   const getStageLabel = (stage: string) => {
     switch (stage) {
-      case "new_lead_unqualified":
-        return "New Lead Unqualified";
-      case "qualified_lead":
-        return "Qualified Lead";
-      case "contacted_left_message":
-        return "Contacted (Left Message)";
-      case "contacted_spoke_to_decision_maker":
-        return "Contacted (Spoke to Owner/Decision Maker)";
-      case "onboarded_form_completed":
-        return "Onboarded Form Completed";
-      case "demo_scheduled":
-        return "Demo Scheduled";
-      case "demo_completed":
-        return "Demo Completed";
-      case "decision_pending":
-        return "Decision Pending";
-      case "won":
-        return "Won";
-      case "lost":
-        return "Lost";
-      default:
-        return stage;
+      case "new_lead_unqualified": return "New Lead Unqualified";
+      case "qualified_lead": return "Qualified Lead";
+      case "contacted_emailed": return "Contacted - Emailed";
+      case "contacted_phone_spoke_decision_maker": return "Contacted - Phone Spoke To Decision Maker";
+      case "contacted_phone_spoke_non_decision_maker": return "Contacted - Phone Spoke To Non-Decision Maker";
+      case "contacted_phone_left_message": return "Contacted - Phone Left Message";
+      case "trial_period_started": return "Trial Period Started";
+      case "pending_commitment": return "Pending Commitment";
+      case "in_negotiation": return "In Negotiation";
+      case "won": return "Won";
+      case "lost": return "Lost";
+      default: return stage;
     }
   };
 

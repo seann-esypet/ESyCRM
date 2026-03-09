@@ -36,14 +36,20 @@ export function normalizeEmail(email: string | null | undefined): string | null 
 }
 
 /**
- * Calculate commission based on deal value plan
+ * Return upfront and monthly commission amounts for a given plan name.
+ * Upfront = 90% of monthly plan price, Monthly recurring = 10%.
  */
-export function calculateCommission(dealValue: string | null | undefined): number {
-  if (!dealValue) return 0;
-  
-  if (dealValue.includes("Plan 1")) return 50;
-  if (dealValue.includes("Plan 2")) return 99;
-  if (dealValue.includes("Plan 3")) return 149;
-  
-  return 0;
+export function getCommissionAmounts(planName: string | null | undefined): { upfront: number; monthly: number } {
+  if (!planName) return { upfront: 0, monthly: 0 };
+  if (planName.includes("Solo"))      return { upfront: 71.10,  monthly: 7.90  };
+  if (planName.includes("Salon"))     return { upfront: 134.10, monthly: 14.90 };
+  if (planName.includes("Signature")) return { upfront: 206.10, monthly: 22.90 };
+  return { upfront: 0, monthly: 0 };
+}
+
+/**
+ * Calculate total upfront commission from a plan name (for backwards-compat display).
+ */
+export function calculateCommission(planName: string | null | undefined): number {
+  return getCommissionAmounts(planName).upfront;
 }

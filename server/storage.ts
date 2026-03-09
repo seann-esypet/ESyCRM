@@ -29,6 +29,8 @@ import {
   type SerpUsage,
   type SerpCache,
   type LeadDiscoveryConfig,
+  type Commission,
+  type InsertCommission,
   users,
   contacts,
   contactGroups,
@@ -45,6 +47,7 @@ import {
   serpCache,
   leadDiscoveryConfig,
   dealTasks,
+  commissions,
 } from "@shared/schema";
 import { normalizePhoneNumber, normalizeName, normalizeEmail } from "@shared/utils";
 import { db } from "./db";
@@ -62,6 +65,10 @@ export interface IStorage {
   updateUserRole(id: string, role: string): Promise<User | undefined>;
   deleteUser(id: string): Promise<boolean>;
   forceDeleteUser(id: string): Promise<boolean>;
+
+  // Commissions
+  createCommission(data: InsertCommission): Promise<Commission>;
+  getCommissions(userId: string | null): Promise<Commission[]>;
 
   // Deal Tasks
   getDealTasks(dealId: string): Promise<DealTask[]>;
@@ -1576,6 +1583,18 @@ export class DatabaseStorage implements IStorage {
       assignedUserFirstName: r.assignedUserFirstName ?? null,
       assignedUserLastName: r.assignedUserLastName ?? null,
     }));
+  }
+
+  async createCommission(data: InsertCommission): Promise<Commission> {
+    const [commission] = await db.insert(commissions).values(data).returning();
+    return commission;
+  }
+
+  async getCommissions(userId: string | null): Promise<Commission[]> {
+    if (userId) {
+      return db.select().from(commissions).where(eq(commissions.userId, userId)).orderBy(desc(commissions.confirmedAt));
+    }
+    return db.select().from(commissions).orderBy(desc(commissions.confirmedAt));
   }
 
   async getSerpCallsInLastHour(): Promise<number> {

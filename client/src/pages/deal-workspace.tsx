@@ -17,7 +17,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger
 } from "@/components/ui/dropdown-menu";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -30,22 +30,24 @@ import {
   SelectValue as UiSelectValue,
 } from "@/components/ui/select";
 import type { Deal, Contact } from "@shared/schema";
+import { getCommissionAmounts } from "@shared/utils";
 import ContactForm from "@/components/contacts/contact-form";
 import DealTaskPanel from "@/components/tasks/deal-task-panel";
 import DealSequencePanel from "@/components/email-sequences/deal-sequence-panel";
 
 // ─── Stage helpers ────────────────────────────────────────────────────────────
 const STAGES: { value: string; label: string; color: string; bg: string }[] = [
-  { value: "new_lead_unqualified",              label: "New Lead",         color: "text-gray-700 dark:text-gray-300",   bg: "bg-gray-100 dark:bg-gray-800" },
-  { value: "qualified_lead",                   label: "Qualified Lead",   color: "text-blue-700 dark:text-blue-300",   bg: "bg-blue-100 dark:bg-blue-900" },
-  { value: "contacted_left_message",           label: "Left Message",     color: "text-yellow-700 dark:text-yellow-300", bg: "bg-yellow-100 dark:bg-yellow-900" },
-  { value: "contacted_spoke_to_decision_maker",label: "Spoke to DM",     color: "text-orange-700 dark:text-orange-300", bg: "bg-orange-100 dark:bg-orange-900" },
-  { value: "onboarded_form_completed",         label: "Form Completed",   color: "text-purple-700 dark:text-purple-300", bg: "bg-purple-100 dark:bg-purple-900" },
-  { value: "demo_scheduled",                   label: "Demo Scheduled",   color: "text-indigo-700 dark:text-indigo-300", bg: "bg-indigo-100 dark:bg-indigo-900" },
-  { value: "demo_completed",                   label: "Demo Completed",   color: "text-cyan-700 dark:text-cyan-300",   bg: "bg-cyan-100 dark:bg-cyan-900" },
-  { value: "decision_pending",                 label: "Decision Pending", color: "text-amber-700 dark:text-amber-300", bg: "bg-amber-100 dark:bg-amber-900" },
-  { value: "won",                              label: "Won",              color: "text-green-700 dark:text-green-300", bg: "bg-green-100 dark:bg-green-900" },
-  { value: "lost",                             label: "Lost",             color: "text-red-700 dark:text-red-300",     bg: "bg-red-100 dark:bg-red-900" },
+  { value: "new_lead_unqualified",                     label: "New Lead Unqualified",                       color: "text-gray-700 dark:text-gray-300",   bg: "bg-gray-100 dark:bg-gray-800" },
+  { value: "qualified_lead",                           label: "Qualified Lead",                             color: "text-blue-700 dark:text-blue-300",   bg: "bg-blue-100 dark:bg-blue-900" },
+  { value: "contacted_emailed",                        label: "Contacted - Emailed",                        color: "text-sky-700 dark:text-sky-300",     bg: "bg-sky-100 dark:bg-sky-900" },
+  { value: "contacted_phone_spoke_decision_maker",     label: "Contacted - Phone Spoke To Decision Maker",  color: "text-teal-700 dark:text-teal-300",   bg: "bg-teal-100 dark:bg-teal-900" },
+  { value: "contacted_phone_spoke_non_decision_maker", label: "Contacted - Phone Spoke To Non-Decision Maker", color: "text-cyan-700 dark:text-cyan-300", bg: "bg-cyan-100 dark:bg-cyan-900" },
+  { value: "contacted_phone_left_message",             label: "Contacted - Phone Left Message",             color: "text-yellow-700 dark:text-yellow-300", bg: "bg-yellow-100 dark:bg-yellow-900" },
+  { value: "trial_period_started",                     label: "Trial Period Started",                       color: "text-indigo-700 dark:text-indigo-300", bg: "bg-indigo-100 dark:bg-indigo-900" },
+  { value: "pending_commitment",                       label: "Pending Commitment",                         color: "text-purple-700 dark:text-purple-300", bg: "bg-purple-100 dark:bg-purple-900" },
+  { value: "in_negotiation",                           label: "In Negotiation",                             color: "text-orange-700 dark:text-orange-300", bg: "bg-orange-100 dark:bg-orange-900" },
+  { value: "won",                                      label: "Won",                                        color: "text-green-700 dark:text-green-300", bg: "bg-green-100 dark:bg-green-900" },
+  { value: "lost",                                     label: "Lost",                                       color: "text-red-700 dark:text-red-300",     bg: "bg-red-100 dark:bg-red-900" },
 ];
 
 function stageInfo(value: string) {
@@ -63,9 +65,9 @@ function StagePill({ stage }: { stage: string }) {
 
 // ─── Plan helpers ─────────────────────────────────────────────────────────────
 const PLAN_COLORS: Record<string, string> = {
-  "Plan 1 - $2/appoint": "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300",
-  "Plan 2 - $99/mo":     "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300",
-  "Plan 3 - $150/mo + credit card": "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300",
+  "Solo - $79/mo or $2 / Appoint":  "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300",
+  "Salon - $149/mo or $3 / Appoint": "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300",
+  "Signature - $229/mo":             "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300",
 };
 
 // ─── Contact info row ─────────────────────────────────────────────────────────
@@ -120,6 +122,8 @@ export default function DealWorkspace() {
   const [activeTab, setActiveTab] = useState("activity");
   const [editContactOpen, setEditContactOpen] = useState(false);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
+  const [wonPopupOpen, setWonPopupOpen] = useState(false);
+  const [wonPlanChoice, setWonPlanChoice] = useState("");
 
   // Log activity form state
   const [logType, setLogType] = useState<LogType | null>(null);
@@ -158,6 +162,30 @@ export default function DealWorkspace() {
     },
     onError: () => toast({ title: "Failed to update stage", variant: "destructive" }),
   });
+
+  // Commission confirmation mutation (used when stage = "won")
+  const commissionMutation = useMutation({
+    mutationFn: ({ planName }: { planName: string }) =>
+      apiRequest("POST", "/api/commissions", { dealId, planName }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deal-workspace", dealId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/deals"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/commissions"] });
+      setWonPopupOpen(false);
+      setWonPlanChoice("");
+      toast({ title: "Deal marked as Won!", description: "Commission has been recorded." });
+    },
+    onError: () => toast({ title: "Failed to confirm commission", variant: "destructive" }),
+  });
+
+  function handleStageSelect(stageValue: string) {
+    if (stageValue === "won") {
+      setWonPlanChoice(data?.deal?.plan ?? "");
+      setWonPopupOpen(true);
+    } else {
+      stageMutation.mutate(stageValue);
+    }
+  }
 
 
   // Log activity mutation
@@ -267,16 +295,16 @@ export default function DealWorkspace() {
               Move Stage <ChevronDown className="h-3.5 w-3.5 ml-1" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-52">
+          <DropdownMenuContent align="end" className="w-72">
             {STAGES.map(s => (
               <DropdownMenuItem
                 key={s.value}
-                onClick={() => stageMutation.mutate(s.value)}
-                disabled={s.value === deal.stage || stageMutation.isPending}
+                onClick={() => handleStageSelect(s.value)}
+                disabled={s.value === deal.stage || stageMutation.isPending || commissionMutation.isPending}
                 className={s.value === deal.stage ? "opacity-50 cursor-default" : ""}
                 data-testid={`menu-stage-${s.value}`}
               >
-                <span className={`inline-block w-2 h-2 rounded-full mr-2 ${s.bg.replace("bg-", "bg-")}`} />
+                <span className={`inline-block w-2 h-2 rounded-full mr-2 ${s.bg}`} />
                 {s.label}
               </DropdownMenuItem>
             ))}
@@ -811,6 +839,64 @@ export default function DealWorkspace() {
               </Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ─── Won Commission Popup ─────────────────────────────────────────────── */}
+      <Dialog open={wonPopupOpen} onOpenChange={(open) => { if (!commissionMutation.isPending) setWonPopupOpen(open); }}>
+        <DialogContent className="max-w-md" data-testid="dialog-won-commission">
+          <DialogHeader>
+            <DialogTitle className="text-green-600 flex items-center gap-2">
+              <DollarSign className="h-5 w-5" /> Deal Won — Confirm Commission Plan
+            </DialogTitle>
+            <DialogDescription>
+              Select the plan to calculate and record the salesperson's commission.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div>
+              <Label className="mb-2 block">Deal Plan</Label>
+              <UiSelect value={wonPlanChoice} onValueChange={setWonPlanChoice}>
+                <UiSelectTrigger data-testid="select-won-plan">
+                  <UiSelectValue placeholder="Select plan…" />
+                </UiSelectTrigger>
+                <UiSelectContent>
+                  <UiSelectItem value="Solo - $79/mo or $2 / Appoint">Solo - $79/mo or $2 / Appoint</UiSelectItem>
+                  <UiSelectItem value="Salon - $149/mo or $3 / Appoint">Salon - $149/mo or $3 / Appoint</UiSelectItem>
+                  <UiSelectItem value="Signature - $229/mo">Signature - $229/mo</UiSelectItem>
+                </UiSelectContent>
+              </UiSelect>
+            </div>
+            {wonPlanChoice && (() => {
+              const { upfront, monthly } = getCommissionAmounts(wonPlanChoice);
+              return (
+                <div className="rounded-lg bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 p-4 space-y-1">
+                  <p className="text-sm font-semibold text-green-800 dark:text-green-300">Commission Breakdown</p>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Upfront (90%)</span>
+                    <span className="font-bold text-green-700 dark:text-green-400">${upfront.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Monthly recurring (10%)</span>
+                    <span className="font-semibold text-green-700 dark:text-green-400">${monthly.toFixed(2)}/mo</span>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setWonPopupOpen(false)} disabled={commissionMutation.isPending}>
+              Cancel
+            </Button>
+            <Button
+              className="bg-green-600 hover:bg-green-700 text-white"
+              onClick={() => { if (wonPlanChoice) commissionMutation.mutate({ planName: wonPlanChoice }); }}
+              disabled={!wonPlanChoice || commissionMutation.isPending}
+              data-testid="button-confirm-won"
+            >
+              {commissionMutation.isPending ? "Saving…" : "Confirm & Record Commission"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

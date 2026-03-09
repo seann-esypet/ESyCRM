@@ -3,7 +3,8 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { setupAuth, isAuthenticated, isAdmin } from "./replitAuth";
-import { insertContactSchema, insertContactGroupSchema, insertDealSchema, insertTaskSchema, insertEmailSequenceSchema, insertLeadDiscoveryJobSchema, type InsertContact } from "@shared/schema";
+import { insertContactSchema, insertContactGroupSchema, insertDealSchema, insertTaskSchema, insertEmailSequenceSchema, insertLeadDiscoveryJobSchema, insertCommissionSchema, type InsertContact } from "@shared/schema";
+import { getCommissionAmounts } from "@shared/utils";
 import { z } from "zod";
 import Papa from "papaparse";
 import { runLeadDiscoveryJob, importResultsToCRM } from "./lead-discovery";
@@ -777,6 +778,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const userId = getUserIdForQuery(req.user);
       const dealData = insertDealSchema.partial().parse(req.body);
+
+      // Fetch the deal before update so we know the previous stage
+      const beforeDeal = await storage.getDeal(req.params.id, userId);
+
       const deal = await storage.updateDeal(req.params.id, dealData, userId);
       if (!deal) {
         return res.status(404).json({ message: "Deal not found" });
@@ -786,13 +791,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (dealData.stage === "qualified_lead" && deal.contactId) {
         const contact = await storage.getContact(deal.contactId, userId);
         if (contact) {
-          // Determine sequence track based on usesSoftware field
-          // "Yes" means they use competitor software, otherwise "no_software"
           const sequenceTrack = contact.usesSoftware === "Yes" ? "uses_competitor" : "no_software";
           await storage.updateContact(deal.contactId, { sequenceTrack }, userId);
         }
       }
-      
+
+      // Send admin notification when stage changes (never for new_lead_unqualified)
+      if (
+        dealData.stage &&
+        dealData.stage !== "new_lead_unqualified" &&
+        beforeDeal &&
+        dealData.stage !== beforeDeal.stage
+      ) {
+        const actorId = req.user.claims.sub;
+        const actor = await storage.getUser(actorId);
+        const actorName = actor ? `${actor.firstName ?? ""} ${actor.lastName ?? ""}`.trim() || actor.email || actorId : actorId;
+        const contact = deal.contactId ? await storage.getContact(deal.contactId, null) : null;
+        const contactName = contact ? `${contact.firstName} ${contact.lastName}` : "N/A";
+        const stageLabelMap: Record<string, string> = {
+          qualified_lead: "Qualified Lead",
+          contacted_emailed: "Contacted - Emailed",
+          contacted_phone_spoke_decision_maker: "Contacted - Phone Spoke To Decision Maker",
+          contacted_phone_spoke_non_decision_maker: "Contacted - Phone Spoke To Non-Decision Maker",
+          contacted_phone_left_message: "Contacted - Phone Left Message",
+          trial_period_started: "Trial Period Started",
+          pending_commitment: "Pending Commitment",
+          in_negotiation: "In Negotiation",
+          won: "Won",
+          lost: "Lost",
+        };
+        const newLabel = stageLabelMap[dealData.stage] ?? dealData.stage;
+        const oldLabel = stageLabelMap[beforeDeal.stage] ?? beforeDeal.stage;
+        const adminEmails = ["seann@esypet.com", "ravin@esypet.com", "srinath@esyntaxis.com"];
+        const subject = `EsyPet CRM — Deal Stage Updated: ${deal.title}`;
+        const textBody = [
+          `Deal Stage Change Notification`,
+          ``,
+          `Deal: ${deal.title}`,
+          `Contact: ${contactName}`,
+          `Salesperson: ${actorName}`,
+          `Previous Stage: ${oldLabel}`,
+          `New Stage: ${newLabel}`,
+          deal.plan ? `Plan: ${deal.plan}` : "",
+        ].filter(Boolean).join("\n");
+        for (const adminEmail of adminEmails) {
+          try {
+            await sendEmail({ to: adminEmail, subject, body: textBody });
+          } catch (e) {
+            console.error(`[StageNotify] Failed to email ${adminEmail}:`, e);
+          }
+        }
+      }
+
       res.json(deal);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -1081,7 +1131,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const userId = getUserIdForQuery(req.user);
       const deals = await storage.getDeals(userId);
-      const stages = ["new_lead_unqualified", "qualified_lead", "contacted_left_message", "contacted_spoke_to_decision_maker", "onboarded_form_completed", "demo_scheduled", "demo_completed", "decision_pending", "won"];
+      const stages = ["new_lead_unqualified", "qualified_lead", "contacted_emailed", "contacted_phone_spoke_decision_maker", "contacted_phone_spoke_non_decision_maker", "contacted_phone_left_message", "trial_period_started", "pending_commitment", "in_negotiation", "won", "lost"];
       
       const pipeline = stages.map(stage => {
         const stageDeals = deals.filter(deal => deal.stage === stage);
@@ -1120,21 +1170,82 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get commission summary for authenticated user
+  // Get commissions for authenticated user (salesperson sees own, admin sees all)
+  // Returns enriched commission objects with dealTitle and salespersonName
   app.get("/api/commissions", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = getUserIdForQuery(req.user); // null for admin, userId for salesperson
-      const deals = await storage.getDeals(userId);
-      
-      // Only include won deals that are approved
-      const approvedDeals = deals.filter(
-        deal => deal.stage === "won" && deal.approved === "approved"
-      );
-      
-      res.json(approvedDeals);
+      const isAdminUser = (req.user as any)?.claims?.role === "admin";
+      const userId = isAdminUser ? null : req.user.claims.sub;
+      const commissionData = await storage.getCommissions(userId);
+      const enriched = await Promise.all(commissionData.map(async (c) => {
+        const deal = await storage.getDeal(c.dealId, null);
+        const salesperson = await storage.getUser(c.userId);
+        const salespersonName = salesperson
+          ? `${salesperson.firstName ?? ""} ${salesperson.lastName ?? ""}`.trim() || salesperson.email || c.userId
+          : c.userId;
+        return { ...c, dealTitle: deal?.title ?? "Unknown Deal", salespersonName };
+      }));
+      res.json(enriched);
     } catch (error) {
       console.error("Error fetching commissions:", error);
       res.status(500).json({ message: "Failed to fetch commissions" });
+    }
+  });
+
+  // Create commission when deal is confirmed as Won
+  app.post("/api/commissions", isAuthenticated, async (req: any, res) => {
+    try {
+      const actorId = req.user.claims.sub;
+      const isAdminUser = (req.user as any)?.claims?.role === "admin";
+      const { dealId, planName } = req.body;
+      if (!dealId || !planName) {
+        return res.status(400).json({ message: "dealId and planName are required" });
+      }
+      const { upfront, monthly } = getCommissionAmounts(planName);
+      // Fetch deal to get the salesperson's userId
+      const deal = await storage.getDeal(dealId, isAdminUser ? null : actorId);
+      if (!deal) return res.status(404).json({ message: "Deal not found" });
+      const commission = await storage.createCommission({
+        dealId,
+        userId: deal.userId,
+        planName,
+        upfrontAmount: upfront.toFixed(2),
+        monthlyAmount: monthly.toFixed(2),
+      });
+      // Update the deal stage to won and set the plan
+      await storage.updateDeal(dealId, { stage: "won", wonDate: new Date(), plan: planName }, isAdminUser ? null : actorId);
+
+      // Send admin notification for Won stage change
+      if (deal.stage !== "won") {
+        const actor = await storage.getUser(actorId);
+        const actorName = actor ? `${actor.firstName ?? ""} ${actor.lastName ?? ""}`.trim() || actor.email || actorId : actorId;
+        const contact = deal.contactId ? await storage.getContact(deal.contactId, null) : null;
+        const contactName = contact ? `${contact.firstName} ${contact.lastName}` : "N/A";
+        const adminEmails = ["seann@esypet.com", "ravin@esypet.com", "srinath@esyntaxis.com"];
+        const subject = `EsyPet CRM — Deal Won: ${deal.title}`;
+        const textBody = [
+          `Deal Won Notification`,
+          ``,
+          `Deal: ${deal.title}`,
+          `Contact: ${contactName}`,
+          `Salesperson: ${actorName}`,
+          `Plan: ${planName}`,
+          `Upfront Commission: $${upfront.toFixed(2)}`,
+          `Monthly Commission: $${monthly.toFixed(2)}/mo`,
+        ].join("\n");
+        for (const adminEmail of adminEmails) {
+          try {
+            await sendEmail({ to: adminEmail, subject, body: textBody });
+          } catch (e) {
+            console.error(`[WonNotify] Failed to email ${adminEmail}:`, e);
+          }
+        }
+      }
+
+      res.status(201).json(commission);
+    } catch (error) {
+      console.error("Error creating commission:", error);
+      res.status(500).json({ message: "Failed to create commission" });
     }
   });
 
