@@ -138,6 +138,65 @@ async function shouldSendFollowUpSequence(
   return daysSincePrevious >= daysRequired;
 }
 
+/**
+ * After a sequence is successfully sent, auto-schedule the next one in the chain.
+ * Only applies to the two auto-track types (no_software, uses_competitor).
+ * Sequences 2→3→4→5 are created automatically; the chain stops if the contact replies.
+ */
+async function scheduleNextSequence(
+  sentLog: EmailSequenceLog,
+  sentSequence: EmailSequence,
+  sentAt: Date
+): Promise<void> {
+  // Custom track emails are one-off — no chaining
+  if (sentSequence.sequenceTrack === "custom") return;
+
+  const nextNumber = sentSequence.sequenceNumber + 1;
+  const daysRequired = SEQUENCE_DAYS_AFTER_PREVIOUS[nextNumber];
+  if (!daysRequired) return; // No more sequences after 5
+
+  // Stop the chain if the contact has already replied
+  const inboxMessages = await storage.getInboxMessages(null, sentLog.contactId);
+  if (inboxMessages.length > 0) {
+    console.log(`[AutoChain] Contact ${sentLog.contactId} has replied — not scheduling Sequence ${nextNumber}`);
+    return;
+  }
+
+  // Don't create a duplicate log if one already exists for this contact + track + sequence number
+  const existingLogs = await storage.getEmailSequenceLogs(null, sentLog.contactId);
+  const alreadyScheduled = existingLogs.some(
+    l => l.sequenceNumber === nextNumber && l.sequenceTrack === sentSequence.sequenceTrack
+  );
+  if (alreadyScheduled) return;
+
+  // Find the next sequence template for this salesperson and track
+  const trackSequences = await storage.getEmailSequencesByTrack(sentLog.userId, sentSequence.sequenceTrack);
+  const nextSequence = trackSequences.find(s => s.sequenceNumber === nextNumber);
+  if (!nextSequence) {
+    console.log(`[AutoChain] No Sequence ${nextNumber} template found for user ${sentLog.userId} track ${sentSequence.sequenceTrack}`);
+    return;
+  }
+
+  // Schedule at sentAt + daysRequired days (same time of day)
+  const nextSendAt = new Date(sentAt.getTime() + daysRequired * 24 * 60 * 60 * 1000);
+
+  await storage.createEmailSequenceLog(
+    {
+      contactId: sentLog.contactId,
+      sequenceId: nextSequence.id,
+      sequenceTrack: sentSequence.sequenceTrack,
+      sequenceNumber: nextNumber,
+      status: "pending",
+      scheduledSendAt: nextSendAt,
+    },
+    sentLog.userId
+  );
+
+  console.log(
+    `[AutoChain] Scheduled Sequence ${nextNumber} for contact ${sentLog.contactId} at ${nextSendAt.toISOString()} (${daysRequired} days after Seq ${sentSequence.sequenceNumber})`
+  );
+}
+
 // Global lock to prevent concurrent scheduler runs
 let isProcessing = false;
 
@@ -252,16 +311,25 @@ export async function processEmailSequences(): Promise<{
         });
 
         if (result.success) {
+          const sentAt = new Date();
           await storage.updateEmailSequenceLog(
             log.id,
             {
               status: "sent",
-              sentAt: new Date(),
+              sentAt,
             },
             null
           );
           stats.sent++;
           console.log(`Sent Sequence ${sequence.sequenceNumber} to ${contact.email}`);
+
+          // Auto-schedule the next sequence in the chain (Seq 2→3→4→5)
+          try {
+            await scheduleNextSequence(log, sequence, sentAt);
+          } catch (chainErr) {
+            const msg = chainErr instanceof Error ? chainErr.message : String(chainErr);
+            console.error(`[AutoChain] Failed to schedule next sequence for contact ${log.contactId}: ${msg}`);
+          }
         } else {
           const errMsg = result.error || "Unknown Brevo error";
           console.error(`[EmailScheduler] FAILED to send to ${contact.email}: ${errMsg}`);
