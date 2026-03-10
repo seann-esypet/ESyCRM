@@ -1411,29 +1411,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = getUserIdForQuery(req.user);
       const schema = z.object({
         scheduledSendAt: z.string().min(1).refine((val) => !isNaN(Date.parse(val)), { message: "Invalid date format" }),
+        customSubject: z.string().optional(),
+        customBody: z.string().optional(),
       });
-      const { scheduledSendAt } = schema.parse(req.body);
+      const { scheduledSendAt, customSubject, customBody } = schema.parse(req.body);
 
       const log = await storage.getEmailSequenceLogById(req.params.id, userId);
       if (!log) {
         return res.status(404).json({ message: "Email sequence log not found" });
       }
       if (log.status !== "pending") {
-        return res.status(400).json({ message: "Only pending emails can be rescheduled" });
+        return res.status(400).json({ message: "Only pending emails can be updated" });
       }
 
-      const updated = await storage.updateEmailSequenceLog(
-        req.params.id,
-        { scheduledSendAt: new Date(scheduledSendAt) },
-        userId
-      );
+      const updateFields: Record<string, unknown> = { scheduledSendAt: new Date(scheduledSendAt) };
+      if (customSubject !== undefined) updateFields.customSubject = customSubject || null;
+      if (customBody !== undefined) updateFields.customBody = customBody || null;
+
+      const updated = await storage.updateEmailSequenceLog(req.params.id, updateFields as any, userId);
       res.json(updated);
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "scheduledSendAt is required", errors: error.errors });
       }
-      console.error("Error rescheduling email sequence log:", error);
-      res.status(500).json({ message: "Failed to reschedule email" });
+      console.error("Error updating email sequence log:", error);
+      res.status(500).json({ message: "Failed to update email" });
     }
   });
 

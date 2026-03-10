@@ -13,7 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import {
   Mail, Plus, CalendarClock, Pencil, Building2, Phone,
-  Trash2, Clock, CheckCircle2, XCircle, Loader2, SendHorizontal, User
+  Trash2, Clock, CheckCircle2, XCircle, Loader2, SendHorizontal, User, Save
 } from "lucide-react";
 import type { Contact, EmailSequence, EmailSequenceLog } from "@shared/schema";
 
@@ -62,6 +62,212 @@ function formatET(dateStr: string | Date | null | undefined): string {
   }
 }
 
+function toETDateTimeInputs(dateStr: string | Date | null | undefined): { date: string; time: string } {
+  if (!dateStr) return { date: "", time: "09:00" };
+  try {
+    const d = new Date(dateStr);
+    const etParts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", hour12: false,
+    }).formatToParts(d);
+    const get = (t: string) => etParts.find(p => p.type === t)?.value ?? "";
+    const date = `${get("year")}-${get("month")}-${get("day")}`;
+    const hour = get("hour") === "24" ? "00" : get("hour");
+    const time = `${hour}:${get("minute")}`;
+    return { date, time };
+  } catch {
+    return { date: "", time: "09:00" };
+  }
+}
+
+function buildETISOString(date: string, time: string): string {
+  const refUtc = new Date(`${date}T12:00:00Z`);
+  const etHour = parseInt(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      hour: "2-digit",
+      hour12: false,
+    }).format(refUtc),
+    10
+  );
+  const offsetHours = etHour - 12;
+  const sign = offsetHours >= 0 ? "+" : "-";
+  const etOffsetStr = `${sign}${String(Math.abs(offsetHours)).padStart(2, "0")}:00`;
+  return `${date}T${time}:00${etOffsetStr}`;
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Update Dialog — edit subject, body, and reschedule a pending email
+// ──────────────────────────────────────────────────────────────────────────────
+interface UpdateDialogProps {
+  log: EmailSequenceLog;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSuccess: () => void;
+}
+
+function UpdateSequenceDialog({ log, open, onOpenChange, onSuccess }: UpdateDialogProps) {
+  const { toast } = useToast();
+
+  const { data: sequence } = useQuery<EmailSequence>({
+    queryKey: ["/api/email-sequences", log.sequenceId],
+    queryFn: () => fetch(`/api/email-sequences/${log.sequenceId}`, { credentials: "include" }).then(r => r.json()),
+    enabled: open,
+  });
+
+  const initialDT = toETDateTimeInputs(log.scheduledSendAt);
+  const [sendDate, setSendDate] = useState(initialDT.date);
+  const [sendTime, setSendTime] = useState(initialDT.time);
+  const [subject, setSubject] = useState<string | null>(null);
+  const [body, setBody] = useState<string | null>(null);
+
+  const effectiveSubject = subject ?? (log.customSubject || sequence?.subject || "");
+  const effectiveBody = body ?? (log.customBody || sequence?.body || "");
+
+  const reset = () => {
+    const dt = toETDateTimeInputs(log.scheduledSendAt);
+    setSendDate(dt.date);
+    setSendTime(dt.time);
+    setSubject(null);
+    setBody(null);
+  };
+
+  const handleOpenChange = (val: boolean) => {
+    if (!val) reset();
+    onOpenChange(val);
+  };
+
+  const updateMutation = useMutation({
+    mutationFn: async () => {
+      if (!sendDate) throw new Error("Please pick a send date");
+      const scheduledSendAt = buildETISOString(sendDate, sendTime);
+      const payload: Record<string, unknown> = { scheduledSendAt };
+      if (subject !== null) payload.customSubject = subject;
+      if (body !== null) payload.customBody = body;
+      const res = await apiRequest("PATCH", `/api/email-sequence-logs/${log.id}/reschedule`, payload);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: "Failed to update" }));
+        throw new Error(err.message);
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/email-sequence-logs"] });
+      toast({ title: "Updated", description: "Sequence email has been updated." });
+      handleOpenChange(false);
+      onSuccess();
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent className="max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+        <DialogHeader className="pb-3 border-b">
+          <DialogTitle className="flex items-center gap-2 text-base">
+            <Pencil className="h-4 w-4" />
+            Update Scheduled Email — Sequence #{log.sequenceNumber}
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4 pt-1">
+          {/* Track badge */}
+          <div className="flex items-center gap-2">
+            <Badge className={`text-xs ${TRACK_COLORS[log.sequenceTrack] ?? "bg-muted text-muted-foreground"}`}>
+              {TRACK_LABELS[log.sequenceTrack] ?? log.sequenceTrack}
+            </Badge>
+            <span className="text-xs text-muted-foreground">track</span>
+          </div>
+
+          {/* Date & time */}
+          <div className="rounded-md border p-3 space-y-2">
+            <p className="text-xs font-medium flex items-center gap-1.5">
+              <CalendarClock className="h-3.5 w-3.5 text-muted-foreground" />
+              Send Date &amp; Time <span className="text-xs text-muted-foreground font-normal">(Eastern Time)</span>
+            </p>
+            <div className="flex gap-3">
+              <div className="flex-1 space-y-1">
+                <Label className="text-xs">Date</Label>
+                <Input
+                  type="date"
+                  value={sendDate}
+                  onChange={e => setSendDate(e.target.value)}
+                  min={new Date().toISOString().slice(0, 10)}
+                  data-testid="input-update-date"
+                />
+              </div>
+              <div className="w-32 space-y-1">
+                <Label className="text-xs">Time (ET)</Label>
+                <Input
+                  type="time"
+                  value={sendTime}
+                  onChange={e => setSendTime(e.target.value)}
+                  data-testid="input-update-time"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Subject */}
+          <div className="space-y-1.5">
+            <Label className="text-xs font-medium">
+              Subject
+              {!log.customSubject && log.sequenceTrack !== "custom" && (
+                <span className="text-muted-foreground font-normal ml-1">(from template — edit to override)</span>
+              )}
+            </Label>
+            <Input
+              value={effectiveSubject}
+              onChange={e => setSubject(e.target.value)}
+              placeholder="Email subject…"
+              data-testid="input-update-subject"
+            />
+          </div>
+
+          {/* Body */}
+          <div className="space-y-1.5">
+            <Label className="text-xs font-medium">
+              Body
+              {!log.customBody && log.sequenceTrack !== "custom" && (
+                <span className="text-muted-foreground font-normal ml-1">(from template — edit to override)</span>
+              )}
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              Tokens: <code className="bg-muted px-1 rounded text-xs">[Contact_First_Name]</code>{" "}
+              <code className="bg-muted px-1 rounded text-xs">[Sales_Person]</code>{" "}
+              <code className="bg-muted px-1 rounded text-xs">[Business_Name]</code>
+            </p>
+            <Textarea
+              value={effectiveBody}
+              onChange={e => setBody(e.target.value)}
+              rows={10}
+              className="resize-none text-sm font-mono"
+              data-testid="textarea-update-body"
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 pt-3 border-t mt-2">
+          <Button variant="outline" onClick={() => handleOpenChange(false)} data-testid="button-update-cancel">
+            Cancel
+          </Button>
+          <Button
+            onClick={() => updateMutation.mutate()}
+            disabled={updateMutation.isPending || !sendDate}
+            data-testid="button-update-save"
+          >
+            <Save className="h-4 w-4 mr-2" />
+            {updateMutation.isPending ? "Saving…" : "Save Changes"}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Composer Dialog
 // ──────────────────────────────────────────────────────────────────────────────
@@ -88,7 +294,6 @@ function SequenceComposerDialog({ contact, open, onOpenChange, onSuccess }: Comp
     enabled: open,
   });
 
-  // Only show Sequence #1 entries (one per track) since that's what starts a new chain
   const seqOptions = useMemo(() => {
     if (!allSequences) return [];
     return allSequences.filter(s => s.sequenceNumber === 1);
@@ -121,20 +326,7 @@ function SequenceComposerDialog({ contact, open, onOpenChange, onSuccess }: Comp
       if (isCustomTrack && !customSubject.trim()) throw new Error("Please enter a subject");
       if (isCustomTrack && !customBody.trim()) throw new Error("Please enter an email body");
 
-      // Build ET-offset ISO string
-      const refUtc = new Date(`${sendDate}T12:00:00Z`);
-      const etHour = parseInt(
-        new Intl.DateTimeFormat("en-US", {
-          timeZone: "America/New_York",
-          hour: "2-digit",
-          hour12: false,
-        }).format(refUtc),
-        10
-      );
-      const offsetHours = etHour - 12;
-      const sign = offsetHours >= 0 ? "+" : "-";
-      const etOffsetStr = `${sign}${String(Math.abs(offsetHours)).padStart(2, "0")}:00`;
-      const scheduledSendAt = `${sendDate}T${sendTime}:00${etOffsetStr}`;
+      const scheduledSendAt = buildETISOString(sendDate, sendTime);
 
       const payload: Record<string, unknown> = {
         sequenceId: selectedSequenceId,
@@ -192,7 +384,6 @@ function SequenceComposerDialog({ contact, open, onOpenChange, onSuccess }: Comp
         <div className="flex flex-1 overflow-hidden">
           {/* ── LEFT: Contact Summary ──────────────────────────────────── */}
           <div className="w-64 shrink-0 border-r bg-muted/30 p-4 overflow-y-auto space-y-4">
-            {/* Avatar + name */}
             <div className="flex flex-col items-center text-center gap-2 pt-2">
               <div className="w-14 h-14 rounded-full bg-primary flex items-center justify-center text-xl font-semibold text-primary-foreground">
                 {(contact.firstName?.[0] ?? "")}
@@ -210,7 +401,6 @@ function SequenceComposerDialog({ contact, open, onOpenChange, onSuccess }: Comp
 
             <Separator />
 
-            {/* Contact details */}
             <div className="space-y-2 text-xs">
               {contact.email && (
                 <div className="flex items-start gap-2">
@@ -234,7 +424,6 @@ function SequenceComposerDialog({ contact, open, onOpenChange, onSuccess }: Comp
 
             <Separator />
 
-            {/* Status badges */}
             <div className="space-y-2">
               {contact.usesSoftware && (
                 <div>
@@ -264,7 +453,6 @@ function SequenceComposerDialog({ contact, open, onOpenChange, onSuccess }: Comp
               )}
             </div>
 
-            {/* Pain points hint */}
             {contact.painPoints && (
               <>
                 <Separator />
@@ -278,7 +466,6 @@ function SequenceComposerDialog({ contact, open, onOpenChange, onSuccess }: Comp
 
           {/* ── RIGHT: Composer ────────────────────────────────────────── */}
           <div className="flex-1 overflow-y-auto p-5 space-y-4">
-            {/* Sequence picker */}
             <div className="space-y-1.5">
               <Label className="text-xs font-medium">Sequence to Start</Label>
               {isLoadingSeq ? (
@@ -304,7 +491,6 @@ function SequenceComposerDialog({ contact, open, onOpenChange, onSuccess }: Comp
               )}
             </div>
 
-            {/* Template preview (non-custom) or track info */}
             {selectedSeq && !isCustomTrack && (
               <div className="rounded-md border bg-muted/40 p-3 space-y-1">
                 <div className="flex items-center gap-2">
@@ -317,7 +503,6 @@ function SequenceComposerDialog({ contact, open, onOpenChange, onSuccess }: Comp
               </div>
             )}
 
-            {/* Custom email editor */}
             {selectedSeq && isCustomTrack && (
               <div className="space-y-3 rounded-md border border-purple-200 dark:border-purple-800 bg-purple-50/50 dark:bg-purple-950/20 p-3">
                 <div className="flex items-center gap-1.5">
@@ -353,7 +538,6 @@ function SequenceComposerDialog({ contact, open, onOpenChange, onSuccess }: Comp
               </div>
             )}
 
-            {/* Date & time */}
             {selectedSeq && (
               <div className="rounded-md border p-3 space-y-2">
                 <p className="text-xs font-medium flex items-center gap-1.5">
@@ -389,7 +573,6 @@ function SequenceComposerDialog({ contact, open, onOpenChange, onSuccess }: Comp
           </div>
         </div>
 
-        {/* Footer */}
         <div className="flex items-center justify-end gap-2 px-6 py-4 border-t shrink-0">
           <Button variant="outline" onClick={() => handleOpenChange(false)} data-testid="button-cancel">
             Cancel
@@ -409,6 +592,7 @@ function SequenceComposerDialog({ contact, open, onOpenChange, onSuccess }: Comp
 // ──────────────────────────────────────────────────────────────────────────────
 export default function DealSequencePanel({ contact }: DealSequencePanelProps) {
   const [composerOpen, setComposerOpen] = useState(false);
+  const [editingLog, setEditingLog] = useState<EmailSequenceLog | null>(null);
   const { toast } = useToast();
 
   const { data: logs, isLoading, refetch } = useQuery<EmailSequenceLog[]>({
@@ -491,7 +675,7 @@ export default function DealSequencePanel({ contact }: DealSequencePanelProps) {
                     {STATUS_LABELS[log.status] ?? log.status}
                   </span>
                 </div>
-                {/* Custom email snapshot */}
+                {/* Custom subject override indicator */}
                 {log.customSubject && (
                   <p className="text-xs text-muted-foreground mt-1 truncate">
                     <span className="font-medium">Subject:</span> {log.customSubject}
@@ -512,17 +696,29 @@ export default function DealSequencePanel({ contact }: DealSequencePanelProps) {
                             : ""}
                 </p>
               </div>
-              {/* Cancel button (only for pending) */}
+              {/* Action buttons (only for pending) */}
               {log.status === "pending" && (
-                <button
-                  className="text-muted-foreground hover:text-destructive transition-colors mt-0.5 shrink-0"
-                  onClick={() => cancelMutation.mutate(log.id)}
-                  disabled={cancelMutation.isPending}
-                  title="Cancel scheduled email"
-                  data-testid={`button-cancel-log-${log.id}`}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
+                <div className="flex items-center gap-1.5 mt-0.5 shrink-0">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-6 px-2 text-xs"
+                    onClick={() => setEditingLog(log)}
+                    data-testid={`button-update-log-${log.id}`}
+                  >
+                    <Pencil className="h-3 w-3 mr-1" />
+                    Update
+                  </Button>
+                  <button
+                    className="text-muted-foreground hover:text-destructive transition-colors"
+                    onClick={() => cancelMutation.mutate(log.id)}
+                    disabled={cancelMutation.isPending}
+                    title="Cancel scheduled email"
+                    data-testid={`button-cancel-log-${log.id}`}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
               )}
             </div>
           ))}
@@ -536,6 +732,16 @@ export default function DealSequencePanel({ contact }: DealSequencePanelProps) {
         onOpenChange={setComposerOpen}
         onSuccess={() => refetch()}
       />
+
+      {/* Update dialog */}
+      {editingLog && (
+        <UpdateSequenceDialog
+          log={editingLog}
+          open={!!editingLog}
+          onOpenChange={(open) => { if (!open) setEditingLog(null); }}
+          onSuccess={() => { refetch(); setEditingLog(null); }}
+        />
+      )}
     </div>
   );
 }
