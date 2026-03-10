@@ -41,8 +41,9 @@ export const contacts = pgTable("contacts", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id, { onUpdate: "cascade" }),
   groupId: varchar("group_id").references(() => contactGroups.id),
-  firstName: text("first_name").notNull(),
-  lastName: text("last_name").notNull(),
+  firstName: text("first_name"),
+  lastName: text("last_name"),
+  useBusinessNameForEmail: text("use_business_name_for_email").default("No"), // Yes, No
   email: text("email"),
   phone: text("phone"),
   phoneCell: text("phone_cell"),
@@ -227,9 +228,10 @@ export const insertContactSchema = createInsertSchema(contacts).omit({
   userId: true,
   lastContactDate: true,
 }).extend({
-  firstName: z.string().min(1, "First name is required"),
-  lastName: z.string().min(1, "Last name is required"),
+  firstName: z.string().optional().nullable(),
+  lastName: z.string().optional().nullable(),
   usesSoftware: z.string().min(1, "Uses Software is required"),
+  useBusinessNameForEmail: z.string().optional().nullable(),
 });
 
 export const insertDealSchema = createInsertSchema(deals).omit({

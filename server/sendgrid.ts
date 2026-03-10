@@ -49,10 +49,15 @@ export function replaceTemplateVariables(
   const city = contact.city || '';
   const salespersonEmail = salesperson.workEmail || salesperson.email || '';
 
-  console.log(`[replaceTemplateVariables] contact: ${contact.firstName} ${contact.lastName}, company: "${contact.company}", businessName: "${businessName}", city: "${city}"`);
+  const contactFirstName =
+    (contact.useBusinessNameForEmail === "Yes" || !contact.firstName)
+      ? (contact.company || businessName)
+      : contact.firstName;
+
+  console.log(`[replaceTemplateVariables] contact: ${contact.firstName} ${contact.lastName}, company: "${contact.company}", businessName: "${businessName}", city: "${city}", useBusinessName: ${contact.useBusinessNameForEmail}`);
 
   return content
-    .replace(/\[Contact_First_Name\]/g, contact.firstName)
+    .replace(/\[Contact_First_Name\]/g, contactFirstName)
     .replace(/\[Sales_Person\]/g, salespersonName)
     .replace(/\[Business_Name\]/g, businessName)
     .replace(/\[City\]/g, city)

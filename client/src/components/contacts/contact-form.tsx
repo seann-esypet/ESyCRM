@@ -123,6 +123,7 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
     defaultValues: {
       firstName: contact?.firstName || "",
       lastName: contact?.lastName || "",
+      useBusinessNameForEmail: contact?.useBusinessNameForEmail || "No",
       email: contact?.email || "",
       phone: contact?.phone || "",
       phoneCell: contact?.phoneCell || "",
@@ -174,7 +175,7 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
     onSuccess: () => {
       toast({
         title: contact ? "Contact updated" : "Contact created",
-        description: `${form.getValues("firstName")} ${form.getValues("lastName")} has been ${contact ? "updated" : "added"} successfully.`,
+        description: `${[form.getValues("firstName"), form.getValues("lastName")].filter(Boolean).join(" ") || form.getValues("company") || "Contact"} has been ${contact ? "updated" : "added"} successfully.`,
       });
       onSuccess();
     },
@@ -229,7 +230,7 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
       const response = await apiRequest("PUT", `/api/contacts/${contactId}`, pendingContactData);
       toast({
         title: "Contact updated",
-        description: `${pendingContactData.firstName} ${pendingContactData.lastName} has been updated successfully.`,
+        description: `${[pendingContactData.firstName, pendingContactData.lastName].filter(Boolean).join(" ") || pendingContactData.company || "Contact"} has been updated successfully.`,
       });
       setPendingContactData(null);
       onSuccess();
@@ -246,43 +247,99 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6" data-testid="contact-form">
         <div className="space-y-4">
           <h3 className="text-sm font-semibold text-foreground">Primary Contact</h3>
-          <div className="grid grid-cols-2 gap-4">
-            <FormField
-              control={form.control}
-              name="firstName"
-              render={({ field }) => (
+
+          <FormField
+            control={form.control}
+            name="useBusinessNameForEmail"
+            render={({ field }) => {
+              const checked = field.value === "Yes";
+              return (
                 <FormItem>
-                  <FormLabel>First Name</FormLabel>
-                  <FormControl>
-                    <Input 
-                      {...field} 
-                      placeholder="John"
-                      data-testid="input-firstName"
-                    />
-                  </FormControl>
+                  <div
+                    className={`flex items-start gap-3 rounded-md border p-3 cursor-pointer transition-colors select-none ${
+                      checked
+                        ? "border-amber-400 bg-amber-50 dark:border-amber-600 dark:bg-amber-950/30"
+                        : "border-muted bg-muted/20 hover:bg-muted/40"
+                    }`}
+                    onClick={() => field.onChange(checked ? "No" : "Yes")}
+                    data-testid="toggle-use-business-name"
+                  >
+                    <div className={`mt-0.5 h-4 w-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
+                      checked ? "border-amber-500 bg-amber-500" : "border-muted-foreground bg-background"
+                    }`}>
+                      {checked && (
+                        <svg className="h-2.5 w-2.5 text-white" fill="none" viewBox="0 0 12 12">
+                          <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-foreground">No first or last name — use business name in emails</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {checked
+                          ? "Email greetings will use the business name instead of a personal name."
+                          : "Check this if you can't find the contact's name. The business name will be used for [Contact_First_Name] tokens in all sequences."}
+                      </p>
+                    </div>
+                  </div>
                   <FormMessage />
                 </FormItem>
-              )}
-            />
-            
-            <FormField
-              control={form.control}
-              name="lastName"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Last Name</FormLabel>
-                  <FormControl>
-                    <Input 
-                      {...field} 
-                      placeholder="Smith"
-                      data-testid="input-lastName"
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </div>
+              );
+            }}
+          />
+
+          {form.watch("useBusinessNameForEmail") !== "Yes" && (
+            <div className="grid grid-cols-2 gap-4">
+              <FormField
+                control={form.control}
+                name="firstName"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>First Name <span className="text-destructive">*</span></FormLabel>
+                    <FormControl>
+                      <Input
+                        {...field}
+                        value={field.value || ""}
+                        placeholder="John"
+                        data-testid="input-firstName"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="lastName"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Last Name</FormLabel>
+                    <FormControl>
+                      <Input
+                        {...field}
+                        value={field.value || ""}
+                        placeholder="Smith"
+                        data-testid="input-lastName"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+          )}
+
+          {form.watch("useBusinessNameForEmail") === "Yes" && (
+            <div className="rounded-md border border-amber-200 bg-amber-50/60 dark:border-amber-800 dark:bg-amber-950/20 px-3 py-2.5 flex items-center gap-2">
+              <svg className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 110 20A10 10 0 0112 2z" />
+              </svg>
+              <p className="text-xs text-amber-800 dark:text-amber-200">
+                Sequence emails will greet this contact using their <strong>business name</strong> instead of a personal name.
+                Make sure the <strong>Business / Company</strong> field is filled in below.
+              </p>
+            </div>
+          )}
 
           <FormField
             control={form.control}
