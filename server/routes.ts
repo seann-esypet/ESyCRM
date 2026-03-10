@@ -1720,6 +1720,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       console.log(`[Inbound] Created inbox message from ${fromEmail} for salesperson ${contact.userId}`);
 
+      // Cancel all pending (scheduled) sequence emails for this contact — they replied
+      try {
+        const allLogs = await storage.getEmailSequenceLogs(null, contact.id);
+        const pendingLogs = allLogs.filter(l => l.status === "pending");
+        if (pendingLogs.length > 0) {
+          await Promise.all(pendingLogs.map(l => storage.deleteEmailSequenceLog(l.id, null)));
+          console.log(`[Inbound] Cancelled ${pendingLogs.length} pending sequence(s) for contact ${contact.id} after reply from ${fromEmail}`);
+        }
+      } catch (cancelErr) {
+        console.error("[Inbound] Failed to cancel pending sequences after reply:", cancelErr);
+      }
+
       // Notify the salesperson
       const salesperson = await storage.getUser(contact.userId);
       if (salesperson) {
