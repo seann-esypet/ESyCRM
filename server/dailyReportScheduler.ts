@@ -90,9 +90,10 @@ function contactDisplay(c: { firstName?: string | null; lastName?: string | null
 
 function buildEmailHtml(
   sentRows: SentRow[],
-  replyRows: ReplyRow[]
+  replyRows: ReplyRow[],
+  dateLabel?: string
 ): string {
-  const date = todayLabel();
+  const date = dateLabel ?? todayLabel();
 
   const totalSent    = sentRows.length;
   const totalReplies = replyRows.length;
@@ -262,10 +263,12 @@ const TRACK_LABELS: Record<string, string> = {
 // Main report function
 // ────────────────────────────────────────────────────────────────────────────
 
-export async function sendDailyReport(): Promise<void> {
+export async function sendDailyReport(options?: { overrideStart?: Date; overrideEnd?: Date; label?: string }): Promise<void> {
   console.log("[DailyReport] Building daily activity report...");
 
-  const { start, end } = getTodayRangeET();
+  const { start, end } = options?.overrideStart
+    ? { start: options.overrideStart, end: options.overrideEnd ?? new Date() }
+    : getTodayRangeET();
 
   try {
     // Fetch all data in parallel
@@ -350,8 +353,9 @@ export async function sendDailyReport(): Promise<void> {
       console.log("[DailyReport] No activity today — sending report anyway.");
     }
 
-    const subject = `EsyPet CRM Daily Report — ${todayLabel()} · ${sentRows.length} sent, ${replyRows.length} repl${replyRows.length === 1 ? "y" : "ies"}`;
-    const html = buildEmailHtml(sentRows, replyRows);
+    const reportLabel = options?.label ?? todayLabel();
+    const subject = `EsyPet CRM Daily Report — ${reportLabel} · ${sentRows.length} sent, ${replyRows.length} repl${replyRows.length === 1 ? "y" : "ies"}`;
+    const html = buildEmailHtml(sentRows, replyRows, reportLabel);
 
     // Send to all recipients
     const results = await Promise.allSettled(
