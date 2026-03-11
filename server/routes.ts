@@ -8,6 +8,7 @@ import { getCommissionAmounts } from "@shared/utils";
 import { z } from "zod";
 import Papa from "papaparse";
 import { runLeadDiscoveryJob, importResultsToCRM } from "./lead-discovery";
+import { sendDailyReport } from "./dailyReportScheduler";
 import { sendReplyNotificationEmail, sendEmail, replaceTemplateVariables } from "./sendgrid";
 
 // ─── Sequence Test Runner (in-memory) ────────────────────────────────────────
@@ -177,6 +178,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       console.error("Error updating profile:", error);
       res.status(500).json({ message: "Failed to update profile" });
+    }
+  });
+
+  // Admin: trigger daily report immediately (test)
+  app.post('/api/admin/send-daily-report', isAdmin, async (_req, res) => {
+    try {
+      sendDailyReport().catch(err => console.error("[DailyReport] Test send error:", err));
+      res.json({ message: "Daily report queued — check email in a few seconds." });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to trigger report" });
     }
   });
 
