@@ -4,6 +4,7 @@ import { setupVite, serveStatic, log } from "./vite";
 import { startEmailSequenceScheduler } from "./emailScheduler";
 import { startTaskReminderScheduler } from "./taskReminderScheduler";
 import { startCommissionScheduler } from "./commissionScheduler";
+import { startDailyReportScheduler } from "./dailyReportScheduler";
 
 const app = express();
 app.use(express.json());
@@ -84,5 +85,10 @@ app.use((req, res, next) => {
 
     // Start commission monthly payment scheduler (always runs, checks every 24 hours)
     startCommissionScheduler();
+
+    // Start daily activity report scheduler (sends at 6:00 PM ET every day)
+    if (process.env.BREVO_API_KEY) {
+      startDailyReportScheduler();
+    }
   });
 })();
