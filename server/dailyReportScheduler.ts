@@ -94,131 +94,157 @@ function buildEmailHtml(
   dateLabel?: string
 ): string {
   const date = dateLabel ?? todayLabel();
-
   const totalSent    = sentRows.length;
   const totalReplies = replyRows.length;
 
-  // Group sent by salesperson
-  const bySalesperson = new Map<string, SentRow[]>();
-  for (const row of sentRows) {
-    const key = row.salespersonName;
-    if (!bySalesperson.has(key)) bySalesperson.set(key, []);
-    bySalesperson.get(key)!.push(row);
-  }
+  const thStyle = `padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid #e5e7eb;background:#f9fafb;white-space:nowrap;`;
+  const tdStyle = `padding:9px 12px;font-size:13px;color:#111827;border-bottom:1px solid #f3f4f6;vertical-align:top;`;
+  const tdMutedStyle = `padding:9px 12px;font-size:13px;color:#6b7280;border-bottom:1px solid #f3f4f6;vertical-align:top;`;
 
-  // Sent table rows HTML
+  // Sent table rows
   const sentTableRows = sentRows.length === 0
-    ? `<tr><td colspan="6" style="padding:12px 16px; color:#6b7280; font-style:italic; text-align:center;">No emails sent today</td></tr>`
-    : sentRows.map(r => `
-      <tr style="border-bottom:1px solid #f3f4f6;">
-        <td style="padding:10px 16px; font-size:13px;">${escHtml(r.recipientName)}</td>
-        <td style="padding:10px 16px; font-size:13px; color:#6b7280;">${escHtml(r.businessName)}</td>
-        <td style="padding:10px 16px; font-size:13px; color:#6b7280;">${escHtml(r.location)}</td>
-        <td style="padding:10px 16px; font-size:13px;">${escHtml(r.salespersonName)}</td>
-        <td style="padding:10px 16px; font-size:13px;">
-          <span style="background:#dbeafe; color:#1d4ed8; padding:2px 8px; border-radius:9999px; font-size:11px; white-space:nowrap;">
-            Seq #${r.sequenceNumber} · ${escHtml(r.track)}
-          </span>
-        </td>
-        <td style="padding:10px 16px; font-size:13px;">
-          <span style="background:#f3f4f6; color:#374151; padding:2px 8px; border-radius:9999px; font-size:11px; white-space:nowrap;">${escHtml(r.dealStage)}</span>
-        </td>
+    ? `<tr><td colspan="6" style="${tdMutedStyle}text-align:center;font-style:italic;">No emails sent today</td></tr>`
+    : sentRows.map((r, i) => `
+      <tr style="background:${i % 2 === 0 ? '#ffffff' : '#fafafa'};">
+        <td style="${tdStyle}font-weight:500;">${escHtml(r.recipientName)}</td>
+        <td style="${tdMutedStyle}">${escHtml(r.businessName)}</td>
+        <td style="${tdMutedStyle}">${escHtml(r.location)}</td>
+        <td style="${tdStyle}">${escHtml(r.salespersonName)}</td>
+        <td style="${tdStyle}"><span style="background:#dbeafe;color:#1d4ed8;padding:2px 7px;border-radius:4px;font-size:11px;white-space:nowrap;">Seq #${r.sequenceNumber} &middot; ${escHtml(r.track)}</span></td>
+        <td style="${tdStyle}"><span style="background:#f3f4f6;color:#374151;padding:2px 7px;border-radius:4px;font-size:11px;white-space:nowrap;">${escHtml(r.dealStage)}</span></td>
       </tr>`).join("");
 
+  // Reply table rows — shows the business contact who replied + the from email for clarity
   const replyTableRows = replyRows.length === 0
-    ? `<tr><td colspan="5" style="padding:12px 16px; color:#6b7280; font-style:italic; text-align:center;">No replies received today</td></tr>`
-    : replyRows.map(r => `
-      <tr style="border-bottom:1px solid #f3f4f6;">
-        <td style="padding:10px 16px; font-size:13px;">${escHtml(r.recipientName)}</td>
-        <td style="padding:10px 16px; font-size:13px; color:#6b7280;">${escHtml(r.businessName)}</td>
-        <td style="padding:10px 16px; font-size:13px; color:#6b7280;">${escHtml(r.location)}</td>
-        <td style="padding:10px 16px; font-size:13px;">${escHtml(r.salespersonName)}</td>
-        <td style="padding:10px 16px; font-size:13px;">
-          <span style="background:#f3f4f6; color:#374151; padding:2px 8px; border-radius:9999px; font-size:11px; white-space:nowrap;">${escHtml(r.dealStage)}</span>
-        </td>
+    ? `<tr><td colspan="5" style="${tdMutedStyle}text-align:center;font-style:italic;">No replies received today</td></tr>`
+    : replyRows.map((r, i) => `
+      <tr style="background:${i % 2 === 0 ? '#ffffff' : '#fafafa'};">
+        <td style="${tdStyle}font-weight:500;">${escHtml(r.recipientName)}<br><span style="font-size:11px;color:#9ca3af;font-weight:400;">${escHtml(r.fromEmail)}</span></td>
+        <td style="${tdMutedStyle}">${escHtml(r.businessName)}</td>
+        <td style="${tdMutedStyle}">${escHtml(r.location)}</td>
+        <td style="${tdStyle}">${escHtml(r.salespersonName)}</td>
+        <td style="${tdStyle}"><span style="background:#f3f4f6;color:#374151;padding:2px 7px;border-radius:4px;font-size:11px;white-space:nowrap;">${escHtml(r.dealStage)}</span></td>
       </tr>`).join("");
 
   return `<!DOCTYPE html>
-<html>
-<head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
-<body style="margin:0;padding:0;background:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
-  <div style="max-width:820px;margin:0 auto;padding:32px 16px;">
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+</head>
+<body style="margin:0;padding:0;background:#f3f4f6;font-family:Arial,Helvetica,sans-serif;">
 
-    <!-- Header -->
-    <div style="background:#1e3a5f;border-radius:12px 12px 0 0;padding:28px 32px;">
-      <div style="display:flex;align-items:center;gap:12px;">
-        <div style="background:#3b82f6;border-radius:8px;padding:8px 14px;">
-          <span style="color:white;font-size:18px;font-weight:700;letter-spacing:1px;">ESY</span>
-        </div>
-        <div>
-          <p style="margin:0;color:#93c5fd;font-size:12px;letter-spacing:1px;text-transform:uppercase;">EsyPet CRM</p>
-          <p style="margin:0;color:white;font-size:20px;font-weight:600;">Daily Activity Report</p>
-        </div>
-      </div>
-      <p style="margin:12px 0 0;color:#bfdbfe;font-size:14px;">${escHtml(date)}</p>
-    </div>
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f3f4f6;">
+  <tr>
+    <td align="center" style="padding:24px 12px;">
 
-    <!-- Summary cards -->
-    <div style="display:flex;gap:0;background:white;border-left:1px solid #e5e7eb;border-right:1px solid #e5e7eb;">
-      <div style="flex:1;padding:24px 32px;border-right:1px solid #e5e7eb;">
-        <p style="margin:0;color:#6b7280;font-size:12px;text-transform:uppercase;letter-spacing:0.5px;">Emails Sent Today</p>
-        <p style="margin:6px 0 0;color:#1d4ed8;font-size:36px;font-weight:700;">${totalSent}</p>
-      </div>
-      <div style="flex:1;padding:24px 32px;">
-        <p style="margin:0;color:#6b7280;font-size:12px;text-transform:uppercase;letter-spacing:0.5px;">Replies Received Today</p>
-        <p style="margin:6px 0 0;color:#16a34a;font-size:36px;font-weight:700;">${totalReplies}</p>
-      </div>
-    </div>
+      <table width="780" cellpadding="0" cellspacing="0" border="0" style="max-width:780px;width:100%;">
 
-    <!-- Emails Sent section -->
-    <div style="background:white;border:1px solid #e5e7eb;margin-top:24px;border-radius:8px;overflow:hidden;">
-      <div style="padding:16px 20px;border-bottom:1px solid #e5e7eb;background:#eff6ff;">
-        <p style="margin:0;font-size:15px;font-weight:600;color:#1e40af;">📤 Emails Sent (${totalSent})</p>
-      </div>
-      <div style="overflow-x:auto;">
-        <table style="width:100%;border-collapse:collapse;">
-          <thead>
-            <tr style="background:#f9fafb;border-bottom:2px solid #e5e7eb;">
-              <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;">Recipient</th>
-              <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;">Business</th>
-              <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;">City / State</th>
-              <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;">Salesperson</th>
-              <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;">Sequence</th>
-              <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;">Deal Stage</th>
+        <!-- HEADER -->
+        <tr>
+          <td style="background:#1e3a5f;border-radius:8px 8px 0 0;padding:24px 28px;">
+            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td width="56" valign="middle">
+                  <div style="background:#3b82f6;border-radius:6px;padding:7px 12px;display:inline-block;">
+                    <span style="color:white;font-size:16px;font-weight:700;letter-spacing:1px;font-family:Arial,sans-serif;">ESY</span>
+                  </div>
+                </td>
+                <td valign="middle" style="padding-left:14px;">
+                  <p style="margin:0;color:#93c5fd;font-size:11px;letter-spacing:1px;text-transform:uppercase;font-family:Arial,sans-serif;">EsyPet CRM</p>
+                  <p style="margin:2px 0 0;color:#ffffff;font-size:20px;font-weight:700;font-family:Arial,sans-serif;">Daily Activity Report</p>
+                </td>
+              </tr>
+            </table>
+            <p style="margin:10px 0 0;color:#bfdbfe;font-size:13px;font-family:Arial,sans-serif;">${escHtml(date)}</p>
+          </td>
+        </tr>
+
+        <!-- SUMMARY CARDS -->
+        <tr>
+          <td style="background:#ffffff;border-left:1px solid #e5e7eb;border-right:1px solid #e5e7eb;">
+            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td width="50%" style="padding:20px 28px;border-right:1px solid #e5e7eb;">
+                  <p style="margin:0;color:#6b7280;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;font-family:Arial,sans-serif;">Emails Sent</p>
+                  <p style="margin:4px 0 0;color:#1d4ed8;font-size:40px;font-weight:700;line-height:1;font-family:Arial,sans-serif;">${totalSent}</p>
+                </td>
+                <td width="50%" style="padding:20px 28px;">
+                  <p style="margin:0;color:#6b7280;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;font-family:Arial,sans-serif;">Replies Received</p>
+                  <p style="margin:4px 0 0;color:#16a34a;font-size:40px;font-weight:700;line-height:1;font-family:Arial,sans-serif;">${totalReplies}</p>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- SENT SECTION -->
+        <tr><td style="padding-top:20px;">
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-radius:6px;overflow:hidden;border:1px solid #e5e7eb;">
+            <tr>
+              <td style="background:#eff6ff;padding:13px 16px;border-bottom:1px solid #e5e7eb;">
+                <span style="font-size:14px;font-weight:700;color:#1e40af;font-family:Arial,sans-serif;">Emails Sent &mdash; ${totalSent}</span>
+              </td>
             </tr>
-          </thead>
-          <tbody>${sentTableRows}</tbody>
-        </table>
-      </div>
-    </div>
-
-    <!-- Replies section -->
-    <div style="background:white;border:1px solid #e5e7eb;margin-top:20px;border-radius:8px;overflow:hidden;">
-      <div style="padding:16px 20px;border-bottom:1px solid #e5e7eb;background:#f0fdf4;">
-        <p style="margin:0;font-size:15px;font-weight:600;color:#15803d;">💬 Replies Received (${totalReplies})</p>
-      </div>
-      <div style="overflow-x:auto;">
-        <table style="width:100%;border-collapse:collapse;">
-          <thead>
-            <tr style="background:#f9fafb;border-bottom:2px solid #e5e7eb;">
-              <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;">Contact</th>
-              <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;">Business</th>
-              <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;">City / State</th>
-              <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;">Salesperson</th>
-              <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;">Deal Stage</th>
+            <tr>
+              <td>
+                <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+                  <thead>
+                    <tr>
+                      <th style="${thStyle}">Recipient</th>
+                      <th style="${thStyle}">Business</th>
+                      <th style="${thStyle}">City</th>
+                      <th style="${thStyle}">Salesperson</th>
+                      <th style="${thStyle}">Sequence</th>
+                      <th style="${thStyle}">Deal Stage</th>
+                    </tr>
+                  </thead>
+                  <tbody>${sentTableRows}</tbody>
+                </table>
+              </td>
             </tr>
-          </thead>
-          <tbody>${replyTableRows}</tbody>
-        </table>
-      </div>
-    </div>
+          </table>
+        </td></tr>
 
-    <!-- Footer -->
-    <div style="margin-top:24px;padding:16px;text-align:center;">
-      <p style="margin:0;color:#9ca3af;font-size:12px;">This report was automatically generated by EsyPet CRM · Sent daily at 6:00 PM ET</p>
-    </div>
+        <!-- REPLIES SECTION -->
+        <tr><td style="padding-top:16px;">
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-radius:6px;overflow:hidden;border:1px solid #e5e7eb;">
+            <tr>
+              <td style="background:#f0fdf4;padding:13px 16px;border-bottom:1px solid #e5e7eb;">
+                <span style="font-size:14px;font-weight:700;color:#15803d;font-family:Arial,sans-serif;">Replies Received &mdash; ${totalReplies}</span>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+                  <thead>
+                    <tr>
+                      <th style="${thStyle}">Contact (replied from)</th>
+                      <th style="${thStyle}">Business</th>
+                      <th style="${thStyle}">City</th>
+                      <th style="${thStyle}">Salesperson</th>
+                      <th style="${thStyle}">Deal Stage</th>
+                    </tr>
+                  </thead>
+                  <tbody>${replyTableRows}</tbody>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </td></tr>
 
-  </div>
+        <!-- FOOTER -->
+        <tr>
+          <td style="padding:18px 0 8px;text-align:center;">
+            <p style="margin:0;color:#9ca3af;font-size:11px;font-family:Arial,sans-serif;">Automatically generated by EsyPet CRM &middot; Sent daily at 6:00 PM ET</p>
+          </td>
+        </tr>
+
+      </table>
+    </td>
+  </tr>
+</table>
+
 </body>
 </html>`;
 }
@@ -251,6 +277,7 @@ interface ReplyRow {
   location: string;
   salespersonName: string;
   dealStage: string;
+  fromEmail: string;
 }
 
 const TRACK_LABELS: Record<string, string> = {
@@ -340,12 +367,17 @@ export async function sendDailyReport(options?: { overrideStart?: Date; override
     const replyRows: ReplyRow[] = todayMessages.map(m => {
       const contact = m.contactId ? contactMap.get(m.contactId) : undefined;
       const deal = contact ? dealsByContact.get(contact.id) : undefined;
+      // Extract just the email address from "Name <email>" format
+      const rawFrom = m.from ?? "";
+      const fromEmailMatch = rawFrom.match(/<([^>]+)>/) ;
+      const fromEmail = fromEmailMatch ? fromEmailMatch[1] : rawFrom;
       return {
-        recipientName: contact ? contactDisplay(contact) : (m.from ?? "Unknown"),
+        recipientName: contact ? contactDisplay(contact) : rawFrom.split("<")[0].trim() || rawFrom,
         businessName: contact?.company || "—",
         location: contact ? locationStr(contact) : "—",
         salespersonName: getSalesperson(m.userId),
         dealStage: stageLabel(deal?.stage),
+        fromEmail,
       };
     });
 
