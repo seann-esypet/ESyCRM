@@ -133,6 +133,7 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
       city: contact?.city || "",
       company: contact?.company || "",
       jobTitle: contact?.jobTitle || "",
+      businessType: contact?.businessType || "salon",
       usesSoftware: contact?.usesSoftware || "",
       hasWebsite: contact?.hasWebsite || "",
       websiteUrl: contact?.websiteUrl || "",
@@ -502,6 +503,31 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
               )}
             />
           </div>
+
+          <FormField
+            control={form.control}
+            name="businessType"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Business Type *</FormLabel>
+                <Select
+                  onValueChange={field.onChange}
+                  value={field.value || "salon"}
+                >
+                  <FormControl>
+                    <SelectTrigger data-testid="select-businessType">
+                      <SelectValue placeholder="Select type..." />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent>
+                    <SelectItem value="salon">Salon</SelectItem>
+                    <SelectItem value="mobile">Mobile</SelectItem>
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
 
           <FormField
             control={form.control}

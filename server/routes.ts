@@ -105,7 +105,7 @@ async function runSequenceTest(run: TestRun): Promise<void> {
       `Sequence Test Results`,
       `═══════════════════`,
       `Contact: ${run.contactName}`,
-      `Track: ${run.track === "no_software" ? "No Software" : "Uses Competitor"}`,
+      `Track: ${run.track.includes("salon") ? "Salon" : "Mobile"} - ${run.track.includes("no_software") ? "No Software" : run.track.includes("uses_competitor") ? "Uses Competitor" : "General"}`,
       `Test email sent to: ${run.toEmail}`,
       `Started: ${run.startedAt.toLocaleString()}`,
       `Completed: ${run.completedAt?.toLocaleString()}`,
@@ -769,9 +769,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (dealData.stage === "qualified_lead" && deal.contactId) {
         const contact = await storage.getContact(deal.contactId, userId);
         if (contact) {
-          // Determine sequence track based on usesSoftware field
-          // "Yes" means they use competitor software, otherwise "no_software"
-          const sequenceTrack = contact.usesSoftware === "Yes" ? "uses_competitor" : "no_software";
+          // Determine sequence track based on businessType + usesSoftware
+          const bType = contact.businessType || "salon";
+          const softwareStatus = contact.usesSoftware === "Yes" ? "uses_competitor" : "no_software";
+          const sequenceTrack = `${bType}_${softwareStatus}`;
           await storage.updateContact(deal.contactId, { sequenceTrack }, userId);
         }
       }
@@ -802,7 +803,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (dealData.stage === "qualified_lead" && deal.contactId) {
         const contact = await storage.getContact(deal.contactId, userId);
         if (contact) {
-          const sequenceTrack = contact.usesSoftware === "Yes" ? "uses_competitor" : "no_software";
+          const bType2 = contact.businessType || "salon";
+          const softwareStatus2 = contact.usesSoftware === "Yes" ? "uses_competitor" : "no_software";
+          const sequenceTrack = `${bType2}_${softwareStatus2}`;
           await storage.updateContact(deal.contactId, { sequenceTrack }, userId);
         }
       }
@@ -1465,13 +1468,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Contact not found" });
       }
 
-      const sequenceTrack = contact.usesSoftware === "Yes" ? "uses_competitor" : "no_software";
+      const bTypeSeq = contact.businessType || "salon";
+      const softwareStatusSeq = contact.usesSoftware === "Yes" ? "uses_competitor" : "no_software";
+      const sequenceTrack = `${bTypeSeq}_${softwareStatusSeq}`;
 
       const ownerId = contact.userId;
       const ownerSequences = await storage.getEmailSequencesByTrack(ownerId, sequenceTrack);
       const sequence1 = ownerSequences.find(s => s.sequenceNumber === 1);
       if (!sequence1) {
-        return res.status(400).json({ message: `No Sequence 1 template found for the "${sequenceTrack === "no_software" ? "No Software" : "Uses Competitor"}" track. Please create one first in Email Sequences.` });
+        const trackLabel = sequenceTrack.replace("salon_", "Salon - ").replace("mobile_", "Mobile - ").replace("_", " ").replace("no software", "No Software").replace("uses competitor", "Uses Competitor");
+        return res.status(400).json({ message: `No Sequence 1 template found for the "${trackLabel}" track. Please create one first in Email Sequences.` });
       }
 
       const existingLogs = await storage.getEmailSequenceLogs(userIdForQuery, contactId);

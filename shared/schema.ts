@@ -70,7 +70,8 @@ export const contacts = pgTable("contacts", {
   interestLevel: text("interest_level"), // Low, Medium, High
   notes: text("notes"),
   status: text("status").notNull().default("active"), // active, inactive, pipeline
-  sequenceTrack: text("sequence_track"), // no_software, uses_competitor - assigned when qualified
+  businessType: text("business_type").default("salon"), // salon, mobile
+  sequenceTrack: text("sequence_track"), // salon_no_software, salon_uses_competitor, mobile_no_software, mobile_uses_competitor - assigned when qualified
   lastContactDate: timestamp("last_contact_date"),
   archivedAt: timestamp("archived_at"),
 });
@@ -133,7 +134,7 @@ export const dealActivities = pgTable("deal_activities", {
 export const emailSequences = pgTable("email_sequences", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id, { onUpdate: "cascade" }),
-  sequenceTrack: text("sequence_track").notNull().default("no_software"), // no_software, uses_competitor
+  sequenceTrack: text("sequence_track").notNull().default("salon_no_software"), // salon_no_software, salon_uses_competitor, salon_custom, mobile_no_software, mobile_uses_competitor, mobile_custom
   sequenceNumber: integer("sequence_number").notNull(), // 1-5
   subject: text("subject").notNull(),
   body: text("body").notNull(), // Email content with placeholders like [Contact_First_Name], [Sales_Person], [Business_Name]
@@ -150,7 +151,7 @@ export const emailSequenceLogs = pgTable("email_sequence_logs", {
   userId: varchar("user_id").notNull().references(() => users.id, { onUpdate: "cascade" }),
   contactId: varchar("contact_id").notNull().references(() => contacts.id),
   sequenceId: varchar("sequence_id").notNull().references(() => emailSequences.id),
-  sequenceTrack: text("sequence_track").notNull().default("no_software"), // no_software, uses_competitor
+  sequenceTrack: text("sequence_track").notNull().default("salon_no_software"), // salon_no_software, salon_uses_competitor, salon_custom, mobile_no_software, mobile_uses_competitor, mobile_custom
   sequenceNumber: integer("sequence_number").notNull(), // 1-5
   sentAt: timestamp("sent_at"),
   status: text("status").notNull().default("pending"), // pending, processing, sent, failed, replied

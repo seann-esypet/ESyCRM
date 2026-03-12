@@ -281,9 +281,16 @@ interface ReplyRow {
 }
 
 const TRACK_LABELS: Record<string, string> = {
+  salon_no_software: "Salon - No Software",
+  salon_uses_competitor: "Salon - Uses Competitor",
+  salon_custom: "Salon - General",
+  mobile_no_software: "Mobile - No Software",
+  mobile_uses_competitor: "Mobile - Uses Competitor",
+  mobile_custom: "Mobile - General",
+  // Legacy fallbacks
   no_software: "No Software",
   uses_competitor: "Uses Competitor",
-  custom: "Custom",
+  custom: "General",
 };
 
 // ────────────────────────────────────────────────────────────────────────────

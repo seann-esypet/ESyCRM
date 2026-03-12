@@ -22,12 +22,26 @@ interface DealSequencePanelProps {
 }
 
 const TRACK_LABELS: Record<string, string> = {
+  salon_no_software: "Salon - No Software",
+  salon_uses_competitor: "Salon - Uses Competitor",
+  salon_custom: "Salon - General",
+  mobile_no_software: "Mobile - No Software",
+  mobile_uses_competitor: "Mobile - Uses Competitor",
+  mobile_custom: "Mobile - General",
+  // Legacy fallbacks
   no_software: "No Software",
   uses_competitor: "Uses Competitor",
   custom: "Custom / General",
 };
 
 const TRACK_COLORS: Record<string, string> = {
+  salon_no_software: "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300",
+  salon_uses_competitor: "bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300",
+  salon_custom: "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300",
+  mobile_no_software: "bg-teal-100 text-teal-700 dark:bg-teal-900 dark:text-teal-300",
+  mobile_uses_competitor: "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300",
+  mobile_custom: "bg-pink-100 text-pink-700 dark:bg-pink-900 dark:text-pink-300",
+  // Legacy fallbacks
   no_software: "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300",
   uses_competitor: "bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300",
   custom: "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300",

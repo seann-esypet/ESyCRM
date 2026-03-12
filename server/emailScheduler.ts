@@ -149,7 +149,7 @@ async function scheduleNextSequence(
   sentAt: Date
 ): Promise<void> {
   // Custom track emails are one-off — no chaining
-  if (sentSequence.sequenceTrack === "custom") return;
+  if (sentSequence.sequenceTrack.endsWith("_custom") || sentSequence.sequenceTrack === "custom") return;
 
   const nextNumber = sentSequence.sequenceNumber + 1;
   const daysRequired = SEQUENCE_DAYS_AFTER_PREVIOUS[nextNumber];

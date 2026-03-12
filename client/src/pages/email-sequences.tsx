@@ -14,10 +14,13 @@ import AddContactsToSequenceDialog from "@/components/email-sequences/add-contac
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
-type SequenceTrack = "no_software" | "uses_competitor" | "custom";
+type BusinessType = "salon" | "mobile";
+type SubTrack = "no_software" | "uses_competitor" | "custom";
+type SequenceTrack = `${BusinessType}_${SubTrack}`;
 
 export default function EmailSequences() {
-  const [activeTrack, setActiveTrack] = useState<SequenceTrack>("no_software");
+  const [activeBiz, setActiveBiz] = useState<BusinessType>("salon");
+  const [activeSub, setActiveSub] = useState<SubTrack>("no_software");
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [selectedSequence, setSelectedSequence] = useState<EmailSequence | undefined>();
   const [isAddContactsOpen, setIsAddContactsOpen] = useState(false);
@@ -26,17 +29,23 @@ export default function EmailSequences() {
   const [isQueueViewerOpen, setIsQueueViewerOpen] = useState(false);
   const { toast } = useToast();
 
-  const { data: noSoftwareSequences, isLoading: isLoadingNoSoftware } = useQuery<EmailSequence[]>({
-    queryKey: ["/api/email-sequences?track=no_software"],
-  });
+  const { data: salonNoSoftware,    isLoading: loadingSNS } = useQuery<EmailSequence[]>({ queryKey: ["/api/email-sequences?track=salon_no_software"] });
+  const { data: salonCompetitor,    isLoading: loadingSC  } = useQuery<EmailSequence[]>({ queryKey: ["/api/email-sequences?track=salon_uses_competitor"] });
+  const { data: salonCustom,        isLoading: loadingSCu } = useQuery<EmailSequence[]>({ queryKey: ["/api/email-sequences?track=salon_custom"] });
+  const { data: mobileNoSoftware,   isLoading: loadingMNS } = useQuery<EmailSequence[]>({ queryKey: ["/api/email-sequences?track=mobile_no_software"] });
+  const { data: mobileCompetitor,   isLoading: loadingMC  } = useQuery<EmailSequence[]>({ queryKey: ["/api/email-sequences?track=mobile_uses_competitor"] });
+  const { data: mobileCustom,       isLoading: loadingMCu } = useQuery<EmailSequence[]>({ queryKey: ["/api/email-sequences?track=mobile_custom"] });
 
-  const { data: competitorSequences, isLoading: isLoadingCompetitor } = useQuery<EmailSequence[]>({
-    queryKey: ["/api/email-sequences?track=uses_competitor"],
-  });
+  const trackData: Record<SequenceTrack, { data: EmailSequence[] | undefined; loading: boolean }> = {
+    salon_no_software:    { data: salonNoSoftware,  loading: loadingSNS },
+    salon_uses_competitor:{ data: salonCompetitor,  loading: loadingSC  },
+    salon_custom:         { data: salonCustom,      loading: loadingSCu },
+    mobile_no_software:   { data: mobileNoSoftware, loading: loadingMNS },
+    mobile_uses_competitor:{ data: mobileCompetitor,loading: loadingMC  },
+    mobile_custom:        { data: mobileCustom,     loading: loadingMCu },
+  };
 
-  const { data: customSequences, isLoading: isLoadingCustom } = useQuery<EmailSequence[]>({
-    queryKey: ["/api/email-sequences?track=custom"],
-  });
+  const activeTrack: SequenceTrack = `${activeBiz}_${activeSub}`;
 
   const { data: logs, isLoading: isLogsLoading, isError: isLogsError } = useQuery<EmailSequenceLog[]>({
     queryKey: ["/api/email-sequence-logs"],
@@ -47,7 +56,7 @@ export default function EmailSequences() {
     setIsFormOpen(true);
   };
 
-  const handleCreateNew = (sequenceNumber: number, track: SequenceTrack) => {
+  const handleCreateNew = (sequenceNumber: number, track: string) => {
     setSelectedSequence({ sequenceNumber, sequenceTrack: track } as EmailSequence);
     setIsFormOpen(true);
   };
@@ -262,48 +271,55 @@ export default function EmailSequences() {
       
       <main className="flex-1 overflow-y-auto p-6 bg-muted/30" data-testid="email-sequences-content">
         <div className="max-w-6xl mx-auto">
-          <Tabs value={activeTrack} onValueChange={(v) => setActiveTrack(v as SequenceTrack)} className="space-y-6">
-            <TabsList className="grid w-full grid-cols-3 max-w-lg">
-              <TabsTrigger value="no_software" data-testid="tab-no-software">
-                No Software
-              </TabsTrigger>
-              <TabsTrigger value="uses_competitor" data-testid="tab-uses-competitor">
-                Uses Competitor
-              </TabsTrigger>
-              <TabsTrigger value="custom" data-testid="tab-custom">
-                Custom / General
-              </TabsTrigger>
+          {/* Outer: Business Type */}
+          <Tabs value={activeBiz} onValueChange={(v) => setActiveBiz(v as BusinessType)} className="space-y-4">
+            <TabsList className="grid w-full grid-cols-2 max-w-xs" data-testid="tabs-business-type">
+              <TabsTrigger value="salon" data-testid="tab-salon">Salon</TabsTrigger>
+              <TabsTrigger value="mobile" data-testid="tab-mobile">Mobile</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="no_software" className="space-y-6">
-              <div className="p-4 bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 rounded-lg">
-                <h3 className="font-semibold text-blue-900 dark:text-blue-100 mb-1">No Software Track</h3>
-                <p className="text-sm text-blue-800 dark:text-blue-200">
-                  These sequences are sent to contacts who don't currently use any booking software. Focus on pain points and benefits of adopting software.
-                </p>
-              </div>
-              {renderSequenceTable(noSoftwareSequences, isLoadingNoSoftware, "no_software")}
-            </TabsContent>
+            {(["salon", "mobile"] as BusinessType[]).map((biz) => (
+              <TabsContent key={biz} value={biz} className="space-y-4">
+                {/* Inner: Software track */}
+                <Tabs value={activeSub} onValueChange={(v) => setActiveSub(v as SubTrack)} className="space-y-4">
+                  <TabsList className="grid w-full grid-cols-3 max-w-lg" data-testid={`tabs-sub-${biz}`}>
+                    <TabsTrigger value="no_software" data-testid={`tab-${biz}-no-software`}>No Software</TabsTrigger>
+                    <TabsTrigger value="uses_competitor" data-testid={`tab-${biz}-uses-competitor`}>Uses Competitor</TabsTrigger>
+                    <TabsTrigger value="custom" data-testid={`tab-${biz}-general`}>General</TabsTrigger>
+                  </TabsList>
 
-            <TabsContent value="uses_competitor" className="space-y-6">
-              <div className="p-4 bg-orange-50 dark:bg-orange-950 border border-orange-200 dark:border-orange-800 rounded-lg">
-                <h3 className="font-semibold text-orange-900 dark:text-orange-100 mb-1">Uses Competitor Track</h3>
-                <p className="text-sm text-orange-800 dark:text-orange-200">
-                  These sequences are sent to contacts who are using competitor software (MoeGo, Vagaro, etc.). Focus on switching benefits and competitive advantages.
-                </p>
-              </div>
-              {renderSequenceTable(competitorSequences, isLoadingCompetitor, "uses_competitor")}
-            </TabsContent>
+                  <TabsContent value="no_software" className="space-y-4">
+                    <div className="p-4 bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 rounded-lg">
+                      <h3 className="font-semibold text-blue-900 dark:text-blue-100 mb-1">{biz === "salon" ? "Salon" : "Mobile"} — No Software Track</h3>
+                      <p className="text-sm text-blue-800 dark:text-blue-200">
+                        Sent to {biz} contacts who don't currently use any booking software. Focus on pain points and benefits of adopting software.
+                      </p>
+                    </div>
+                    {renderSequenceTable(trackData[`${biz}_no_software`].data, trackData[`${biz}_no_software`].loading, `${biz}_no_software`)}
+                  </TabsContent>
 
-            <TabsContent value="custom" className="space-y-6">
-              <div className="p-4 bg-purple-50 dark:bg-purple-950 border border-purple-200 dark:border-purple-800 rounded-lg">
-                <h3 className="font-semibold text-purple-900 dark:text-purple-100 mb-1">Custom / General Track</h3>
-                <p className="text-sm text-purple-800 dark:text-purple-200">
-                  These sequences accept any contact regardless of software status. When adding contacts, you can write a unique email per contact — perfect for personalized one-on-one outreach.
-                </p>
-              </div>
-              {renderSequenceTable(customSequences, isLoadingCustom, "custom")}
-            </TabsContent>
+                  <TabsContent value="uses_competitor" className="space-y-4">
+                    <div className="p-4 bg-orange-50 dark:bg-orange-950 border border-orange-200 dark:border-orange-800 rounded-lg">
+                      <h3 className="font-semibold text-orange-900 dark:text-orange-100 mb-1">{biz === "salon" ? "Salon" : "Mobile"} — Uses Competitor Track</h3>
+                      <p className="text-sm text-orange-800 dark:text-orange-200">
+                        Sent to {biz} contacts using competitor software (MoeGo, Vagaro, etc.). Focus on switching benefits and competitive advantages.
+                      </p>
+                    </div>
+                    {renderSequenceTable(trackData[`${biz}_uses_competitor`].data, trackData[`${biz}_uses_competitor`].loading, `${biz}_uses_competitor`)}
+                  </TabsContent>
+
+                  <TabsContent value="custom" className="space-y-4">
+                    <div className="p-4 bg-purple-50 dark:bg-purple-950 border border-purple-200 dark:border-purple-800 rounded-lg">
+                      <h3 className="font-semibold text-purple-900 dark:text-purple-100 mb-1">{biz === "salon" ? "Salon" : "Mobile"} — General Track</h3>
+                      <p className="text-sm text-purple-800 dark:text-purple-200">
+                        Accepts any {biz} contact regardless of software status. Write a unique email per contact for personalized one-on-one outreach.
+                      </p>
+                    </div>
+                    {renderSequenceTable(trackData[`${biz}_custom`].data, trackData[`${biz}_custom`].loading, `${biz}_custom`)}
+                  </TabsContent>
+                </Tabs>
+              </TabsContent>
+            ))}
           </Tabs>
 
           <div className="mt-6 p-4 bg-muted border border-border rounded-lg">
@@ -328,7 +344,12 @@ export default function EmailSequences() {
                 : `Configure Sequence ${selectedSequence?.sequenceNumber || 1}`}
               {selectedSequence?.sequenceTrack && (
                 <span className="ml-2 text-sm font-normal text-muted-foreground">
-                  ({selectedSequence.sequenceTrack === "no_software" ? "No Software" : selectedSequence.sequenceTrack === "uses_competitor" ? "Uses Competitor" : "Custom / General"} Track)
+                  ({selectedSequence.sequenceTrack
+                    .replace("salon_", "Salon — ")
+                    .replace("mobile_", "Mobile — ")
+                    .replace("no_software", "No Software")
+                    .replace("uses_competitor", "Uses Competitor")
+                    .replace("custom", "General")} Track)
                 </span>
               )}
             </DialogTitle>
@@ -358,7 +379,12 @@ export default function EmailSequences() {
               Queue — Sequence {queueViewerSequence?.sequenceNumber}
               {queueViewerSequence?.sequenceTrack && (
                 <Badge variant="outline" className="text-xs">
-                  {queueViewerSequence.sequenceTrack === "uses_competitor" ? "Uses Competitor" : "No Software"}
+                  {queueViewerSequence.sequenceTrack
+                    .replace("salon_", "Salon — ")
+                    .replace("mobile_", "Mobile — ")
+                    .replace("no_software", "No Software")
+                    .replace("uses_competitor", "Uses Competitor")
+                    .replace("custom", "General")}
                 </Badge>
               )}
             </DialogTitle>
@@ -395,11 +421,7 @@ export default function EmailSequences() {
               return groups?.find(g => g.id === c.groupId)?.name ?? null;
             };
 
-            const allSequences = [
-              ...(noSoftwareSequences ?? []),
-              ...(competitorSequences ?? []),
-              ...(customSequences ?? []),
-            ];
+            const allSequences = Object.values(trackData).flatMap(t => t.data ?? []);
 
             const getSubject = (log: EmailSequenceLog) => {
               if (log.customSubject) return log.customSubject;
