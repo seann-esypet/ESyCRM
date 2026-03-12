@@ -249,6 +249,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       const newUser = await storage.createUser(userData);
+
+      // Copy all email sequences from the creating admin to the new user
+      try {
+        const adminId = req.user.claims.sub as string;
+        const templateSequences = await storage.getEmailSequences(adminId);
+        if (templateSequences.length > 0) {
+          for (const seq of templateSequences) {
+            await storage.createEmailSequence({
+              sequenceTrack: seq.sequenceTrack,
+              sequenceNumber: seq.sequenceNumber,
+              subject: seq.subject,
+              body: seq.body,
+              scheduledDate: null, // Reset: new salesperson sets their own send date
+              scheduledTime: seq.scheduledTime,
+              daysAfterNoReply: seq.daysAfterNoReply,
+              isActive: seq.isActive,
+            }, newUser.id);
+          }
+          console.log(`[UserCreate] Copied ${templateSequences.length} email sequences to new user ${newUser.id}`);
+        }
+      } catch (seqErr) {
+        // Non-fatal: log but don't fail the user creation
+        console.error("[UserCreate] Failed to copy sequences:", seqErr);
+      }
+
       res.status(201).json(newUser);
     } catch (error) {
       if (error instanceof z.ZodError) {
