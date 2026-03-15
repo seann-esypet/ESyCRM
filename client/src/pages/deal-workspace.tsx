@@ -218,6 +218,14 @@ export default function DealWorkspace() {
     onError: () => toast({ title: "Failed to update stage", variant: "destructive" }),
   });
 
+  const markRepliesReadMutation = useMutation({
+    mutationFn: () => apiRequest("POST", `/api/deals/${dealId}/mark-replies-read`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deals/unread-replies"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/inbox"] });
+    },
+  });
+
   // Commission confirmation mutation (used when stage = "won")
   const commissionMutation = useMutation({
     mutationFn: ({ planName }: { planName: string }) =>
@@ -538,7 +546,7 @@ export default function DealWorkspace() {
 
         {/* ── CENTER: Activity Feed ─────────────────────────────────────────────── */}
         <div className="flex-1 flex flex-col overflow-hidden border-r">
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col flex-1 overflow-hidden">
+          <Tabs value={activeTab} onValueChange={(tab) => { setActiveTab(tab); if (tab === "email-history") markRepliesReadMutation.mutate(); }} className="flex flex-col flex-1 overflow-hidden">
             <div className="shrink-0 border-b px-4 pt-3">
               <TabsList className="h-8">
                 <TabsTrigger value="activity" className="text-xs" data-testid="tab-activity">Activity Feed</TabsTrigger>

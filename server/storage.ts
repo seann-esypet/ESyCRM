@@ -196,7 +196,9 @@ export interface IStorage {
   updateInboxMessage(id: string, message: Partial<InsertInboxMessage>, userId: string | null): Promise<InboxMessage | undefined>;
   deleteInboxMessage(id: string, userId: string | null): Promise<boolean>;
   getUnreadCount(userId: string | null): Promise<number>;
-  
+  getDealsWithUnreadReplies(userId: string | null): Promise<string[]>;
+  markRepliesReadForDeal(dealId: string, userId: string | null): Promise<void>;
+
   // Lead Discovery
   getLeadDiscoveryJobs(userId: string | null): Promise<LeadDiscoveryJob[]>;
   getLeadDiscoveryJob(id: string, userId: string | null): Promise<LeadDiscoveryJob | undefined>;
@@ -1289,6 +1291,46 @@ export class DatabaseStorage implements IStorage {
       .where(whereClause);
     
     return result?.count || 0;
+  }
+
+  async getDealsWithUnreadReplies(userId: string | null): Promise<string[]> {
+    const userDeals = userId
+      ? await db.select({ id: deals.id, contactId: deals.contactId }).from(deals).where(eq(deals.userId, userId))
+      : await db.select({ id: deals.id, contactId: deals.contactId }).from(deals);
+
+    const contactToDeals = new Map<string, string[]>();
+    for (const deal of userDeals) {
+      if (!deal.contactId) continue;
+      if (!contactToDeals.has(deal.contactId)) contactToDeals.set(deal.contactId, []);
+      contactToDeals.get(deal.contactId)!.push(deal.id);
+    }
+
+    if (contactToDeals.size === 0) return [];
+
+    const contactIds = Array.from(contactToDeals.keys());
+    const unreadMsgs = await db
+      .select({ contactId: inboxMessages.contactId })
+      .from(inboxMessages)
+      .where(and(inArray(inboxMessages.contactId, contactIds), eq(inboxMessages.isRead, "false")));
+
+    const dealIds = new Set<string>();
+    for (const msg of unreadMsgs) {
+      if (!msg.contactId) continue;
+      for (const dealId of (contactToDeals.get(msg.contactId) ?? [])) {
+        dealIds.add(dealId);
+      }
+    }
+
+    return Array.from(dealIds);
+  }
+
+  async markRepliesReadForDeal(dealId: string, userId: string | null): Promise<void> {
+    const deal = await this.getDeal(dealId, userId);
+    if (!deal?.contactId) return;
+    await db
+      .update(inboxMessages)
+      .set({ isRead: "true" })
+      .where(and(eq(inboxMessages.contactId, deal.contactId), eq(inboxMessages.isRead, "false")));
   }
 
   // Lead Discovery operations

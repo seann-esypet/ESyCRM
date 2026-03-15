@@ -721,6 +721,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Must be before /api/deals/:id to prevent route collision
+  app.get("/api/deals/unread-replies", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const dealIds = await storage.getDealsWithUnreadReplies(userId);
+      res.json(dealIds);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch unread reply deals" });
+    }
+  });
+
+  app.post("/api/deals/:dealId/mark-replies-read", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      await storage.markRepliesReadForDeal(req.params.dealId, userId);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to mark replies as read" });
+    }
+  });
+
   app.get("/api/deals/:id", isAuthenticated, async (req: any, res) => {
     try {
       const userId = getUserIdForQuery(req.user);

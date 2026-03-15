@@ -108,6 +108,12 @@ export default function Deals() {
     enabled: !!emailHistoryContactId,
   });
 
+  const { data: unreadReplyDealIds } = useQuery<string[]>({
+    queryKey: ["/api/deals/unread-replies"],
+    refetchInterval: 60000,
+  });
+  const unreadReplySet = new Set(unreadReplyDealIds ?? []);
+
   const rescheduleMutation = useMutation({
     mutationFn: async ({ logId, scheduledSendAt }: { logId: string; scheduledSendAt: string }) => {
       return apiRequest("PATCH", `/api/email-sequence-logs/${logId}/reschedule`, { scheduledSendAt });
@@ -591,7 +597,7 @@ export default function Deals() {
             {sortedDeals.map((deal) => (
               <Card 
                 key={deal.id} 
-                className="hover:shadow-md transition-shadow"
+                className={`hover:shadow-md transition-shadow${unreadReplySet.has(deal.id) ? " unread-reply-row" : ""}`}
                 data-testid={`deal-card-${deal.id}`}
               >
                 <CardContent className="p-6">
@@ -786,11 +792,12 @@ export default function Deals() {
               <TableBody>
                 {sortedDeals.map((deal) => {
                   const isExpired = isDateExpired(deal.expectedCloseDate) && !["won", "lost"].includes(deal.stage);
+                  const hasUnreadReply = unreadReplySet.has(deal.id);
                   return (
                     <TableRow 
                       key={deal.id} 
                       data-testid={`deal-row-${deal.id}`}
-                      className={isExpired ? "bg-[#E96161] hover:bg-[#E96161]/90" : ""}
+                      className={isExpired ? "bg-[#E96161] hover:bg-[#E96161]/90" : hasUnreadReply ? "unread-reply-row" : ""}
                     >
                       <TableCell>
                         <button
