@@ -474,6 +474,126 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Owner name discovery — waterfall: SerpAPI web search → website about-page scrape
+  app.post("/api/contacts/:id/discover-owner", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const contact = await storage.getContact(req.params.id, userId);
+      if (!contact) return res.status(404).json({ message: "Contact not found" });
+
+      const businessName = contact.company || `${contact.firstName} ${contact.lastName}`.trim();
+      if (!businessName) return res.json({ found: false, reason: "No business name on record" });
+
+      const city = (contact as any).city || "";
+      const apiKey = process.env.SERPAPI_API_KEY;
+
+      // ── Name extraction helper ────────────────────────────────────────────
+      function extractFirstName(text: string): string | null {
+        const patterns = [
+          /(?:owned by|owner[:\s]+|hi[,\s]+i'?m|meet\s+|i'?m\s+|founded by|opened by|started by|run by)\s+([A-Z][a-z]{2,})/i,
+          /([A-Z][a-z]{2,})\s+(?:is the owner|owns and operates|founded|started)/i,
+          /\bowner[,:]?\s+([A-Z][a-z]{2,})\b/i,
+          /—\s*([A-Z][a-z]{2,}),?\s*(?:owner|founder|groomer)/i,
+        ];
+        for (const p of patterns) {
+          const m = text.match(p);
+          if (m) {
+            const name = m[1];
+            // Filter out common false positives
+            const skip = ["The", "Our", "Your", "All", "For", "With", "From", "After", "When", "This", "That", "Here", "Call", "Visit", "Come", "More", "Best", "Google", "Yelp", "Facebook"];
+            if (!skip.includes(name)) return name;
+          }
+        }
+        return null;
+      }
+
+      // ── Step 1: SerpAPI Google web search ────────────────────────────────
+      if (apiKey) {
+        const queries = [
+          `"${businessName}" owner grooming`,
+          `"${businessName}"${city ? ` "${city}"` : ""} owner name`,
+        ];
+        for (const q of queries) {
+          try {
+            const params = new URLSearchParams({ api_key: apiKey, engine: "google", q, num: "5" });
+            const r = await fetch(`https://serpapi.com/search?${params}`, { signal: AbortSignal.timeout(10000) });
+            if (r.ok) {
+              const data = await r.json();
+              const snippets: string[] = [];
+              if (data.answer_box?.snippet) snippets.push(data.answer_box.snippet);
+              if (data.knowledge_graph?.description) snippets.push(data.knowledge_graph.description);
+              for (const result of (data.organic_results || []).slice(0, 5)) {
+                if (result.snippet) snippets.push(result.snippet);
+                if (result.title) snippets.push(result.title);
+              }
+              for (const snippet of snippets) {
+                const name = extractFirstName(snippet);
+                if (name) {
+                  return res.json({ found: true, firstName: name, source: "Google Search", confidence: "medium" });
+                }
+              }
+            }
+          } catch { /* continue */ }
+        }
+      }
+
+      // ── Step 2: Website about-page scrape ────────────────────────────────
+      const websiteUrl = contact.websiteUrl;
+      if (websiteUrl) {
+        const aboutPaths = ["/about", "/about-us", "/our-team", "/meet-us", "/contact"];
+        for (const path of aboutPaths) {
+          try {
+            const base = new URL(websiteUrl.startsWith("http") ? websiteUrl : `https://${websiteUrl}`);
+            const url = `${base.origin}${path}`;
+            const r = await fetch(url, {
+              headers: { "User-Agent": "Mozilla/5.0 (compatible; CRM/1.0)" },
+              signal: AbortSignal.timeout(8000),
+            });
+            if (!r.ok) continue;
+            const html = await r.text();
+            // Strip tags, extract text
+            const text = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+            // Check og:description
+            const ogMatch = html.match(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)/i)
+              || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:description["']/i);
+            if (ogMatch) {
+              const name = extractFirstName(ogMatch[1]);
+              if (name) return res.json({ found: true, firstName: name, source: "Website (About Page)", confidence: "high" });
+            }
+            const name = extractFirstName(text);
+            if (name) return res.json({ found: true, firstName: name, source: "Website (About Page)", confidence: "medium" });
+          } catch { /* continue */ }
+        }
+
+        // Also try homepage
+        try {
+          const base = new URL(websiteUrl.startsWith("http") ? websiteUrl : `https://${websiteUrl}`);
+          const r = await fetch(base.origin, {
+            headers: { "User-Agent": "Mozilla/5.0 (compatible; CRM/1.0)" },
+            signal: AbortSignal.timeout(8000),
+          });
+          if (r.ok) {
+            const html = await r.text();
+            const ogMatch = html.match(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)/i)
+              || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:description["']/i);
+            if (ogMatch) {
+              const name = extractFirstName(ogMatch[1]);
+              if (name) return res.json({ found: true, firstName: name, source: "Website (Homepage)", confidence: "medium" });
+            }
+            const text = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+            const name = extractFirstName(text);
+            if (name) return res.json({ found: true, firstName: name, source: "Website (Homepage)", confidence: "low" });
+          }
+        } catch { /* ignore */ }
+      }
+
+      return res.json({ found: false, reason: "No owner name found after searching Google and the business website" });
+    } catch (error) {
+      console.error("Owner discovery error:", error);
+      res.status(500).json({ message: "Discovery failed" });
+    }
+  });
+
   app.delete("/api/contacts/:id", isAuthenticated, async (req: any, res) => {
     try {
       const userId = getUserIdForQuery(req.user);

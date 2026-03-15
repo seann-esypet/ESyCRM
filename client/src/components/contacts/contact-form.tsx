@@ -1,4 +1,5 @@
 import { useState, useRef } from "react";
+import { Search, CheckCircle, XCircle, Loader2, AlertCircle } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation } from "@tanstack/react-query";
@@ -117,6 +118,25 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
   const [duplicates, setDuplicates] = useState<Contact[]>([]);
   const [showDuplicateDialog, setShowDuplicateDialog] = useState(false);
   const [pendingContactData, setPendingContactData] = useState<InsertContact | null>(null);
+  const [ownerSearch, setOwnerSearch] = useState<{
+    status: "idle" | "loading" | "found" | "not_found";
+    firstName?: string;
+    source?: string;
+    confidence?: string;
+  }>({ status: "idle" });
+
+  const discoverOwnerMutation = useMutation({
+    mutationFn: () => apiRequest("POST", `/api/contacts/${contact?.id}/discover-owner`, {}),
+    onMutate: () => setOwnerSearch({ status: "loading" }),
+    onSuccess: (data: any) => {
+      if (data.found) {
+        setOwnerSearch({ status: "found", firstName: data.firstName, source: data.source, confidence: data.confidence });
+      } else {
+        setOwnerSearch({ status: "not_found" });
+      }
+    },
+    onError: () => setOwnerSearch({ status: "not_found" }),
+  });
   
   const form = useForm<InsertContact>({
     resolver: zodResolver(insertContactSchema),
@@ -288,6 +308,79 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
               );
             }}
           />
+
+          {/* Owner name discovery — only available when editing an existing contact */}
+          {contact?.id && (
+            <div className="space-y-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="w-full text-xs gap-2 border-dashed"
+                onClick={() => discoverOwnerMutation.mutate()}
+                disabled={ownerSearch.status === "loading"}
+                data-testid="button-discover-owner"
+              >
+                {ownerSearch.status === "loading" ? (
+                  <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Searching Google & website...</>
+                ) : (
+                  <><Search className="h-3.5 w-3.5" /> Search for Owner's First Name</>
+                )}
+              </Button>
+
+              {ownerSearch.status === "found" && (
+                <div className="rounded-md border border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-950/30 p-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-green-800 dark:text-green-200">
+                        Found: <span className="font-bold">{ownerSearch.firstName}</span>
+                        {ownerSearch.confidence === "high" && <span className="ml-1.5 text-xs bg-green-200 dark:bg-green-800 text-green-800 dark:text-green-200 px-1.5 py-0.5 rounded-full">High confidence</span>}
+                        {ownerSearch.confidence === "medium" && <span className="ml-1.5 text-xs bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200 px-1.5 py-0.5 rounded-full">Verify before sending</span>}
+                        {ownerSearch.confidence === "low" && <span className="ml-1.5 text-xs bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-200 px-1.5 py-0.5 rounded-full">Low confidence</span>}
+                      </p>
+                      <p className="text-xs text-green-600 dark:text-green-400 mt-0.5">Source: {ownerSearch.source}</p>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="h-7 text-xs flex-1 bg-green-600 hover:bg-green-700 text-white"
+                      onClick={() => {
+                        form.setValue("firstName", ownerSearch.firstName!);
+                        form.setValue("useBusinessNameForEmail", "No");
+                        setOwnerSearch({ status: "idle" });
+                      }}
+                      data-testid="button-accept-owner-name"
+                    >
+                      Accept — use "{ownerSearch.firstName}"
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => setOwnerSearch({ status: "idle" })}
+                      data-testid="button-dismiss-owner-name"
+                    >
+                      Dismiss
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {ownerSearch.status === "not_found" && (
+                <div className="rounded-md border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30 p-3 flex items-start gap-2">
+                  <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-xs font-medium text-amber-800 dark:text-amber-200">No owner name found</p>
+                    <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">Could not find the owner's name via Google or the business website. Please enter it manually below.</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {form.watch("useBusinessNameForEmail") !== "Yes" && (
             <div className="grid grid-cols-2 gap-4">
