@@ -85,3 +85,12 @@
     @apply font-sans antialiased bg-background text-foreground;
   }
 }
+
+/* ── Print styles for payroll detail page ─────────────────────────────── */
+@media print {
+  .no-print { display: none !important; }
+  aside, nav, header { display: none !important; }
+  body { background: white !important; }
+  .print-area { padding: 0 !important; max-width: 100% !important; }
+  .hidden { display: block !important; }
+}

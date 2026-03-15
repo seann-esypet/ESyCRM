@@ -33,6 +33,10 @@ import {
   type InsertCommission,
   type CommissionMonthlyPayment,
   type InsertCommissionMonthlyPayment,
+  type PayrollPeriod,
+  type InsertPayrollPeriod,
+  type PayrollLineItem,
+  type InsertPayrollLineItem,
   users,
   contacts,
   contactGroups,
@@ -51,10 +55,43 @@ import {
   dealTasks,
   commissions,
   commissionMonthlyPayments,
+  payrollPeriods,
+  payrollLineItems,
 } from "@shared/schema";
 import { normalizePhoneNumber, normalizeName, normalizeEmail } from "@shared/utils";
 import { db } from "./db";
 import { eq, desc, and, sql, gte, lte, or, ne, inArray } from "drizzle-orm";
+
+export type PayrollPreviewItem = {
+  tempId: string;
+  commissionId: string | null;
+  monthlyPaymentId: string | null;
+  type: "upfront" | "recurring";
+  date: string;
+  contactName: string;
+  dealTitle: string;
+  planName: string;
+  originalAmount: string;
+};
+
+export type PayrollLineItemInput = {
+  commissionId?: string | null;
+  monthlyPaymentId?: string | null;
+  type: string;
+  contactName: string;
+  dealTitle: string;
+  planName: string;
+  originalAmount: string;
+  adjustedAmount: string;
+  date: Date;
+  notes?: string | null;
+};
+
+export type PayrollPeriodFull = PayrollPeriod & {
+  items: PayrollLineItem[];
+  salespersonName: string;
+  salespersonEmail: string;
+};
 
 export interface IStorage {
   // User operations - From Replit Auth blueprint
@@ -72,6 +109,13 @@ export interface IStorage {
   // Commissions
   createCommission(data: InsertCommission): Promise<Commission>;
   getCommissions(userId: string | null): Promise<Commission[]>;
+  // Payroll
+  previewPayroll(userId: string, startDate: Date, endDate: Date): Promise<PayrollPreviewItem[]>;
+  createPayrollPeriod(data: Omit<InsertPayrollPeriod, "totalAmount">, lineItems: PayrollLineItemInput[]): Promise<{ period: PayrollPeriod; items: PayrollLineItem[] }>;
+  getPayrollPeriods(userId: string | null): Promise<PayrollPeriodFull[]>;
+  getPayrollPeriod(id: string): Promise<PayrollPeriodFull | null>;
+  updatePayrollLineItem(id: string, adjustedAmount: string, notes?: string): Promise<PayrollLineItem>;
+  updatePayrollPeriod(id: string, data: Partial<Pick<PayrollPeriod, "status" | "notes" | "sentAt" | "sentToEmails" | "totalAmount">>): Promise<PayrollPeriod>;
   createMonthlyPayment(data: InsertCommissionMonthlyPayment): Promise<CommissionMonthlyPayment>;
   getMonthlyPaymentsForCommission(commissionId: string): Promise<CommissionMonthlyPayment[]>;
   getMonthlyPayments(userId: string | null): Promise<CommissionMonthlyPayment[]>;
@@ -1622,6 +1666,176 @@ export class DatabaseStorage implements IStorage {
         .orderBy(desc(commissionMonthlyPayments.paidAt));
     }
     return db.select().from(commissionMonthlyPayments).orderBy(desc(commissionMonthlyPayments.paidAt));
+  }
+
+  async previewPayroll(userId: string, startDate: Date, endDate: Date): Promise<PayrollPreviewItem[]> {
+    const comms = await db
+      .select({
+        id: commissions.id,
+        planName: commissions.planName,
+        upfrontAmount: commissions.upfrontAmount,
+        confirmedAt: commissions.confirmedAt,
+        dealTitle: deals.title,
+        contactFirstName: contacts.firstName,
+        contactLastName: contacts.lastName,
+      })
+      .from(commissions)
+      .innerJoin(deals, eq(commissions.dealId, deals.id))
+      .leftJoin(contacts, eq(deals.contactId, contacts.id))
+      .where(and(
+        eq(commissions.userId, userId),
+        gte(commissions.confirmedAt, startDate),
+        lte(commissions.confirmedAt, endDate),
+      ));
+
+    const monthly = await db
+      .select({
+        id: commissionMonthlyPayments.id,
+        commissionId: commissionMonthlyPayments.commissionId,
+        amount: commissionMonthlyPayments.amount,
+        periodNumber: commissionMonthlyPayments.periodNumber,
+        paidAt: commissionMonthlyPayments.paidAt,
+        dealTitle: deals.title,
+        planName: commissions.planName,
+        contactFirstName: contacts.firstName,
+        contactLastName: contacts.lastName,
+      })
+      .from(commissionMonthlyPayments)
+      .innerJoin(deals, eq(commissionMonthlyPayments.dealId, deals.id))
+      .innerJoin(commissions, eq(commissionMonthlyPayments.commissionId, commissions.id))
+      .leftJoin(contacts, eq(deals.contactId, contacts.id))
+      .where(and(
+        eq(commissionMonthlyPayments.userId, userId),
+        gte(commissionMonthlyPayments.paidAt, startDate),
+        lte(commissionMonthlyPayments.paidAt, endDate),
+      ));
+
+    const buildContactName = (first: string | null | undefined, last: string | null | undefined) =>
+      [first, last].filter(Boolean).join(" ").trim() || "Unknown Contact";
+
+    const items: PayrollPreviewItem[] = [
+      ...comms.map(c => ({
+        tempId: `c_${c.id}`,
+        commissionId: c.id,
+        monthlyPaymentId: null,
+        type: "upfront" as const,
+        date: c.confirmedAt!.toISOString(),
+        contactName: buildContactName(c.contactFirstName, c.contactLastName),
+        dealTitle: c.dealTitle,
+        planName: c.planName,
+        originalAmount: c.upfrontAmount,
+      })),
+      ...monthly.map(m => ({
+        tempId: `m_${m.id}`,
+        commissionId: m.commissionId,
+        monthlyPaymentId: m.id,
+        type: "recurring" as const,
+        date: m.paidAt.toISOString(),
+        contactName: buildContactName(m.contactFirstName, m.contactLastName),
+        dealTitle: m.dealTitle,
+        planName: m.planName,
+        originalAmount: m.amount,
+      })),
+    ];
+
+    items.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    return items;
+  }
+
+  async createPayrollPeriod(
+    data: Omit<InsertPayrollPeriod, "totalAmount">,
+    lineItems: PayrollLineItemInput[],
+  ): Promise<{ period: PayrollPeriod; items: PayrollLineItem[] }> {
+    const totalAmount = lineItems
+      .reduce((sum, item) => sum + parseFloat(item.adjustedAmount || "0"), 0)
+      .toFixed(2);
+
+    const [period] = await db.insert(payrollPeriods).values({ ...data, totalAmount }).returning();
+
+    const insertedItems: PayrollLineItem[] = [];
+    for (const item of lineItems) {
+      const [inserted] = await db.insert(payrollLineItems).values({
+        payrollPeriodId: period.id,
+        commissionId: item.commissionId ?? null,
+        monthlyPaymentId: item.monthlyPaymentId ?? null,
+        type: item.type,
+        contactName: item.contactName,
+        dealTitle: item.dealTitle,
+        planName: item.planName,
+        originalAmount: item.originalAmount,
+        adjustedAmount: item.adjustedAmount,
+        date: item.date,
+        notes: item.notes ?? null,
+      }).returning();
+      insertedItems.push(inserted);
+    }
+
+    return { period, items: insertedItems };
+  }
+
+  async getPayrollPeriods(userId: string | null): Promise<PayrollPeriodFull[]> {
+    const periods = await db
+      .select()
+      .from(payrollPeriods)
+      .where(userId ? eq(payrollPeriods.userId, userId) : undefined)
+      .orderBy(desc(payrollPeriods.createdAt));
+
+    const enriched: PayrollPeriodFull[] = [];
+    for (const period of periods) {
+      const items = await db
+        .select()
+        .from(payrollLineItems)
+        .where(eq(payrollLineItems.payrollPeriodId, period.id))
+        .orderBy(payrollLineItems.date);
+
+      const userRows = await db.select().from(users).where(eq(users.id, period.userId)).limit(1);
+      const u = userRows[0];
+      const salespersonName = u
+        ? [`${u.firstName ?? ""}`, `${u.lastName ?? ""}`].join(" ").trim() || u.email || period.userId
+        : period.userId;
+      const salespersonEmail = u?.email || "";
+
+      enriched.push({ ...period, items, salespersonName, salespersonEmail });
+    }
+
+    return enriched;
+  }
+
+  async getPayrollPeriod(id: string): Promise<PayrollPeriodFull | null> {
+    const [period] = await db.select().from(payrollPeriods).where(eq(payrollPeriods.id, id)).limit(1);
+    if (!period) return null;
+
+    const items = await db
+      .select()
+      .from(payrollLineItems)
+      .where(eq(payrollLineItems.payrollPeriodId, period.id))
+      .orderBy(payrollLineItems.date);
+
+    const userRows = await db.select().from(users).where(eq(users.id, period.userId)).limit(1);
+    const u = userRows[0];
+    const salespersonName = u
+      ? [`${u.firstName ?? ""}`, `${u.lastName ?? ""}`].join(" ").trim() || u.email || period.userId
+      : period.userId;
+    const salespersonEmail = u?.email || "";
+
+    return { ...period, items, salespersonName, salespersonEmail };
+  }
+
+  async updatePayrollLineItem(id: string, adjustedAmount: string, notes?: string): Promise<PayrollLineItem> {
+    const [updated] = await db
+      .update(payrollLineItems)
+      .set({ adjustedAmount, ...(notes !== undefined ? { notes } : {}) })
+      .where(eq(payrollLineItems.id, id))
+      .returning();
+    return updated;
+  }
+
+  async updatePayrollPeriod(
+    id: string,
+    data: Partial<Pick<PayrollPeriod, "status" | "notes" | "sentAt" | "sentToEmails" | "totalAmount">>,
+  ): Promise<PayrollPeriod> {
+    const [updated] = await db.update(payrollPeriods).set(data).where(eq(payrollPeriods.id, id)).returning();
+    return updated;
   }
 
   async getSerpCallsInLastHour(): Promise<number> {

@@ -473,5 +473,44 @@ export const insertCommissionMonthlyPaymentSchema = createInsertSchema(commissio
 export type CommissionMonthlyPayment = typeof commissionMonthlyPayments.$inferSelect;
 export type InsertCommissionMonthlyPayment = z.infer<typeof insertCommissionMonthlyPaymentSchema>;
 
+// Payroll periods — admin-created pay period reports sent to salespeople
+export const payrollPeriods = pgTable("payroll_periods", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onUpdate: "cascade" }),
+  createdByAdminId: varchar("created_by_admin_id").references(() => users.id),
+  startDate: timestamp("start_date").notNull(),
+  endDate: timestamp("end_date").notNull(),
+  totalAmount: text("total_amount").notNull().default("0"),
+  status: text("status").notNull().default("draft"),
+  notes: text("notes"),
+  sentAt: timestamp("sent_at"),
+  sentToEmails: text("sent_to_emails"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertPayrollPeriodSchema = createInsertSchema(payrollPeriods).omit({ id: true, createdAt: true });
+export type InsertPayrollPeriod = z.infer<typeof insertPayrollPeriodSchema>;
+export type PayrollPeriod = typeof payrollPeriods.$inferSelect;
+
+// Payroll line items — individual earnings within a pay period
+export const payrollLineItems = pgTable("payroll_line_items", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  payrollPeriodId: varchar("payroll_period_id").notNull().references(() => payrollPeriods.id, { onDelete: "cascade" }),
+  commissionId: varchar("commission_id").references(() => commissions.id),
+  monthlyPaymentId: varchar("monthly_payment_id").references(() => commissionMonthlyPayments.id),
+  type: text("type").notNull(),
+  contactName: text("contact_name").notNull().default(""),
+  dealTitle: text("deal_title").notNull(),
+  planName: text("plan_name").notNull(),
+  originalAmount: text("original_amount").notNull(),
+  adjustedAmount: text("adjusted_amount").notNull(),
+  date: timestamp("date").notNull(),
+  notes: text("notes"),
+});
+
+export const insertPayrollLineItemSchema = createInsertSchema(payrollLineItems).omit({ id: true });
+export type InsertPayrollLineItem = z.infer<typeof insertPayrollLineItemSchema>;
+export type PayrollLineItem = typeof payrollLineItems.$inferSelect;
+
 export type User = typeof users.$inferSelect;
 export type UpsertUser = typeof users.$inferInsert;

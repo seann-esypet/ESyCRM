@@ -10,6 +10,7 @@ import Papa from "papaparse";
 import { runLeadDiscoveryJob, importResultsToCRM } from "./lead-discovery";
 import { sendDailyReport } from "./dailyReportScheduler";
 import { sendReplyNotificationEmail, sendEmail, replaceTemplateVariables } from "./sendgrid";
+import { format as fmtDate } from "date-fns";
 
 // ─── Sequence Test Runner (in-memory) ────────────────────────────────────────
 interface TestStepResult {
@@ -1298,6 +1299,149 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching monthly commission payments:", error);
       res.status(500).json({ message: "Failed to fetch monthly payments" });
+    }
+  });
+
+  // ─── Payroll Routes ────────────────────────────────────────────────────────
+
+  // Preview payroll line items for a date range (no save)
+  app.get("/api/payroll/preview", isAuthenticated, async (req: any, res) => {
+    try {
+      const isAdminUser = (req.user as any)?.claims?.role === "admin";
+      const { userId, startDate, endDate } = req.query;
+      if (!userId || !startDate || !endDate) {
+        return res.status(400).json({ message: "userId, startDate, and endDate are required" });
+      }
+      if (!isAdminUser && userId !== req.user.claims.sub) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+      const items = await storage.previewPayroll(userId as string, new Date(startDate as string), new Date(endDate as string));
+      res.json(items);
+    } catch (error) {
+      console.error("Error previewing payroll:", error);
+      res.status(500).json({ message: "Failed to preview payroll" });
+    }
+  });
+
+  // List payroll periods
+  app.get("/api/payroll", isAuthenticated, async (req: any, res) => {
+    try {
+      const isAdminUser = (req.user as any)?.claims?.role === "admin";
+      const { userId } = req.query;
+      const filterUserId = isAdminUser ? ((userId as string) || null) : req.user.claims.sub;
+      const periods = await storage.getPayrollPeriods(filterUserId);
+      res.json(periods);
+    } catch (error) {
+      console.error("Error fetching payroll periods:", error);
+      res.status(500).json({ message: "Failed to fetch payroll periods" });
+    }
+  });
+
+  // Get single payroll period with line items
+  app.get("/api/payroll/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const isAdminUser = (req.user as any)?.claims?.role === "admin";
+      const period = await storage.getPayrollPeriod(req.params.id);
+      if (!period) return res.status(404).json({ message: "Payroll period not found" });
+      if (!isAdminUser && period.userId !== req.user.claims.sub) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+      res.json(period);
+    } catch (error) {
+      console.error("Error fetching payroll period:", error);
+      res.status(500).json({ message: "Failed to fetch payroll period" });
+    }
+  });
+
+  // Create (save) a payroll period with line items
+  app.post("/api/payroll", isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const adminId = req.user.claims.sub;
+      const { userId, startDate, endDate, notes, lineItems } = req.body;
+      if (!userId || !startDate || !endDate || !Array.isArray(lineItems)) {
+        return res.status(400).json({ message: "userId, startDate, endDate, and lineItems are required" });
+      }
+      const result = await storage.createPayrollPeriod(
+        { userId, createdByAdminId: adminId, startDate: new Date(startDate), endDate: new Date(endDate), status: "draft", notes: notes || null, sentAt: null, sentToEmails: null },
+        lineItems.map((item: any) => ({
+          commissionId: item.commissionId || null,
+          monthlyPaymentId: item.monthlyPaymentId || null,
+          type: item.type,
+          contactName: item.contactName || "",
+          dealTitle: item.dealTitle,
+          planName: item.planName,
+          originalAmount: item.originalAmount,
+          adjustedAmount: item.adjustedAmount,
+          date: new Date(item.date),
+          notes: item.notes || null,
+        })),
+      );
+      res.status(201).json(result);
+    } catch (error) {
+      console.error("Error creating payroll period:", error);
+      res.status(500).json({ message: "Failed to create payroll period" });
+    }
+  });
+
+  // Update payroll period (notes/status)
+  app.patch("/api/payroll/:id", isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const { notes, status, totalAmount } = req.body;
+      const updated = await storage.updatePayrollPeriod(req.params.id, { ...(notes !== undefined && { notes }), ...(status !== undefined && { status }), ...(totalAmount !== undefined && { totalAmount }) });
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating payroll period:", error);
+      res.status(500).json({ message: "Failed to update payroll period" });
+    }
+  });
+
+  // Update a single payroll line item's adjusted amount
+  app.patch("/api/payroll/:periodId/items/:itemId", isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const { adjustedAmount, notes } = req.body;
+      const updated = await storage.updatePayrollLineItem(req.params.itemId, adjustedAmount, notes);
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating payroll line item:", error);
+      res.status(500).json({ message: "Failed to update payroll line item" });
+    }
+  });
+
+  // Send payroll email to salesperson + optional additional recipients
+  app.post("/api/payroll/:id/send", isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const { additionalEmails = [] } = req.body;
+      const period = await storage.getPayrollPeriod(req.params.id);
+      if (!period) return res.status(404).json({ message: "Payroll period not found" });
+
+      const startFmt = fmtDate(new Date(period.startDate), "MMM d, yyyy");
+      const endFmt = fmtDate(new Date(period.endDate), "MMM d, yyyy");
+      const periodLabel = `${startFmt} – ${endFmt}`;
+
+      const lineRows = period.items.map((item) => {
+        const typeLabel = item.type === "upfront" ? "New Sale (90%)" : "Recurring (10%)";
+        const typeBg = item.type === "upfront" ? "#dcfce7" : "#dbeafe";
+        const typeColor = item.type === "upfront" ? "#166534" : "#1d4ed8";
+        const adj = parseFloat(item.adjustedAmount).toFixed(2);
+        const orig = parseFloat(item.originalAmount).toFixed(2);
+        const adjNote = adj !== orig ? ` <em style="color:#6b7280;">(orig $${orig})</em>` : "";
+        return `<tr style="border-bottom:1px solid #e5e7eb;"><td style="padding:8px 12px;">${fmtDate(new Date(item.date), "MMM d, yyyy")}</td><td style="padding:8px 12px;">${item.contactName}</td><td style="padding:8px 12px;">${item.dealTitle}</td><td style="padding:8px 12px;">${item.planName}</td><td style="padding:8px 12px;"><span style="background:${typeBg};color:${typeColor};padding:2px 8px;border-radius:9999px;font-size:12px;">${typeLabel}</span></td><td style="padding:8px 12px;text-align:right;font-weight:600;">$${adj}${adjNote}</td><td style="padding:8px 12px;color:#9ca3af;font-size:12px;">${item.notes || ""}</td></tr>`;
+      }).join("");
+
+      const notesSection = period.notes ? `<div style="margin-top:20px;padding:12px;background:#f9fafb;border-radius:6px;"><strong>Notes:</strong> ${period.notes}</div>` : "";
+
+      const html = `<div style="font-family:Arial,sans-serif;max-width:820px;margin:0 auto;background:#fff;padding:32px;"><h1 style="color:#111827;font-size:22px;margin-bottom:4px;">Commission Pay Statement</h1><p style="color:#6b7280;margin-bottom:24px;">${period.salespersonName} &bull; ${periodLabel}</p><table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb;"><thead><tr style="background:#f9fafb;"><th style="padding:10px 12px;text-align:left;font-size:13px;color:#374151;">Date</th><th style="padding:10px 12px;text-align:left;font-size:13px;color:#374151;">Contact</th><th style="padding:10px 12px;text-align:left;font-size:13px;color:#374151;">Deal</th><th style="padding:10px 12px;text-align:left;font-size:13px;color:#374151;">Plan</th><th style="padding:10px 12px;text-align:left;font-size:13px;color:#374151;">Type</th><th style="padding:10px 12px;text-align:right;font-size:13px;color:#374151;">Amount</th><th style="padding:10px 12px;text-align:left;font-size:13px;color:#374151;">Notes</th></tr></thead><tbody>${lineRows}</tbody><tfoot><tr style="background:#f0fdf4;"><td colspan="5" style="padding:12px;font-weight:700;color:#111827;">Total Pay for Period</td><td style="padding:12px;text-align:right;font-weight:700;font-size:16px;color:#16a34a;">$${parseFloat(period.totalAmount).toFixed(2)}</td><td></td></tr></tfoot></table>${notesSection}<p style="margin-top:24px;color:#9ca3af;font-size:11px;">Generated by ESyCRM on ${fmtDate(new Date(), "MMMM d, yyyy")}.</p></div>`;
+
+      const allRecipients = [period.salespersonEmail, ...additionalEmails].filter(Boolean);
+      for (const email of allRecipients) {
+        await sendEmail({ to: email, subject: `Commission Pay Statement: ${period.salespersonName} — ${periodLabel}`, body: html });
+      }
+
+      await storage.updatePayrollPeriod(req.params.id, { status: "sent", sentAt: new Date(), sentToEmails: allRecipients.join(", ") });
+      res.json({ success: true, sentTo: allRecipients.join(", ") });
+    } catch (error) {
+      console.error("Error sending payroll email:", error);
+      res.status(500).json({ message: "Failed to send payroll email" });
     }
   });
 

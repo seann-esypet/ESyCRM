@@ -19,6 +19,7 @@ import AdminUsers from "@/pages/admin-users";
 import AdminSequenceTest from "@/pages/admin-sequence-test";
 import LeadDiscovery from "@/pages/lead-discovery";
 import DealWorkspace from "@/pages/deal-workspace";
+import PayrollDetail from "@/pages/payroll-detail";
 import Sidebar from "@/components/layout/sidebar";
 
 // From Replit Auth blueprint - Conditional routing based on auth state
@@ -45,6 +46,7 @@ function Router() {
           <Route path="/email-sequences" component={EmailSequences} />
           <Route path="/inbox" component={Inbox} />
           <Route path="/commissions" component={Commissions} />
+          <Route path="/payroll/:id" component={PayrollDetail} />
           <Route path="/reports" component={Reports} />
           <Route path="/settings" component={Settings} />
           <Route path="/admin/users" component={AdminUsers} />
