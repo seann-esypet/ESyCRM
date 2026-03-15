@@ -126,6 +126,11 @@ export default function DealWorkspace() {
   const [wonPlanChoice, setWonPlanChoice] = useState("");
   const [isEditingPlan, setIsEditingPlan] = useState(false);
   const [editPlanValue, setEditPlanValue] = useState("");
+  const [editDealOpen, setEditDealOpen] = useState(false);
+  const [editDealTitle, setEditDealTitle] = useState("");
+  const [editDealValue, setEditDealValue] = useState("");
+  const [editDealProbability, setEditDealProbability] = useState("");
+  const [editDealCloseDate, setEditDealCloseDate] = useState("");
 
   // Log activity form state
   const [logType, setLogType] = useState<LogType | null>(null);
@@ -167,6 +172,39 @@ export default function DealWorkspace() {
       toast({ title: "Error", description: "Failed to update plan.", variant: "destructive" });
     },
   });
+
+  const dealEditMutation = useMutation({
+    mutationFn: (data: { title?: string; value?: string; probability?: number | null; expectedCloseDate?: string | null }) =>
+      apiRequest("PATCH", `/api/deals/${dealId}`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deal-workspace", dealId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/deals"] });
+      setEditDealOpen(false);
+      toast({ title: "Deal updated", description: "Deal details have been saved." });
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to update deal.", variant: "destructive" });
+    },
+  });
+
+  function openEditDeal() {
+    if (!deal) return;
+    setEditDealTitle(deal.title ?? "");
+    setEditDealValue(deal.value ?? "");
+    setEditDealProbability(deal.probability != null ? String(deal.probability) : "");
+    setEditDealCloseDate(deal.expectedCloseDate ? format(new Date(deal.expectedCloseDate), "yyyy-MM-dd") : "");
+    setEditDealOpen(true);
+  }
+
+  function submitEditDeal() {
+    const probability = editDealProbability !== "" ? parseInt(editDealProbability, 10) : null;
+    dealEditMutation.mutate({
+      title: editDealTitle.trim() || undefined,
+      value: editDealValue.trim() || undefined,
+      probability,
+      expectedCloseDate: editDealCloseDate || null,
+    });
+  }
 
   // Move stage mutation
   const stageMutation = useMutation({
@@ -669,8 +707,24 @@ export default function DealWorkspace() {
             <div className="space-y-2.5">
               {/* Title */}
               <div>
-                <p className="text-xs text-muted-foreground mb-0.5">Title</p>
-                <p className="text-sm font-medium" data-testid="text-deal-title">{deal.title}</p>
+                <div className="flex items-center justify-between mb-0.5">
+                  <p className="text-xs text-muted-foreground">Title</p>
+                  <button
+                    onClick={openEditDeal}
+                    className="text-muted-foreground hover:text-foreground transition-colors"
+                    title="Edit deal"
+                    data-testid="button-edit-deal"
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </button>
+                </div>
+                <button
+                  onClick={openEditDeal}
+                  className="text-sm font-medium text-left hover:text-primary transition-colors w-full"
+                  data-testid="text-deal-title"
+                >
+                  {deal.title}
+                </button>
               </div>
 
               {/* Plan */}
@@ -768,10 +822,24 @@ export default function DealWorkspace() {
 
               {/* Expected Close */}
               <div>
-                <p className="text-xs text-muted-foreground mb-0.5">Expected Close</p>
-                <p className="text-sm" data-testid="text-deal-close-date">
-                  {deal.expectedCloseDate ? format(new Date(deal.expectedCloseDate), "MMM d, yyyy") : "Not set"}
-                </p>
+                <div className="flex items-center justify-between mb-0.5">
+                  <p className="text-xs text-muted-foreground">Expected Close</p>
+                  <button
+                    onClick={openEditDeal}
+                    className="text-muted-foreground hover:text-foreground transition-colors"
+                    title="Edit deal"
+                    data-testid="button-edit-deal-close"
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </button>
+                </div>
+                <button
+                  onClick={openEditDeal}
+                  className="text-sm text-left hover:text-primary transition-colors w-full"
+                  data-testid="text-deal-close-date"
+                >
+                  {deal.expectedCloseDate ? format(new Date(deal.expectedCloseDate), "MMM d, yyyy") : <span className="text-muted-foreground">Not set — click to add</span>}
+                </button>
               </div>
 
               {/* Demo Scheduled */}
@@ -969,6 +1037,77 @@ export default function DealWorkspace() {
               data-testid="button-confirm-won"
             >
               {commissionMutation.isPending ? "Saving…" : "Confirm & Record Commission"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Deal modal */}
+      <Dialog open={editDealOpen} onOpenChange={setEditDealOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Pencil className="h-4 w-4" /> Edit Deal
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-deal-title">Title</Label>
+              <Input
+                id="edit-deal-title"
+                value={editDealTitle}
+                onChange={e => setEditDealTitle(e.target.value)}
+                placeholder="Deal title"
+                data-testid="input-edit-deal-title"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-deal-value">Value ($)</Label>
+              <Input
+                id="edit-deal-value"
+                type="number"
+                min="0"
+                step="0.01"
+                value={editDealValue}
+                onChange={e => setEditDealValue(e.target.value)}
+                placeholder="0.00"
+                data-testid="input-edit-deal-value"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-deal-probability">Probability (%)</Label>
+              <Input
+                id="edit-deal-probability"
+                type="number"
+                min="0"
+                max="100"
+                value={editDealProbability}
+                onChange={e => setEditDealProbability(e.target.value)}
+                placeholder="0–100"
+                data-testid="input-edit-deal-probability"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-deal-close-date">Expected Close Date</Label>
+              <Input
+                id="edit-deal-close-date"
+                type="date"
+                value={editDealCloseDate}
+                onChange={e => setEditDealCloseDate(e.target.value)}
+                data-testid="input-edit-deal-close-date"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditDealOpen(false)} data-testid="button-cancel-edit-deal">
+              Cancel
+            </Button>
+            <Button
+              onClick={submitEditDeal}
+              disabled={!editDealTitle.trim() || dealEditMutation.isPending}
+              data-testid="button-save-edit-deal"
+            >
+              {dealEditMutation.isPending ? "Saving…" : "Save Changes"}
             </Button>
           </DialogFooter>
         </DialogContent>
