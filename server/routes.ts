@@ -485,109 +485,170 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!businessName) return res.json({ found: false, reason: "No business name on record" });
 
       const city = (contact as any).city || "";
-      const apiKey = process.env.SERPAPI_API_KEY;
+      const serpKey = process.env.SERPAPI_API_KEY;
+      const anthropicKey = process.env.ANTHROPIC_API_KEY;
 
-      // ── Name extraction helper ────────────────────────────────────────────
+      // ── Helpers ───────────────────────────────────────────────────────────
+      const SKIP_WORDS = new Set(["The","Our","Your","All","For","With","From","After","When","This","That","Here","Call","Visit","Come","More","Best","Google","Yelp","Facebook","Check","Contact","Book","Find","Open","Click","Learn","Read","See","Get","Now","Today","New","Top","Bay","Dog","Cat","Pet","Pup","We","My","His","Her","Its","Are","Was","Has","Had","Did"]);
+
       function extractFirstName(text: string): string | null {
         const patterns = [
-          /(?:owned by|owner[:\s]+|hi[,\s]+i'?m|meet\s+|i'?m\s+|founded by|opened by|started by|run by)\s+([A-Z][a-z]{2,})/i,
-          /([A-Z][a-z]{2,})\s+(?:is the owner|owns and operates|founded|started)/i,
+          /(?:owned by|owner[:\s]+|hi[,\s]+i'?m|meet\s+|i'?m\s+|founded by|opened by|started by|run by|operated by|proprietor[:\s]+)\s+([A-Z][a-z]{2,})/i,
+          /([A-Z][a-z]{2,})\s+(?:is the owner|owns and operates|founded|started|opened)/i,
           /\bowner[,:]?\s+([A-Z][a-z]{2,})\b/i,
-          /—\s*([A-Z][a-z]{2,}),?\s*(?:owner|founder|groomer)/i,
+          /—\s*([A-Z][a-z]{2,}),?\s*(?:owner|founder|groomer|proprietor)/i,
+          /\bmy name is\s+([A-Z][a-z]{2,})\b/i,
         ];
         for (const p of patterns) {
           const m = text.match(p);
-          if (m) {
-            const name = m[1];
-            // Filter out common false positives
-            const skip = ["The", "Our", "Your", "All", "For", "With", "From", "After", "When", "This", "That", "Here", "Call", "Visit", "Come", "More", "Best", "Google", "Yelp", "Facebook"];
-            if (!skip.includes(name)) return name;
-          }
+          if (m?.[1] && !SKIP_WORDS.has(m[1])) return m[1];
         }
         return null;
       }
 
-      // ── Step 1: SerpAPI Google web search ────────────────────────────────
-      if (apiKey) {
+      function stripHtml(html: string): string {
+        return html
+          .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, " ")
+          .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, " ")
+          .replace(/<[^>]+>/g, " ")
+          .replace(/\s+/g, " ")
+          .trim();
+      }
+
+      function extractMeta(html: string): string {
+        const ogA = html.match(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)/i);
+        const ogB = html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:description["']/i);
+        const descA = html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)/i);
+        const descB = html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']description["']/i);
+        return [ogA?.[1], ogB?.[1], descA?.[1], descB?.[1]].filter(Boolean).join(" ");
+      }
+
+      // ── Claude extraction ─────────────────────────────────────────────────
+      async function askClaude(textBlob: string, source: string): Promise<{ firstName: string; source: string; confidence: string } | null> {
+        if (!anthropicKey || !textBlob || textBlob.length < 40) return null;
+        try {
+          const r = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-api-key": anthropicKey,
+              "anthropic-version": "2023-06-01",
+            },
+            body: JSON.stringify({
+              model: "claude-haiku-4-5",
+              max_tokens: 30,
+              messages: [{
+                role: "user",
+                content: `Extract the first name of the OWNER of the pet grooming business named "${businessName}" from the text below.\n\nRules:\n- Return ONLY the owner's first name as a single word, nothing else\n- If no owner name is clearly stated, return: null\n- Ignore customer names, employee names, or reviewers — only the owner/founder/proprietor\n\nText:\n"""\n${textBlob.slice(0, 2500)}\n"""`,
+              }],
+            }),
+            signal: AbortSignal.timeout(15000),
+          });
+          if (!r.ok) return null;
+          const data = await r.json() as any;
+          const raw = data?.content?.[0]?.text?.trim();
+          if (!raw || raw.toLowerCase() === "null" || !/^[A-Za-z]{2,20}$/.test(raw)) return null;
+          const name = raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
+          if (SKIP_WORDS.has(name)) return null;
+          return { firstName: name, source, confidence: "medium" };
+        } catch { return null; }
+      }
+
+      // ── Step 1 (parallel): Google search + website scrape ─────────────────
+      type DiscoveryChunk = { text: string; source: string; priority: number };
+      const chunks: DiscoveryChunk[] = [];
+
+      async function collectGoogle(): Promise<void> {
+        if (!serpKey) return;
         const queries = [
           `"${businessName}" owner grooming`,
-          `"${businessName}"${city ? ` "${city}"` : ""} owner name`,
+          `"${businessName}"${city ? ` "${city}"` : ""} "owned by"`,
+          `"${businessName}" grooming founder`,
+          `"${businessName}" grooming "my name is"`,
         ];
         for (const q of queries) {
           try {
-            const params = new URLSearchParams({ api_key: apiKey, engine: "google", q, num: "5" });
+            const params = new URLSearchParams({ api_key: serpKey, engine: "google", q, num: "5" });
             const r = await fetch(`https://serpapi.com/search?${params}`, { signal: AbortSignal.timeout(10000) });
-            if (r.ok) {
-              const data = await r.json();
-              const snippets: string[] = [];
-              if (data.answer_box?.snippet) snippets.push(data.answer_box.snippet);
-              if (data.knowledge_graph?.description) snippets.push(data.knowledge_graph.description);
-              for (const result of (data.organic_results || []).slice(0, 5)) {
-                if (result.snippet) snippets.push(result.snippet);
-                if (result.title) snippets.push(result.title);
-              }
-              for (const snippet of snippets) {
-                const name = extractFirstName(snippet);
-                if (name) {
-                  return res.json({ found: true, firstName: name, source: "Google Search", confidence: "medium" });
-                }
-              }
+            if (!r.ok) continue;
+            const data = await r.json() as any;
+            const parts: string[] = [];
+            if (data.answer_box?.answer) parts.push(data.answer_box.answer);
+            if (data.answer_box?.snippet) parts.push(data.answer_box.snippet);
+            if (data.knowledge_graph?.description) parts.push(data.knowledge_graph.description);
+            for (const result of (data.organic_results || []).slice(0, 5)) {
+              if (result.snippet) parts.push(result.snippet);
             }
+            const combined = parts.join(" ");
+            if (combined.trim()) chunks.push({ text: combined, source: "Google Search", priority: 1 });
+            // If regex hits immediately, we can return early after parallel phase
           } catch { /* continue */ }
         }
       }
 
-      // ── Step 2: Website about-page scrape ────────────────────────────────
-      const websiteUrl = contact.websiteUrl;
-      if (websiteUrl) {
-        const aboutPaths = ["/about", "/about-us", "/our-team", "/meet-us", "/contact"];
-        for (const path of aboutPaths) {
+      async function collectWebsite(): Promise<void> {
+        const websiteUrl = contact.websiteUrl;
+        if (!websiteUrl) return;
+        let base: URL;
+        try { base = new URL(websiteUrl.startsWith("http") ? websiteUrl : `https://${websiteUrl}`); }
+        catch { return; }
+        const paths = ["/about", "/about-us", "/our-team", "/meet-us", "/our-story", "/contact", ""];
+        for (const path of paths) {
           try {
-            const base = new URL(websiteUrl.startsWith("http") ? websiteUrl : `https://${websiteUrl}`);
-            const url = `${base.origin}${path}`;
-            const r = await fetch(url, {
-              headers: { "User-Agent": "Mozilla/5.0 (compatible; CRM/1.0)" },
+            const r = await fetch(`${base.origin}${path}`, {
+              headers: { "User-Agent": "Mozilla/5.0 (compatible; EsyCRM/1.0)" },
               signal: AbortSignal.timeout(8000),
             });
             if (!r.ok) continue;
             const html = await r.text();
-            // Strip tags, extract text
-            const text = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
-            // Check og:description
-            const ogMatch = html.match(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)/i)
-              || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:description["']/i);
-            if (ogMatch) {
-              const name = extractFirstName(ogMatch[1]);
-              if (name) return res.json({ found: true, firstName: name, source: "Website (About Page)", confidence: "high" });
-            }
-            const name = extractFirstName(text);
-            if (name) return res.json({ found: true, firstName: name, source: "Website (About Page)", confidence: "medium" });
-          } catch { /* continue */ }
+            const meta = extractMeta(html);
+            const body = stripHtml(html);
+            const combined = `${meta} ${body}`;
+            const label = path ? `Website (${path})` : "Website (Homepage)";
+            const priority = path && path !== "/contact" ? 0 : 2;
+            if (combined.trim().length > 30) chunks.push({ text: combined, source: label, priority });
+          } catch { /* skip */ }
         }
-
-        // Also try homepage
-        try {
-          const base = new URL(websiteUrl.startsWith("http") ? websiteUrl : `https://${websiteUrl}`);
-          const r = await fetch(base.origin, {
-            headers: { "User-Agent": "Mozilla/5.0 (compatible; CRM/1.0)" },
-            signal: AbortSignal.timeout(8000),
-          });
-          if (r.ok) {
-            const html = await r.text();
-            const ogMatch = html.match(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)/i)
-              || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:description["']/i);
-            if (ogMatch) {
-              const name = extractFirstName(ogMatch[1]);
-              if (name) return res.json({ found: true, firstName: name, source: "Website (Homepage)", confidence: "medium" });
-            }
-            const text = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
-            const name = extractFirstName(text);
-            if (name) return res.json({ found: true, firstName: name, source: "Website (Homepage)", confidence: "low" });
-          }
-        } catch { /* ignore */ }
       }
 
-      return res.json({ found: false, reason: "No owner name found after searching Google and the business website" });
+      // Run both in parallel
+      await Promise.allSettled([collectGoogle(), collectWebsite()]);
+
+      // ── Step 2: Try regex across all collected chunks (best priority first) ─
+      chunks.sort((a, b) => a.priority - b.priority);
+      for (const chunk of chunks) {
+        const name = extractFirstName(chunk.text);
+        if (name) {
+          const confidence = chunk.priority === 0 ? "high" : "medium";
+          return res.json({ found: true, firstName: name, source: chunk.source, confidence });
+        }
+      }
+
+      // ── Step 3: Claude fallback on combined text ──────────────────────────
+      if (anthropicKey && chunks.length > 0) {
+        // Best source for Claude = about pages first, then Google
+        for (const chunk of chunks) {
+          const result = await askClaude(chunk.text, `${chunk.source} (AI)`);
+          if (result) return res.json({ found: true, ...result });
+        }
+      }
+
+      // ── Step 4: Email prefix heuristic ────────────────────────────────────
+      const email = contact.email || "";
+      if (email) {
+        const prefix = email.split("@")[0].toLowerCase().replace(/[^a-z]/g, "");
+        const generic = new Set(["info","hello","contact","admin","support","hi","mail","office","team","grooming","salon","help","noreply","booking","appointments","care","spa","studio","paws"]);
+        const bizWords = businessName.toLowerCase().split(/\s+/).map((w: string) => w.replace(/[^a-z]/g, "")).filter((w: string) => w.length > 3);
+        const overlapsWithBiz = bizWords.some((w: string) => prefix.includes(w.slice(0, 4)) || w.includes(prefix.slice(0, 4)));
+        if (prefix.length >= 3 && prefix.length <= 12 && !generic.has(prefix) && !overlapsWithBiz) {
+          const name = prefix.charAt(0).toUpperCase() + prefix.slice(1);
+          if (!SKIP_WORDS.has(name)) {
+            return res.json({ found: true, firstName: name, source: "Email prefix", confidence: "low" });
+          }
+        }
+      }
+
+      return res.json({ found: false, reason: "No owner name found" });
     } catch (error) {
       console.error("Owner discovery error:", error);
       res.status(500).json({ message: "Discovery failed" });
