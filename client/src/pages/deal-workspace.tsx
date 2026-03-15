@@ -124,6 +124,8 @@ export default function DealWorkspace() {
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [wonPopupOpen, setWonPopupOpen] = useState(false);
   const [wonPlanChoice, setWonPlanChoice] = useState("");
+  const [isEditingPlan, setIsEditingPlan] = useState(false);
+  const [editPlanValue, setEditPlanValue] = useState("");
 
   // Log activity form state
   const [logType, setLogType] = useState<LogType | null>(null);
@@ -149,6 +151,21 @@ export default function DealWorkspace() {
     queryKey: ["/api/email-sequence-logs", contactId],
     queryFn: () => fetch(`/api/email-sequence-logs?contactId=${contactId}`, { credentials: "include" }).then(r => r.json()),
     enabled: !!contactId && activeTab === "email-history",
+  });
+
+  // Update plan mutation
+  const planMutation = useMutation({
+    mutationFn: (newPlan: string) =>
+      apiRequest("PATCH", `/api/deals/${dealId}`, { plan: newPlan }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deal-workspace", dealId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/deals"] });
+      setIsEditingPlan(false);
+      toast({ title: "Plan updated", description: "The deal plan has been changed." });
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to update plan.", variant: "destructive" });
+    },
   });
 
   // Move stage mutation
@@ -657,14 +674,71 @@ export default function DealWorkspace() {
               </div>
 
               {/* Plan */}
-              {deal.plan && (
-                <div>
-                  <p className="text-xs text-muted-foreground mb-0.5">Plan</p>
-                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${PLAN_COLORS[deal.plan] ?? "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300"}`} data-testid="text-deal-plan">
-                    {deal.plan}
-                  </span>
+              <div>
+                <div className="flex items-center justify-between mb-0.5">
+                  <p className="text-xs text-muted-foreground">Plan</p>
+                  {!isEditingPlan && (
+                    <button
+                      onClick={() => { setEditPlanValue(deal.plan ?? ""); setIsEditingPlan(true); }}
+                      className="text-muted-foreground hover:text-foreground transition-colors"
+                      title="Change plan"
+                      data-testid="button-edit-plan"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </button>
+                  )}
                 </div>
-              )}
+                {isEditingPlan ? (
+                  <div className="space-y-1.5">
+                    <UiSelect value={editPlanValue} onValueChange={setEditPlanValue}>
+                      <UiSelectTrigger className="h-7 text-xs" data-testid="select-edit-plan">
+                        <UiSelectValue placeholder="Select plan…" />
+                      </UiSelectTrigger>
+                      <UiSelectContent>
+                        <UiSelectItem value="Solo - $79/mo or $2 / Appoint">Solo - $79/mo or $2 / Appoint</UiSelectItem>
+                        <UiSelectItem value="Salon - $149/mo or $3 / Appoint">Salon - $149/mo or $3 / Appoint</UiSelectItem>
+                        <UiSelectItem value="Signature - $229/mo">Signature - $229/mo</UiSelectItem>
+                      </UiSelectContent>
+                    </UiSelect>
+                    <div className="flex gap-1">
+                      <Button
+                        size="sm"
+                        className="h-6 text-xs px-2 flex-1"
+                        onClick={() => { if (editPlanValue) planMutation.mutate(editPlanValue); }}
+                        disabled={!editPlanValue || planMutation.isPending}
+                        data-testid="button-save-plan"
+                      >
+                        Save
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-6 text-xs px-2"
+                        onClick={() => setIsEditingPlan(false)}
+                        data-testid="button-cancel-plan"
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    {deal.plan ? (
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${PLAN_COLORS[deal.plan] ?? "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300"}`} data-testid="text-deal-plan">
+                        {deal.plan}
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => { setEditPlanValue(""); setIsEditingPlan(true); }}
+                        className="text-xs text-muted-foreground hover:text-primary transition-colors underline-offset-2 hover:underline"
+                        data-testid="button-set-plan"
+                      >
+                        Not set — click to add
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
 
               {/* Value */}
               {deal.value && (
