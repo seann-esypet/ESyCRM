@@ -132,6 +132,47 @@ const BOOKING_BUTTON_KEYWORDS = [
   "groom", "grooming", "reserve", "make an appointment"
 ];
 
+// Well-known pet retail/grooming chains that always use their own internal software.
+// They won't have third-party booking URLs but definitely have booking systems.
+const KNOWN_ENTERPRISE_CHAINS: { pattern: RegExp; software: string }[] = [
+  { pattern: /petco/i,              software: "Petco Internal" },
+  { pattern: /petsmart/i,           software: "PetSmart Internal" },
+  { pattern: /pet supplies plus/i,  software: "Pet Supplies Plus Internal" },
+  { pattern: /petsuppliesplus/i,    software: "Pet Supplies Plus Internal" },
+  { pattern: /petsense/i,           software: "PetSense Internal" },
+  { pattern: /petpeople/i,          software: "Pet People Internal" },
+  { pattern: /petland/i,            software: "Petland Internal" },
+  { pattern: /pet supermarket/i,    software: "Pet Supermarket Internal" },
+  { pattern: /banfield/i,           software: "Banfield Internal" },
+  { pattern: /camp bow wow/i,       software: "Camp Bow Wow Internal" },
+  { pattern: /dogtopia/i,           software: "Dogtopia Internal" },
+  { pattern: /barkavenue/i,         software: "Bark Avenue Internal" },
+  { pattern: /pawsitive/i,          software: "Pawsitive Internal" },
+];
+
+// Broad scheduling/appointment language that signals a business takes bookings
+// even if we couldn't identify the specific software
+const SCHEDULING_LANGUAGE = [
+  "book online", "book an appointment", "book now", "schedule online",
+  "schedule an appointment", "request an appointment", "make a reservation",
+  "online booking", "appointment scheduling", "schedule your", "book your",
+  "click to book", "online scheduler", "self-scheduling",
+];
+
+function checkKnownChain(companyName: string): { software: string } | null {
+  for (const chain of KNOWN_ENTERPRISE_CHAINS) {
+    if (chain.pattern.test(companyName)) {
+      return { software: chain.software };
+    }
+  }
+  return null;
+}
+
+function hasSchedulingLanguage(html: string): boolean {
+  const lower = html.toLowerCase();
+  return SCHEDULING_LANGUAGE.some(phrase => lower.includes(phrase));
+}
+
 interface SerpApiResult {
   title: string;
   link: string;
@@ -518,6 +559,32 @@ export async function runLeadDiscoveryJob(jobId: string, userId: string): Promis
                 }
               }
 
+              // Determine software classification with improved logic
+              const knownChain = checkKnownChain(businessData.company);
+              let usesSoftware: string;
+              let currentSoftware: string | null = crawlData?.softwareName || null;
+              let classificationNote: string | null = null;
+
+              if (crawlData?.bookingUrl) {
+                // Found a recognizable booking link — confirmed Yes
+                usesSoftware = "Yes";
+              } else if (knownChain) {
+                // Known enterprise chain — always uses software, even if not detectable via crawl
+                usesSoftware = "Yes";
+                currentSoftware = currentSoftware || knownChain.software;
+                classificationNote = "Known enterprise chain — uses internal booking system";
+              } else if (crawlStatus === "failed" || !businessData.websiteUrl) {
+                // Couldn't crawl — can't determine
+                usesSoftware = "Unknown";
+              } else if (hasSchedulingLanguage(crawlData?.html ?? "")) {
+                // Page has scheduling/booking language but no recognized system — probably uses something we can't detect
+                usesSoftware = "Unknown";
+                classificationNote = "Scheduling language found on site but specific software not identified";
+              } else {
+                // Crawl completed, no booking signals found — likely no online booking
+                usesSoftware = "No";
+              }
+
               const leadResult: InsertLeadDiscoveryResult = {
                 jobId,
                 company: businessData.company,
@@ -530,15 +597,13 @@ export async function runLeadDiscoveryJob(jobId: string, userId: string): Promis
                 hasWebsite: businessData.websiteUrl ? "Yes" : "No",
                 websiteUrl: businessData.websiteUrl || null,
                 bookingSoftwareUrl: crawlData?.bookingUrl || null,
-                currentSoftware: crawlData?.softwareName || null,
-                usesSoftware: crawlData?.bookingUrl 
-                  ? "Yes" 
-                  : (crawlStatus === "completed" ? "No" : "Unknown"),
+                currentSoftware,
+                usesSoftware,
                 contactRequestFormUrl: crawlData?.contactFormUrl || null,
                 leadSource: "Google Maps",
-                notes: crawlError 
-                  ? `Crawl failed: ${crawlError}` 
-                  : (crawlData?.softwareName === "Unknown" ? "Booking link detected but software unclear" : null),
+                notes: crawlError
+                  ? `Crawl failed: ${crawlError}`
+                  : (classificationNote ?? (crawlData?.softwareName === "Unknown" ? "Booking link detected but software unclear" : null)),
                 zipCode: zip,
                 searchQuery: query,
                 isDuplicate: "false",
