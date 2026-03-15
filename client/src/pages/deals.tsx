@@ -785,7 +785,7 @@ export default function Deals() {
               </TableHeader>
               <TableBody>
                 {sortedDeals.map((deal) => {
-                  const isExpired = isDateExpired(deal.expectedCloseDate) && !["closed_won", "closed_lost"].includes(deal.stage);
+                  const isExpired = isDateExpired(deal.expectedCloseDate) && !["won", "lost"].includes(deal.stage);
                   return (
                     <TableRow 
                       key={deal.id} 
