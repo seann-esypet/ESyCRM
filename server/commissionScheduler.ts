@@ -26,6 +26,16 @@ async function processMonthlyCommissions() {
         if (existingPeriods.has(period)) continue;
 
         const paidAt = new Date(confirmedAt.getTime() + period * THIRTY_DAYS_MS);
+
+        // Safety guard: never create a recurring payment on or before the won date.
+        // Period 1 must be at least 29 days after confirmedAt, period 2 at least 59 days, etc.
+        const minDaysRequired = period * 30 - 1;
+        const daysElapsed = (now.getTime() - confirmedAt.getTime()) / (24 * 60 * 60 * 1000);
+        if (daysElapsed < minDaysRequired) {
+          console.warn(`[CommissionScheduler] Skipping period ${period} for commission ${commission.id} — only ${Math.floor(daysElapsed)} days elapsed, need ${minDaysRequired}`);
+          continue;
+        }
+
         await storage.createMonthlyPayment({
           commissionId: commission.id,
           dealId: commission.dealId,
