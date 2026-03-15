@@ -127,22 +127,15 @@ function buildEmailHtml(
       </tr>`).join("");
 
   return `<!DOCTYPE html>
-<html lang="en">
-<head>
+<html lang="en"><head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-</head>
-<body style="margin:0;padding:0;background:#f3f4f6;font-family:Arial,Helvetica,sans-serif;">
-
-<table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f3f4f6;">
-  <tr>
-    <td align="center" style="padding:24px 12px;">
-
-      <table width="780" cellpadding="0" cellspacing="0" border="0" style="max-width:780px;width:100%;">
+<style>body{margin:0;padding:0;}table{border-collapse:collapse;}@media only screen and (max-width:600px){.outer-td{padding:8px 6px!important;}.inner-table{width:100%!important;}.header-td{padding:16px 16px!important;}.card-td{padding:14px 16px!important;border-right:none!important;}}</style>
+</head><body style="margin:0;padding:0;background:#f3f4f6;font-family:Arial,Helvetica,sans-serif;"><table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f3f4f6;"><tr><td align="center" class="outer-td" style="padding:16px 12px;"><table width="780" cellpadding="0" cellspacing="0" border="0" class="inner-table" style="max-width:780px;width:100%;">
 
         <!-- HEADER -->
         <tr>
-          <td style="background:#1e3a5f;border-radius:8px 8px 0 0;padding:24px 28px;">
+          <td class="header-td" style="background:#1e3a5f;border-radius:8px 8px 0 0;padding:20px 28px;">
             <table width="100%" cellpadding="0" cellspacing="0" border="0">
               <tr>
                 <td width="56" valign="middle">
@@ -165,13 +158,13 @@ function buildEmailHtml(
           <td style="background:#ffffff;border-left:1px solid #e5e7eb;border-right:1px solid #e5e7eb;">
             <table width="100%" cellpadding="0" cellspacing="0" border="0">
               <tr>
-                <td width="50%" style="padding:20px 28px;border-right:1px solid #e5e7eb;">
+                <td width="50%" class="card-td" style="padding:16px 24px;border-right:1px solid #e5e7eb;">
                   <p style="margin:0;color:#6b7280;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;font-family:Arial,sans-serif;">Emails Sent</p>
-                  <p style="margin:4px 0 0;color:#1d4ed8;font-size:40px;font-weight:700;line-height:1;font-family:Arial,sans-serif;">${totalSent}</p>
+                  <p style="margin:4px 0 0;color:#1d4ed8;font-size:36px;font-weight:700;line-height:1;font-family:Arial,sans-serif;">${totalSent}</p>
                 </td>
-                <td width="50%" style="padding:20px 28px;">
+                <td width="50%" class="card-td" style="padding:16px 24px;">
                   <p style="margin:0;color:#6b7280;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;font-family:Arial,sans-serif;">Replies Received</p>
-                  <p style="margin:4px 0 0;color:#16a34a;font-size:40px;font-weight:700;line-height:1;font-family:Arial,sans-serif;">${totalReplies}</p>
+                  <p style="margin:4px 0 0;color:#16a34a;font-size:36px;font-weight:700;line-height:1;font-family:Arial,sans-serif;">${totalReplies}</p>
                 </td>
               </tr>
             </table>
