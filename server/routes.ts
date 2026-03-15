@@ -1214,7 +1214,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Returns enriched commission objects with dealTitle and salespersonName
   app.get("/api/commissions", isAuthenticated, async (req: any, res) => {
     try {
-      const isAdminUser = (req.user as any)?.claims?.role === "admin";
+      const isAdminUser = (req.user as any)?.role === "admin";
       const userId = isAdminUser ? null : req.user.claims.sub;
       const commissionData = await storage.getCommissions(userId);
       const enriched = await Promise.all(commissionData.map(async (c) => {
@@ -1236,7 +1236,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/commissions", isAuthenticated, async (req: any, res) => {
     try {
       const actorId = req.user.claims.sub;
-      const isAdminUser = (req.user as any)?.claims?.role === "admin";
+      const isAdminUser = (req.user as any)?.role === "admin";
       const { dealId, planName } = req.body;
       if (!dealId || !planName) {
         return res.status(400).json({ message: "dealId and planName are required" });
@@ -1292,7 +1292,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get monthly recurring commission payments
   app.get("/api/commissions/monthly-payments", isAuthenticated, async (req: any, res) => {
     try {
-      const isAdminUser = (req.user as any)?.claims?.role === "admin";
+      const isAdminUser = (req.user as any)?.role === "admin";
       const userId = isAdminUser ? null : req.user.claims.sub;
       const payments = await storage.getMonthlyPayments(userId);
       res.json(payments);
@@ -1307,7 +1307,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Preview payroll line items for a date range (no save)
   app.get("/api/payroll/preview", isAuthenticated, async (req: any, res) => {
     try {
-      const isAdminUser = (req.user as any)?.claims?.role === "admin";
+      const isAdminUser = (req.user as any)?.role === "admin";
       const { userId, startDate, endDate } = req.query;
       if (!userId || !startDate || !endDate) {
         return res.status(400).json({ message: "userId, startDate, and endDate are required" });
@@ -1326,7 +1326,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // List payroll periods
   app.get("/api/payroll", isAuthenticated, async (req: any, res) => {
     try {
-      const isAdminUser = (req.user as any)?.claims?.role === "admin";
+      const isAdminUser = (req.user as any)?.role === "admin";
       const { userId } = req.query;
       const filterUserId = isAdminUser ? ((userId as string) || null) : req.user.claims.sub;
       const periods = await storage.getPayrollPeriods(filterUserId);
@@ -1340,7 +1340,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get single payroll period with line items
   app.get("/api/payroll/:id", isAuthenticated, async (req: any, res) => {
     try {
-      const isAdminUser = (req.user as any)?.claims?.role === "admin";
+      const isAdminUser = (req.user as any)?.role === "admin";
       const period = await storage.getPayrollPeriod(req.params.id);
       if (!period) return res.status(404).json({ message: "Payroll period not found" });
       if (!isAdminUser && period.userId !== req.user.claims.sub) {
