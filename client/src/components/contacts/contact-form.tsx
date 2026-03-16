@@ -152,6 +152,8 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
       phoneOther: contact?.phoneOther || "",
       address: contact?.address || "",
       city: contact?.city || "",
+      state: contact?.state || "",
+      zipCode: contact?.zipCode || "",
       company: contact?.company || "",
       jobTitle: contact?.jobTitle || "",
       businessType: contact?.businessType || "salon",
@@ -548,24 +550,65 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
               </FormItem>
             )}
           />
-          <FormField
-            control={form.control}
-            name="city"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>City</FormLabel>
-                <FormControl>
-                  <Input 
-                    {...field} 
-                    value={field.value || ""}
-                    placeholder="City"
-                    data-testid="input-city"
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+          <div className="grid grid-cols-3 gap-4">
+            <FormField
+              control={form.control}
+              name="city"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>City</FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      value={field.value || ""}
+                      placeholder="City"
+                      data-testid="input-city"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="state"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>State</FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      value={field.value || ""}
+                      placeholder="TX"
+                      maxLength={2}
+                      className="uppercase"
+                      onChange={e => field.onChange(e.target.value.toUpperCase())}
+                      data-testid="input-state"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="zipCode"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Zip Code</FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      value={field.value || ""}
+                      placeholder="77001"
+                      data-testid="input-zipCode"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
         </div>
 
         <div className="space-y-4 pt-2 border-t border-border">

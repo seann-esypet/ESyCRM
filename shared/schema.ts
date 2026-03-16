@@ -51,6 +51,8 @@ export const contacts = pgTable("contacts", {
   phoneOther: text("phone_other"),
   address: text("address"),
   city: text("city"),
+  state: text("state"),
+  zipCode: text("zip_code"),
   company: text("company"),
   jobTitle: text("job_title"),
   usesSoftware: text("uses_software"), // Yes, No, Unknown
