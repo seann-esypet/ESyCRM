@@ -565,6 +565,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
             console.log(`[OwnerDiscovery] Claude returned "${name}" but it's in the skip list`);
             return null;
           }
+          // Reject if the name is a word from the business name itself
+          const bizTokens = businessName.toLowerCase().split(/\s+/).map((w: string) => w.replace(/[^a-z]/g, ""));
+          if (bizTokens.includes(name.toLowerCase())) {
+            console.log(`[OwnerDiscovery] Claude returned "${name}" but it's part of the business name — rejecting`);
+            return null;
+          }
           console.log(`[OwnerDiscovery] Claude found name: "${name}"`);
           return { firstName: name, source, confidence: "medium" };
         } catch (e: any) {
