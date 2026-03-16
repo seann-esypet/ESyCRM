@@ -1180,8 +1180,9 @@ export class DatabaseStorage implements IStorage {
         // Enforce track matching only for non-custom tracks
         // "custom" track sequences accept any contact regardless of their track
         if (sequence.sequenceTrack !== "custom") {
+          const bType = contact.businessType === "mobile" ? "mobile" : "salon";
           const contactTrack = contact.sequenceTrack ||
-            (contact.usesSoftware === "Yes" ? "uses_competitor" : "no_software");
+            `${bType}_${contact.usesSoftware === "Yes" ? "uses_competitor" : "no_software"}`;
           if (contactTrack !== sequence.sequenceTrack) {
             failed.push({
               contactId,
