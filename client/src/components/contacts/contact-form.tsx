@@ -127,7 +127,7 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
   }>({ status: "idle" });
 
   const discoverOwnerMutation = useMutation({
-    mutationFn: () => apiRequest("POST", `/api/contacts/${contact?.id}/discover-owner`, {}),
+    mutationFn: async () => { const res = await apiRequest("POST", `/api/contacts/${contact?.id}/discover-owner`, {}); return res.json(); },
     onMutate: () => setOwnerSearch({ status: "loading" }),
     onSuccess: (data: any) => {
       if (data.found) {
