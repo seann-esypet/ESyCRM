@@ -1003,6 +1003,7 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
                       <SelectItem value="Event">Event</SelectItem>
                       <SelectItem value="EsyPet Website Form">EsyPet Website Form</SelectItem>
                       <SelectItem value="Google Search">Google Search</SelectItem>
+                      <SelectItem value="CRM - Lead Discovery">CRM - Lead Discovery</SelectItem>
                       <SelectItem value="Sales Person acquired">Sales Person acquired</SelectItem>
                       <SelectItem value="Assigned to Sales Person">Assigned to Sales Person</SelectItem>
                     </SelectContent>
