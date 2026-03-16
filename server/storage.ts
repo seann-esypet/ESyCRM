@@ -782,11 +782,53 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteDeal(id: string, userId: string | null): Promise<boolean> {
-    const whereClause = userId === null 
+    const whereClause = userId === null
       ? eq(deals.id, id)
       : and(eq(deals.id, id), eq(deals.userId, userId));
-    
-    const result = await db.delete(deals).where(whereClause);
+
+    // Verify the deal exists (and belongs to user if not admin)
+    const [deal] = await db.select({ id: deals.id }).from(deals).where(whereClause);
+    if (!deal) return false;
+
+    // 1. Get commission IDs for this deal (needed to clean payroll line items)
+    const dealCommissions = await db.select({ id: commissions.id })
+      .from(commissions).where(eq(commissions.dealId, id));
+    const commissionIds = dealCommissions.map(c => c.id);
+
+    // 2. Get monthly payment IDs for this deal
+    const monthlyPayments = await db.select({ id: commissionMonthlyPayments.id })
+      .from(commissionMonthlyPayments).where(eq(commissionMonthlyPayments.dealId, id));
+    const monthlyPaymentIds = monthlyPayments.map(p => p.id);
+
+    // 3. Nullify FK references in payroll_line_items (preserve payroll history, just unlink)
+    if (commissionIds.length > 0) {
+      await db.update(payrollLineItems)
+        .set({ commissionId: null })
+        .where(inArray(payrollLineItems.commissionId, commissionIds));
+    }
+    if (monthlyPaymentIds.length > 0) {
+      await db.update(payrollLineItems)
+        .set({ monthlyPaymentId: null })
+        .where(inArray(payrollLineItems.monthlyPaymentId, monthlyPaymentIds));
+    }
+
+    // 4. Delete commission monthly payments for this deal
+    await db.delete(commissionMonthlyPayments).where(eq(commissionMonthlyPayments.dealId, id));
+
+    // 5. Delete commissions for this deal
+    await db.delete(commissions).where(eq(commissions.dealId, id));
+
+    // 6. Delete deal activities
+    await db.delete(dealActivities).where(eq(dealActivities.dealId, id));
+
+    // 7. Nullify dealId on tasks (keep tasks but unlink from deal)
+    await db.update(tasks).set({ dealId: null }).where(eq(tasks.dealId, id));
+
+    // 8. Nullify dealId on activities (keep audit trail but unlink)
+    await db.update(activities).set({ dealId: null }).where(eq(activities.dealId, id));
+
+    // 9. Delete the deal
+    const result = await db.delete(deals).where(eq(deals.id, id));
     return result.rowCount ? result.rowCount > 0 : false;
   }
 
