@@ -123,6 +123,7 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
     firstName?: string;
     source?: string;
     confidence?: string;
+    steps?: { label: string; result: string }[];
   }>({ status: "idle" });
 
   const discoverOwnerMutation = useMutation({
@@ -130,9 +131,9 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
     onMutate: () => setOwnerSearch({ status: "loading" }),
     onSuccess: (data: any) => {
       if (data.found) {
-        setOwnerSearch({ status: "found", firstName: data.firstName, source: data.source, confidence: data.confidence });
+        setOwnerSearch({ status: "found", firstName: data.firstName, source: data.source, confidence: data.confidence, steps: data.steps });
       } else {
-        setOwnerSearch({ status: "not_found" });
+        setOwnerSearch({ status: "not_found", steps: data.steps });
       }
     },
     onError: () => setOwnerSearch({ status: "not_found" }),
@@ -371,12 +372,24 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
               )}
 
               {ownerSearch.status === "not_found" && (
-                <div className="rounded-md border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30 p-3 flex items-start gap-2">
-                  <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-                  <div>
-                    <p className="text-xs font-medium text-amber-800 dark:text-amber-200">No owner name found</p>
-                    <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">Could not find the owner's name via Google or the business website. Please enter it manually below.</p>
+                <div className="rounded-md border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30 p-3 space-y-2">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-xs font-medium text-amber-800 dark:text-amber-200">No owner name found — please enter manually</p>
+                    </div>
                   </div>
+                  {ownerSearch.steps && ownerSearch.steps.length > 0 && (
+                    <div className="ml-6 space-y-1">
+                      {ownerSearch.steps.map((step, i) => (
+                        <div key={i} className="flex items-start gap-1.5 text-xs">
+                          <span className="text-amber-500 dark:text-amber-400 font-bold shrink-0">✓</span>
+                          <span className="font-medium text-amber-800 dark:text-amber-200 shrink-0">{step.label}:</span>
+                          <span className="text-amber-600 dark:text-amber-400">{step.result}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

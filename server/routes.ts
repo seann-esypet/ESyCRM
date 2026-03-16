@@ -482,11 +482,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!contact) return res.status(404).json({ message: "Contact not found" });
 
       const businessName = contact.company || `${contact.firstName} ${contact.lastName}`.trim();
-      if (!businessName) return res.json({ found: false, reason: "No business name on record" });
+      if (!businessName) return res.json({ found: false, reason: "No business name on record", steps: [] });
 
       const city = (contact as any).city || "";
       const serpKey = process.env.SERPAPI_API_KEY;
       const anthropicKey = process.env.ANTHROPIC_API_KEY;
+
+      console.log(`[OwnerDiscovery] Starting search for "${businessName}"${city ? ` in ${city}` : ""}`);
+      console.log(`[OwnerDiscovery] SerpAPI: ${serpKey ? "configured" : "NOT configured"} | Claude: ${anthropicKey ? "configured" : "NOT configured"} | Website: ${contact.websiteUrl || "none"} | Email: ${contact.email || "none"}`);
+
+      // Track every step for the response
+      const steps: { label: string; result: string }[] = [];
 
       // ── Helpers ───────────────────────────────────────────────────────────
       const SKIP_WORDS = new Set(["The","Our","Your","All","For","With","From","After","When","This","That","Here","Call","Visit","Come","More","Best","Google","Yelp","Facebook","Check","Contact","Book","Find","Open","Click","Learn","Read","See","Get","Now","Today","New","Top","Bay","Dog","Cat","Pet","Pup","We","My","His","Her","Its","Are","Was","Has","Had","Did"]);
@@ -526,6 +532,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // ── Claude extraction ─────────────────────────────────────────────────
       async function askClaude(textBlob: string, source: string): Promise<{ firstName: string; source: string; confidence: string } | null> {
         if (!anthropicKey || !textBlob || textBlob.length < 40) return null;
+        console.log(`[OwnerDiscovery] Asking Claude to extract name from ${source} (${textBlob.length} chars)`);
         try {
           const r = await fetch("https://api.anthropic.com/v1/messages", {
             method: "POST",
@@ -535,7 +542,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               "anthropic-version": "2023-06-01",
             },
             body: JSON.stringify({
-              model: "claude-haiku-4-5",
+              model: "claude-3-5-haiku-20241022",
               max_tokens: 30,
               messages: [{
                 role: "user",
@@ -544,14 +551,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }),
             signal: AbortSignal.timeout(15000),
           });
-          if (!r.ok) return null;
+          if (!r.ok) {
+            const errText = await r.text();
+            console.log(`[OwnerDiscovery] Claude API error ${r.status}: ${errText}`);
+            return null;
+          }
           const data = await r.json() as any;
           const raw = data?.content?.[0]?.text?.trim();
+          console.log(`[OwnerDiscovery] Claude raw response: "${raw}"`);
           if (!raw || raw.toLowerCase() === "null" || !/^[A-Za-z]{2,20}$/.test(raw)) return null;
           const name = raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
-          if (SKIP_WORDS.has(name)) return null;
+          if (SKIP_WORDS.has(name)) {
+            console.log(`[OwnerDiscovery] Claude returned "${name}" but it's in the skip list`);
+            return null;
+          }
+          console.log(`[OwnerDiscovery] Claude found name: "${name}"`);
           return { firstName: name, source, confidence: "medium" };
-        } catch { return null; }
+        } catch (e: any) {
+          console.log(`[OwnerDiscovery] Claude exception: ${e.message}`);
+          return null;
+        }
       }
 
       // ── Step 1 (parallel): Google search + website scrape ─────────────────
@@ -559,18 +578,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const chunks: DiscoveryChunk[] = [];
 
       async function collectGoogle(): Promise<void> {
-        if (!serpKey) return;
+        if (!serpKey) {
+          console.log("[OwnerDiscovery] Google: skipped — no SERPAPI_API_KEY");
+          return;
+        }
         const queries = [
           `"${businessName}" owner grooming`,
           `"${businessName}"${city ? ` "${city}"` : ""} "owned by"`,
           `"${businessName}" grooming founder`,
-          `"${businessName}" grooming "my name is"`,
+          `"${businessName}" "my name is" grooming`,
         ];
+        console.log(`[OwnerDiscovery] Google: running ${queries.length} queries`);
+        let totalSnippets = 0;
         for (const q of queries) {
           try {
             const params = new URLSearchParams({ api_key: serpKey, engine: "google", q, num: "5" });
             const r = await fetch(`https://serpapi.com/search?${params}`, { signal: AbortSignal.timeout(10000) });
-            if (!r.ok) continue;
+            if (!r.ok) {
+              console.log(`[OwnerDiscovery] Google query failed HTTP ${r.status}: ${q}`);
+              continue;
+            }
             const data = await r.json() as any;
             const parts: string[] = [];
             if (data.answer_box?.answer) parts.push(data.answer_box.answer);
@@ -580,57 +607,99 @@ export async function registerRoutes(app: Express): Promise<Server> {
               if (result.snippet) parts.push(result.snippet);
             }
             const combined = parts.join(" ");
+            totalSnippets += parts.length;
             if (combined.trim()) chunks.push({ text: combined, source: "Google Search", priority: 1 });
-            // If regex hits immediately, we can return early after parallel phase
-          } catch { /* continue */ }
+            console.log(`[OwnerDiscovery] Google query "${q}" → ${parts.length} snippets`);
+          } catch (e: any) {
+            console.log(`[OwnerDiscovery] Google query exception: ${e.message}`);
+          }
         }
+        console.log(`[OwnerDiscovery] Google: collected ${totalSnippets} total snippets across all queries`);
       }
 
       async function collectWebsite(): Promise<void> {
         const websiteUrl = contact.websiteUrl;
-        if (!websiteUrl) return;
+        if (!websiteUrl) {
+          console.log("[OwnerDiscovery] Website: skipped — no website URL on contact");
+          return;
+        }
         let base: URL;
         try { base = new URL(websiteUrl.startsWith("http") ? websiteUrl : `https://${websiteUrl}`); }
-        catch { return; }
+        catch { console.log(`[OwnerDiscovery] Website: invalid URL "${websiteUrl}"`); return; }
+
         const paths = ["/about", "/about-us", "/our-team", "/meet-us", "/our-story", "/contact", ""];
+        console.log(`[OwnerDiscovery] Website: scraping ${base.origin} — checking ${paths.length} pages`);
+        let pagesFound = 0;
         for (const path of paths) {
           try {
             const r = await fetch(`${base.origin}${path}`, {
               headers: { "User-Agent": "Mozilla/5.0 (compatible; EsyCRM/1.0)" },
               signal: AbortSignal.timeout(8000),
             });
-            if (!r.ok) continue;
+            if (!r.ok) {
+              console.log(`[OwnerDiscovery] Website ${path || "/"}: HTTP ${r.status}`);
+              continue;
+            }
             const html = await r.text();
             const meta = extractMeta(html);
             const body = stripHtml(html);
             const combined = `${meta} ${body}`;
             const label = path ? `Website (${path})` : "Website (Homepage)";
             const priority = path && path !== "/contact" ? 0 : 2;
-            if (combined.trim().length > 30) chunks.push({ text: combined, source: label, priority });
-          } catch { /* skip */ }
+            if (combined.trim().length > 30) {
+              chunks.push({ text: combined, source: label, priority });
+              pagesFound++;
+              console.log(`[OwnerDiscovery] Website ${path || "/"}: fetched OK, ${combined.length} chars`);
+            }
+          } catch (e: any) {
+            console.log(`[OwnerDiscovery] Website ${path || "/"}: ${e.message}`);
+          }
         }
+        console.log(`[OwnerDiscovery] Website: successfully scraped ${pagesFound} pages`);
       }
 
       // Run both in parallel
       await Promise.allSettled([collectGoogle(), collectWebsite()]);
+      console.log(`[OwnerDiscovery] Parallel collection done — ${chunks.length} total chunks`);
 
-      // ── Step 2: Try regex across all collected chunks (best priority first) ─
+      // ── Step 2: Regex scan across all collected chunks ─────────────────────
       chunks.sort((a, b) => a.priority - b.priority);
+      let regexChecked = 0;
       for (const chunk of chunks) {
         const name = extractFirstName(chunk.text);
+        regexChecked++;
         if (name) {
           const confidence = chunk.priority === 0 ? "high" : "medium";
-          return res.json({ found: true, firstName: name, source: chunk.source, confidence });
+          console.log(`[OwnerDiscovery] Regex HIT: "${name}" from ${chunk.source}`);
+          steps.push({ label: "Google Search", result: "Searched" });
+          if (contact.websiteUrl) steps.push({ label: "Website scrape", result: "Scraped" });
+          steps.push({ label: "Pattern matching", result: `Found "${name}"` });
+          return res.json({ found: true, firstName: name, source: chunk.source, confidence, steps });
         }
       }
+      console.log(`[OwnerDiscovery] Regex: no match across ${regexChecked} chunks`);
+      steps.push({ label: "Google Search", result: serpKey ? `Searched (${chunks.filter(c => c.source === "Google Search").length} result sets, no name found)` : "Skipped — API not configured" });
+      steps.push({ label: "Website scrape", result: contact.websiteUrl ? `Scraped ${chunks.filter(c => c.source.startsWith("Website")).length} pages, no name found` : "Skipped — no website on record" });
+      steps.push({ label: "Pattern matching (regex)", result: "No owner pattern detected in text" });
 
-      // ── Step 3: Claude fallback on combined text ──────────────────────────
+      // ── Step 3: Claude fallback ────────────────────────────────────────────
       if (anthropicKey && chunks.length > 0) {
-        // Best source for Claude = about pages first, then Google
+        console.log(`[OwnerDiscovery] Trying Claude on ${chunks.length} chunks`);
         for (const chunk of chunks) {
           const result = await askClaude(chunk.text, `${chunk.source} (AI)`);
-          if (result) return res.json({ found: true, ...result });
+          if (result) {
+            steps.push({ label: "Claude AI", result: `Found "${result.firstName}"` });
+            return res.json({ found: true, ...result, steps });
+          }
         }
+        steps.push({ label: "Claude AI", result: "Could not identify owner name from available text" });
+        console.log("[OwnerDiscovery] Claude: no name found");
+      } else if (!anthropicKey) {
+        steps.push({ label: "Claude AI", result: "Skipped — API key not configured" });
+        console.log("[OwnerDiscovery] Claude: skipped — no API key");
+      } else {
+        steps.push({ label: "Claude AI", result: "Skipped — no text collected to analyze" });
+        console.log("[OwnerDiscovery] Claude: skipped — no chunks");
       }
 
       // ── Step 4: Email prefix heuristic ────────────────────────────────────
@@ -640,15 +709,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const generic = new Set(["info","hello","contact","admin","support","hi","mail","office","team","grooming","salon","help","noreply","booking","appointments","care","spa","studio","paws"]);
         const bizWords = businessName.toLowerCase().split(/\s+/).map((w: string) => w.replace(/[^a-z]/g, "")).filter((w: string) => w.length > 3);
         const overlapsWithBiz = bizWords.some((w: string) => prefix.includes(w.slice(0, 4)) || w.includes(prefix.slice(0, 4)));
+        console.log(`[OwnerDiscovery] Email heuristic: prefix="${prefix}" generic=${generic.has(prefix)} overlaps=${overlapsWithBiz}`);
         if (prefix.length >= 3 && prefix.length <= 12 && !generic.has(prefix) && !overlapsWithBiz) {
           const name = prefix.charAt(0).toUpperCase() + prefix.slice(1);
           if (!SKIP_WORDS.has(name)) {
-            return res.json({ found: true, firstName: name, source: "Email prefix", confidence: "low" });
+            steps.push({ label: "Email prefix", result: `Suggested "${name}" from email address` });
+            console.log(`[OwnerDiscovery] Email heuristic: suggested "${name}"`);
+            return res.json({ found: true, firstName: name, source: "Email prefix", confidence: "low", steps });
           }
         }
+        steps.push({ label: "Email prefix", result: `"${prefix}@..." looks generic or matches business name — skipped` });
+      } else {
+        steps.push({ label: "Email prefix", result: "Skipped — no email on record" });
       }
 
-      return res.json({ found: false, reason: "No owner name found" });
+      console.log("[OwnerDiscovery] All methods exhausted — no name found");
+      return res.json({ found: false, reason: "No owner name found", steps });
     } catch (error) {
       console.error("Owner discovery error:", error);
       res.status(500).json({ message: "Discovery failed" });
