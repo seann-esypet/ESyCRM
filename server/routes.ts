@@ -504,6 +504,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           /\bowner[,:]?\s+([A-Z][a-z]{2,})\b/i,
           /—\s*([A-Z][a-z]{2,}),?\s*(?:owner|founder|groomer|proprietor)/i,
           /\bmy name is\s+([A-Z][a-z]{2,})\b/i,
+          // BBB "Principal Contacts" section
+          /Principal\s+Contacts?\s+(?:Mr\.|Ms\.|Mrs\.|Dr\.)?\s*([A-Z][a-z]{2,})/i,
+          /(?:Mr\.|Ms\.|Mrs\.|Dr\.)\s+([A-Z][a-z]{2,})\s+\w+,?\s*(?:owner|president|ceo|founder|proprietor)/i,
+          // Yelp "Meet the Business Owner" section
+          /Meet the Business Owner\s+([A-Z][a-z]{2,})\b/i,
+          /From the business\s+(?:Meet\s+)?([A-Z][a-z]{2,})\b/i,
         ];
         for (const p of patterns) {
           const m = text.match(p);
@@ -664,8 +670,94 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log(`[OwnerDiscovery] Website: successfully scraped ${pagesFound} pages`);
       }
 
-      // Run both in parallel
-      await Promise.allSettled([collectGoogle(), collectWebsite()]);
+      async function collectBBB(): Promise<void> {
+        if (!serpKey) {
+          console.log("[OwnerDiscovery] BBB: skipped — no SERPAPI_API_KEY");
+          return;
+        }
+        let bbbUrl: string | null = null;
+        try {
+          const q = `site:bbb.org/us "${businessName}"${city ? ` "${city}"` : ""}`;
+          const params = new URLSearchParams({ api_key: serpKey, engine: "google", q, num: "3" });
+          const r = await fetch(`https://serpapi.com/search?${params}`, { signal: AbortSignal.timeout(10000) });
+          if (r.ok) {
+            const data = await r.json() as any;
+            const bbbResult = (data.organic_results || []).find((res: any) =>
+              res.link?.includes("bbb.org") && res.link?.includes("/profile/")
+            );
+            if (bbbResult?.link) {
+              bbbUrl = bbbResult.link;
+              console.log(`[OwnerDiscovery] BBB: found listing at ${bbbUrl}`);
+            } else {
+              console.log("[OwnerDiscovery] BBB: no /profile/ URL in search results");
+            }
+          }
+        } catch (e: any) {
+          console.log(`[OwnerDiscovery] BBB search exception: ${e.message}`);
+        }
+        if (!bbbUrl) return;
+        try {
+          const r = await fetch(bbbUrl, {
+            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
+            signal: AbortSignal.timeout(12000),
+          });
+          if (!r.ok) { console.log(`[OwnerDiscovery] BBB: HTTP ${r.status}`); return; }
+          const html = await r.text();
+          const text = stripHtml(html);
+          if (text.length > 30) {
+            chunks.push({ text, source: "BBB Listing", priority: 0 });
+            console.log(`[OwnerDiscovery] BBB: scraped ${text.length} chars`);
+          }
+        } catch (e: any) {
+          console.log(`[OwnerDiscovery] BBB scrape exception: ${e.message}`);
+        }
+      }
+
+      async function collectYelp(): Promise<void> {
+        if (!serpKey) {
+          console.log("[OwnerDiscovery] Yelp: skipped — no SERPAPI_API_KEY");
+          return;
+        }
+        let yelpUrl: string | null = null;
+        try {
+          const q = `site:yelp.com/biz "${businessName}"${city ? ` "${city}"` : ""}`;
+          const params = new URLSearchParams({ api_key: serpKey, engine: "google", q, num: "3" });
+          const r = await fetch(`https://serpapi.com/search?${params}`, { signal: AbortSignal.timeout(10000) });
+          if (r.ok) {
+            const data = await r.json() as any;
+            const yelpResult = (data.organic_results || []).find((res: any) =>
+              res.link?.includes("yelp.com/biz/")
+            );
+            if (yelpResult?.link) {
+              yelpUrl = yelpResult.link;
+              console.log(`[OwnerDiscovery] Yelp: found listing at ${yelpUrl}`);
+            } else {
+              console.log("[OwnerDiscovery] Yelp: no /biz/ URL in search results");
+            }
+          }
+        } catch (e: any) {
+          console.log(`[OwnerDiscovery] Yelp search exception: ${e.message}`);
+        }
+        if (!yelpUrl) return;
+        try {
+          const r = await fetch(yelpUrl, {
+            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
+            signal: AbortSignal.timeout(12000),
+          });
+          if (!r.ok) { console.log(`[OwnerDiscovery] Yelp: HTTP ${r.status}`); return; }
+          const html = await r.text();
+          const text = stripHtml(html);
+          if (text.length > 30) {
+            chunks.push({ text, source: "Yelp Listing", priority: 0 });
+            console.log(`[OwnerDiscovery] Yelp: scraped ${text.length} chars`);
+          }
+        } catch (e: any) {
+          console.log(`[OwnerDiscovery] Yelp scrape exception: ${e.message}`);
+        }
+      }
+
+      // Run all four in parallel
+      await Promise.allSettled([collectGoogle(), collectWebsite(), collectBBB(), collectYelp()]);
       console.log(`[OwnerDiscovery] Parallel collection done — ${chunks.length} total chunks`);
 
       // ── Step 2: Regex scan across all collected chunks ─────────────────────
@@ -679,6 +771,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           console.log(`[OwnerDiscovery] Regex HIT: "${name}" from ${chunk.source}`);
           steps.push({ label: "Google Search", result: "Searched" });
           if (contact.websiteUrl) steps.push({ label: "Website scrape", result: "Scraped" });
+          if (chunks.some(c => c.source === "BBB Listing")) steps.push({ label: "BBB listing", result: "Scraped" });
+          if (chunks.some(c => c.source === "Yelp Listing")) steps.push({ label: "Yelp listing", result: "Scraped" });
           steps.push({ label: "Pattern matching", result: `Found "${name}"` });
           return res.json({ found: true, firstName: name, source: chunk.source, confidence, steps });
         }
@@ -686,6 +780,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`[OwnerDiscovery] Regex: no match across ${regexChecked} chunks`);
       steps.push({ label: "Google Search", result: serpKey ? `Searched (${chunks.filter(c => c.source === "Google Search").length} result sets, no name found)` : "Skipped — API not configured" });
       steps.push({ label: "Website scrape", result: contact.websiteUrl ? `Scraped ${chunks.filter(c => c.source.startsWith("Website")).length} pages, no name found` : "Skipped — no website on record" });
+      steps.push({ label: "BBB listing", result: serpKey ? (chunks.some(c => c.source === "BBB Listing") ? "Scraped, no owner name found" : "No BBB listing found") : "Skipped — API not configured" });
+      steps.push({ label: "Yelp listing", result: serpKey ? (chunks.some(c => c.source === "Yelp Listing") ? "Scraped, no owner name found" : "No Yelp listing found") : "Skipped — API not configured" });
       steps.push({ label: "Pattern matching (regex)", result: "No owner pattern detected in text" });
 
       // ── Step 3: Claude fallback ────────────────────────────────────────────
