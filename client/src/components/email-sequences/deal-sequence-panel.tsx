@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
@@ -13,9 +13,16 @@ import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import {
   Mail, Plus, CalendarClock, Pencil, Building2, Phone,
-  Trash2, Clock, CheckCircle2, XCircle, Loader2, SendHorizontal, User, Save
+  Trash2, Clock, CheckCircle2, XCircle, Loader2, SendHorizontal, User, Save, Link2
 } from "lucide-react";
+
 import type { Contact, EmailSequence, EmailSequenceLog } from "@shared/schema";
+
+const QUICK_LINKS = [
+  { label: "Insert Sign-Up Link", html: '<a href="https://signup.esypet.net/">EsyPet Sign-Up</a>' },
+  { label: "Visit EsyPet",        html: '<a href="https://software.esypet.com/">Visit EsyPet</a>' },
+  { label: "Pricing",             html: '<a href="https://software.esypet.com/pricing/">Pricing</a>' },
+];
 
 interface DealSequencePanelProps {
   contact: Contact;
@@ -301,6 +308,18 @@ function SequenceComposerDialog({ contact, open, onOpenChange, onSuccess }: Comp
   const [customBody, setCustomBody] = useState(
     `Hi ${contact.firstName || "[Contact_First_Name]"},\n\n\n\nBest regards,\n[Sales_Person]`
   );
+  const customBodyRef = useRef<HTMLTextAreaElement | null>(null);
+
+  function insertQuickLink(html: string) {
+    const el = customBodyRef.current;
+    const pos = el ? el.selectionStart : customBody.length;
+    const newVal = customBody.slice(0, pos) + html + customBody.slice(pos);
+    setCustomBody(newVal);
+    if (el) {
+      const newPos = pos + html.length;
+      requestAnimationFrame(() => { el.focus(); el.setSelectionRange(newPos, newPos); });
+    }
+  }
 
   const { data: allSequences, isLoading: isLoadingSeq } = useQuery<EmailSequence[]>({
     queryKey: ["/api/email-sequences"],
@@ -540,8 +559,26 @@ function SequenceComposerDialog({ contact, open, onOpenChange, onSuccess }: Comp
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs">Body <span className="text-destructive">*</span></Label>
+                  <div className="flex items-center justify-between gap-2">
+                    <Label className="text-xs">Body <span className="text-destructive">*</span></Label>
+                    <div className="flex gap-1 flex-wrap justify-end">
+                      {QUICK_LINKS.map(link => (
+                        <Button
+                          key={link.label}
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => insertQuickLink(link.html)}
+                          className="h-6 text-xs gap-1 px-2"
+                        >
+                          <Link2 className="h-3 w-3" />
+                          {link.label}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
                   <Textarea
+                    ref={customBodyRef}
                     value={customBody}
                     onChange={e => setCustomBody(e.target.value)}
                     rows={8}
