@@ -142,6 +142,19 @@ function UpdateSequenceDialog({ log, open, onOpenChange, onSuccess }: UpdateDial
   const [sendTime, setSendTime] = useState(initialDT.time);
   const [subject, setSubject] = useState<string | null>(null);
   const [body, setBody] = useState<string | null>(null);
+  const bodyRef = useRef<HTMLTextAreaElement | null>(null);
+
+  function insertQuickLinkUpdate(html: string) {
+    const currentBody = body ?? (log.customBody || sequence?.body || "");
+    const el = bodyRef.current;
+    const pos = el ? el.selectionStart : currentBody.length;
+    const newVal = currentBody.slice(0, pos) + html + currentBody.slice(pos);
+    setBody(newVal);
+    if (el) {
+      const newPos = pos + html.length;
+      requestAnimationFrame(() => { el.focus(); el.setSelectionRange(newPos, newPos); });
+    }
+  }
 
   const effectiveSubject = subject ?? (log.customSubject || sequence?.subject || "");
   const effectiveBody = body ?? (log.customBody || sequence?.body || "");
@@ -250,18 +263,36 @@ function UpdateSequenceDialog({ log, open, onOpenChange, onSuccess }: UpdateDial
 
           {/* Body */}
           <div className="space-y-1.5">
-            <Label className="text-xs font-medium">
-              Body
-              {!log.customBody && log.sequenceTrack !== "custom" && (
-                <span className="text-muted-foreground font-normal ml-1">(from template — edit to override)</span>
-              )}
-            </Label>
+            <div className="flex items-center justify-between gap-2">
+              <Label className="text-xs font-medium">
+                Body
+                {!log.customBody && log.sequenceTrack !== "custom" && (
+                  <span className="text-muted-foreground font-normal ml-1">(from template — edit to override)</span>
+                )}
+              </Label>
+              <div className="flex gap-1 flex-wrap justify-end">
+                {QUICK_LINKS.map(link => (
+                  <Button
+                    key={link.label}
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => insertQuickLinkUpdate(link.html)}
+                    className="h-6 text-xs gap-1 px-2"
+                  >
+                    <Link2 className="h-3 w-3" />
+                    {link.label}
+                  </Button>
+                ))}
+              </div>
+            </div>
             <p className="text-xs text-muted-foreground">
               Tokens: <code className="bg-muted px-1 rounded text-xs">[Contact_First_Name]</code>{" "}
               <code className="bg-muted px-1 rounded text-xs">[Sales_Person]</code>{" "}
               <code className="bg-muted px-1 rounded text-xs">[Business_Name]</code>
             </p>
             <Textarea
+              ref={bodyRef}
               value={effectiveBody}
               onChange={e => setBody(e.target.value)}
               rows={10}
