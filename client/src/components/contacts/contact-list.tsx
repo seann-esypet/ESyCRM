@@ -364,7 +364,16 @@ export default function ContactList({ contacts, deals, isLoading, isAdmin, admin
                         <User className="h-4 w-4" />
                         Contact Information
                       </h4>
-                      <InfoRow label="Email" value={viewContact.email} icon={<Mail className="h-3.5 w-3.5" />} />
+                      <div className="flex items-start gap-2 py-1.5">
+                        <span className="text-muted-foreground mt-0.5 shrink-0"><Mail className="h-3.5 w-3.5" /></span>
+                        <div>
+                          <p className="text-xs text-muted-foreground">Email</p>
+                          {viewContact.email
+                            ? <a href={`mailto:${viewContact.email}`} className="text-sm text-blue-600 hover:underline">{viewContact.email}</a>
+                            : <p className="text-sm text-muted-foreground italic">Not provided</p>
+                          }
+                        </div>
+                      </div>
                       <InfoRow label="Phone" value={viewContact.phone} icon={<Phone className="h-3.5 w-3.5" />} />
                       <InfoRow label="Cell Phone" value={viewContact.phoneCell} icon={<Phone className="h-3.5 w-3.5" />} />
                       <InfoRow label="Work Phone" value={viewContact.phoneWork} icon={<Phone className="h-3.5 w-3.5" />} />
