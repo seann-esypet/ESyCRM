@@ -1,4 +1,5 @@
 import { Switch, Route } from "wouter";
+import { useEffect } from "react";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -22,9 +23,35 @@ import DealWorkspace from "@/pages/deal-workspace";
 import PayrollDetail from "@/pages/payroll-detail";
 import Sidebar from "@/components/layout/sidebar";
 
+// Silently ping the server every 10 minutes so the auth token stays refreshed
+function useSessionKeepAlive(active: boolean) {
+  useEffect(() => {
+    if (!active) return;
+
+    const ping = () => {
+      fetch("/api/auth/user", { credentials: "include" }).catch(() => {});
+    };
+
+    // Ping every 10 minutes
+    const interval = setInterval(ping, 10 * 60 * 1000);
+
+    // Also ping immediately when the tab becomes visible again
+    const onVisible = () => {
+      if (document.visibilityState === "visible") ping();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [active]);
+}
+
 // From Replit Auth blueprint - Conditional routing based on auth state
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
+  useSessionKeepAlive(!!isAuthenticated);
 
   // Show landing page for unauthenticated users
   if (isLoading || !isAuthenticated) {
