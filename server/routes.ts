@@ -505,17 +505,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       function extractFirstName(text: string): string | null {
         const patterns = [
-          /(?:owned by|owner[:\s]+|hi[,\s]+i'?m|meet\s+|i'?m\s+|founded by|opened by|started by|run by|operated by|proprietor[:\s]+)\s+([A-Z][a-z]{2,})/i,
-          /([A-Z][a-z]{2,})\s+(?:is the owner|owns and operates|founded|started|opened)/i,
-          /\bowner[,:]?\s+([A-Z][a-z]{2,})\b/i,
+          // "owned and operated by Name" / "owned by Name" / "founded by Name" etc.
+          /(?:owned and operated by|owned by|founded by|opened by|started by|run by|operated by)\s+([A-Z][a-z]{2,})/i,
+          // "Name is the owner" / "Name owns and operates"
+          /([A-Z][a-z]{2,})\s+(?:is the owner|is the founder|is the proprietor|owns and operates)/i,
+          // Em-dash attribution: "— Name, owner"
           /—\s*([A-Z][a-z]{2,}),?\s*(?:owner|founder|groomer|proprietor)/i,
-          /\bmy name is\s+([A-Z][a-z]{2,})\b/i,
+          // Website bio phrases: "Hi, I'm Name" / "My name is Name" / "I'm Name"
+          /(?:hi[,\s]+i'?m|i'?m\s+|my name is)\s+([A-Z][a-z]{2,})\b/i,
           // BBB "Principal Contacts" section
           /Principal\s+Contacts?\s+(?:Mr\.|Ms\.|Mrs\.|Dr\.)?\s*([A-Z][a-z]{2,})/i,
+          // Title before name with owner role after (BBB / formal listings)
           /(?:Mr\.|Ms\.|Mrs\.|Dr\.)\s+([A-Z][a-z]{2,})\s+\w+,?\s*(?:owner|president|ceo|founder|proprietor)/i,
-          // Yelp "Meet the Business Owner" section — requires "owner" context before capturing name
-          /Meet the (?:Business )?Owner[:\s]+([A-Z][a-z]{2,})\b/i,
-          /From the [Bb]usiness[:\s]+Meet (?:the )?[Oo]wner[:\s]+([A-Z][a-z]{2,})\b/i,
+          // "Owner: Name" — requires explicit colon, not just any word following "owner"
+          /\bowner:\s*([A-Z][a-z]{2,})\b/i,
+          // Yelp "Meet the Business Owner: Name" — requires explicit colon
+          /Meet the (?:Business )?Owner:\s*([A-Z][a-z]{2,})\b/i,
         ];
         for (const p of patterns) {
           const m = text.match(p);
@@ -769,12 +774,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await Promise.allSettled([collectGoogle(), collectWebsite(), collectBBB(), collectYelp()]);
       console.log(`[OwnerDiscovery] Parallel collection done — ${chunks.length} total chunks`);
 
-      // ── Step 2: Regex scan across all collected chunks ─────────────────────
-      chunks.sort((a, b) => a.priority - b.priority);
-      let regexChecked = 0;
-      for (const chunk of chunks) {
+      // ── Step 2a: Claude on Yelp/BBB first (directory pages — too noisy for regex) ──
+      const directoryChunks = chunks.filter(c => c.source === "Yelp Listing" || c.source === "BBB Listing");
+      const nonDirectoryChunks = chunks.filter(c => c.source !== "Yelp Listing" && c.source !== "BBB Listing");
+      if (anthropicKey && directoryChunks.length > 0) {
+        console.log(`[OwnerDiscovery] Claude (directory): trying ${directoryChunks.length} Yelp/BBB chunk(s) first`);
+        for (const chunk of directoryChunks) {
+          const result = await askClaude(chunk.text, chunk.source);
+          if (result) {
+            steps.push({ label: "Google Search", result: serpKey ? `Searched (${chunks.filter(c => c.source === "Google Search").length} result sets)` : "Skipped — API not configured" });
+            steps.push({ label: "Website scrape", result: contact.websiteUrl ? `Scraped ${chunks.filter(c => c.source.startsWith("Website")).length} pages` : "Skipped — no website on record" });
+            steps.push({ label: "BBB listing", result: chunks.some(c => c.source === "BBB Listing") ? "Scraped" : (serpKey ? "No BBB listing found" : "Skipped — API not configured") });
+            steps.push({ label: "Yelp listing", result: chunks.some(c => c.source === "Yelp Listing") ? "Scraped" : (serpKey ? "No Yelp listing found" : "Skipped — API not configured") });
+            steps.push({ label: "Claude AI", result: `Found "${result.firstName}" via ${chunk.source}` });
+            return res.json({ found: true, ...result, steps });
+          }
+        }
+        console.log("[OwnerDiscovery] Claude (directory): no name found in Yelp/BBB chunks");
+      }
+
+      // ── Step 2b: Regex scan on Google + Website chunks only ─────────────────
+      nonDirectoryChunks.sort((a, b) => a.priority - b.priority);
+      for (const chunk of nonDirectoryChunks) {
         const name = extractFirstName(chunk.text);
-        regexChecked++;
         if (name) {
           const confidence = chunk.priority === 0 ? "high" : "medium";
           console.log(`[OwnerDiscovery] Regex HIT: "${name}" from ${chunk.source}`);
@@ -786,17 +808,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.json({ found: true, firstName: name, source: chunk.source, confidence, steps });
         }
       }
-      console.log(`[OwnerDiscovery] Regex: no match across ${regexChecked} chunks`);
+      console.log(`[OwnerDiscovery] Regex: no match in ${nonDirectoryChunks.length} Google/Website chunks`);
       steps.push({ label: "Google Search", result: serpKey ? `Searched (${chunks.filter(c => c.source === "Google Search").length} result sets, no name found)` : "Skipped — API not configured" });
       steps.push({ label: "Website scrape", result: contact.websiteUrl ? `Scraped ${chunks.filter(c => c.source.startsWith("Website")).length} pages, no name found` : "Skipped — no website on record" });
-      steps.push({ label: "BBB listing", result: serpKey ? (chunks.some(c => c.source === "BBB Listing") ? "Scraped, no owner name found" : "No BBB listing found") : "Skipped — API not configured" });
-      steps.push({ label: "Yelp listing", result: serpKey ? (chunks.some(c => c.source === "Yelp Listing") ? "Scraped, no owner name found" : "No Yelp listing found") : "Skipped — API not configured" });
-      steps.push({ label: "Pattern matching (regex)", result: "No owner pattern detected in text" });
+      steps.push({ label: "BBB listing", result: serpKey ? (chunks.some(c => c.source === "BBB Listing") ? "Scraped, sent to AI" : "No BBB listing found") : "Skipped — API not configured" });
+      steps.push({ label: "Yelp listing", result: serpKey ? (chunks.some(c => c.source === "Yelp Listing") ? "Scraped, sent to AI" : "No Yelp listing found") : "Skipped — API not configured" });
+      steps.push({ label: "Pattern matching (regex)", result: "No owner pattern detected in Google/website text" });
 
-      // ── Step 3: Claude fallback ────────────────────────────────────────────
-      if (anthropicKey && chunks.length > 0) {
-        console.log(`[OwnerDiscovery] Trying Claude on ${chunks.length} chunks`);
-        for (const chunk of chunks) {
+      // ── Step 3: Claude on remaining (Google + Website) chunks ─────────────────
+      if (anthropicKey && nonDirectoryChunks.length > 0) {
+        console.log(`[OwnerDiscovery] Trying Claude on ${nonDirectoryChunks.length} Google/Website chunks`);
+        for (const chunk of nonDirectoryChunks) {
           const result = await askClaude(chunk.text, `${chunk.source} (AI)`);
           if (result) {
             steps.push({ label: "Claude AI", result: `Found "${result.firstName}"` });
