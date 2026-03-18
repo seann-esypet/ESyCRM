@@ -408,21 +408,38 @@ function detectBookingSoftware(html: string, baseUrl: string): { url: string; so
 }
 
 function extractEmail(html: string): string | null {
-  const emailPattern = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
-  const matches = html.match(emailPattern);
-  
-  if (matches) {
-    const validEmails = matches.filter(email => 
-      !email.includes("example.com") &&
-      !email.includes("sentry.io") &&
-      !email.includes("wixpress.com") &&
-      !email.endsWith(".png") &&
-      !email.endsWith(".jpg")
+  const NOISE_DOMAINS = ["example.com", "sentry.io", "wixpress.com", "w3.org", "schema.org", "cloudflare.com"];
+  const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+
+  function pickValid(matches: RegExpMatchArray | null): string | null {
+    if (!matches) return null;
+    const valid = matches.filter(e =>
+      NOISE_DOMAINS.every(d => !e.includes(d)) &&
+      !e.endsWith(".png") &&
+      !e.endsWith(".jpg") &&
+      !e.endsWith(".gif") &&
+      !e.endsWith(".svg")
     );
-    return validEmails[0] || null;
+    return valid[0] || null;
   }
-  
-  return null;
+
+  // 1. Decode HTML entities that sites use to hide @ from scrapers (e.g. Wix: &#64;)
+  const decoded = html
+    .replace(/&#64;|&commat;/gi, "@")
+    .replace(/&#46;/gi, ".")
+    .replace(/&amp;/gi, "&");
+
+  const direct = pickValid(decoded.match(EMAIL_RE));
+  if (direct) return direct;
+
+  // 2. Handle text obfuscation patterns: [at], (at), " at ", [dot], (dot)
+  const deobfuscated = decoded
+    .replace(/\s*\[at\]\s*/gi, "@")
+    .replace(/\s*\(at\)\s*/gi, "@")
+    .replace(/\s*\[dot\]\s*/gi, ".")
+    .replace(/\s*\(dot\)\s*/gi, ".");
+
+  return pickValid(deobfuscated.match(EMAIL_RE));
 }
 
 function extractPhone(html: string): string | null {
