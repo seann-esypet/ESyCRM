@@ -189,6 +189,18 @@ export default function ContactList({ contacts, deals, isLoading, isAdmin, admin
                         {contact.jobTitle && (
                           <p className="text-sm text-muted-foreground">{contact.jobTitle}</p>
                         )}
+                        {(() => {
+                          const openDeals = getContactDeals(contact.id).filter(d => d.stage !== "lost");
+                          if (!openDeals.length) return null;
+                          const hasWon = openDeals.some(d => d.stage === "won");
+                          return (
+                            <span className={`inline-flex items-center gap-1 mt-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium ${hasWon ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400" : "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400"}`}
+                              data-testid={`badge-pipeline-${contact.id}`}>
+                              <Briefcase className="h-2.5 w-2.5" />
+                              {hasWon ? "Won" : "In Pipeline"}
+                            </span>
+                          );
+                        })()}
                       </div>
                     </div>
                   </TableCell>
