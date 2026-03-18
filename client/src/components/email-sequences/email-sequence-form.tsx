@@ -113,7 +113,11 @@ export default function EmailSequenceForm({ sequence, onSuccess, onCancel }: Ema
   function insertSignUpLink() {
     const el = textareaRef.current;
     const current = form.getValues("body") || "";
-    const pos = el ? (el.selectionStart ?? current.length) : current.length;
+    // Only use selectionStart if the textarea is currently focused;
+    // otherwise insert at the end so clicking the button without first
+    // placing a cursor doesn't silently insert at position 0.
+    const isFocused = el && document.activeElement === el;
+    const pos = isFocused ? (el.selectionStart ?? current.length) : current.length;
     const newValue = current.slice(0, pos) + SIGNUP_LINK + current.slice(pos);
     form.setValue("body", newValue, { shouldDirty: true });
     // Restore cursor position after the inserted link
