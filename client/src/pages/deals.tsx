@@ -69,6 +69,7 @@ export default function Deals() {
       const queryString = params.toString();
       const url = queryString ? `/api/deals?${queryString}` : "/api/deals";
       const response = await fetch(url);
+      if (!response.ok) return [];
       return response.json();
     },
   });
@@ -81,6 +82,7 @@ export default function Deals() {
       const queryString = params.toString();
       const url = queryString ? `/api/contacts?${queryString}` : "/api/contacts";
       const response = await fetch(url);
+      if (!response.ok) return [];
       return response.json();
     },
   });
