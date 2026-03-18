@@ -1177,19 +1177,34 @@ export class DatabaseStorage implements IStorage {
           continue;
         }
         
-        // Enforce track matching only for non-custom tracks
-        // "custom" track sequences accept any contact regardless of their track
-        if (sequence.sequenceTrack !== "custom") {
-          const bType = contact.businessType === "mobile" ? "mobile" : "salon";
-          const contactTrack = contact.sequenceTrack ||
-            `${bType}_${contact.usesSoftware === "Yes" ? "uses_competitor" : "no_software"}`;
-          if (contactTrack !== sequence.sequenceTrack) {
+        // Enforce track matching rules:
+        // - bare "custom" track → accepts any contact (full bypass)
+        // - "salon_custom" / "mobile_custom" → accepts any salon/mobile contact
+        //   regardless of whether they use software (these are the "General" tracks)
+        // - all other tracks → contact track must match exactly
+        const seqTrack = sequence.sequenceTrack;
+        const bType = contact.businessType === "mobile" ? "mobile" : "salon";
+        const contactTrack = contact.sequenceTrack ||
+          `${bType}_${contact.usesSoftware === "Yes" ? "uses_competitor" : "no_software"}`;
+
+        if (seqTrack === "custom") {
+          // bare custom — no restriction
+        } else if (seqTrack === "salon_custom" || seqTrack === "mobile_custom") {
+          // Prefixed general track — only check business type prefix
+          const seqBizType = seqTrack.replace("_custom", ""); // "salon" or "mobile"
+          if (seqBizType !== bType) {
             failed.push({
               contactId,
-              error: `Contact track (${contactTrack}) does not match sequence track (${sequence.sequenceTrack})`
+              error: `This sequence is for ${seqBizType} businesses but contact is a ${bType} business`
             });
             continue;
           }
+        } else if (contactTrack !== seqTrack) {
+          failed.push({
+            contactId,
+            error: `Contact track (${contactTrack}) does not match sequence track (${seqTrack})`
+          });
+          continue;
         }
         
         // Check if this contact is already in the queue for this sequence
