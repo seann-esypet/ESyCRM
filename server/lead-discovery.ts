@@ -292,6 +292,25 @@ export async function searchWithSerpApi(
   }
 }
 
+async function fetchPage(url: string): Promise<string | null> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    const response = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!response.ok) return null;
+    return await response.text();
+  } catch {
+    return null;
+  }
+}
+
 export async function crawlWebsite(url: string): Promise<{
   html: string;
   bookingUrl?: string;
@@ -303,28 +322,14 @@ export async function crawlWebsite(url: string): Promise<{
   jobTitle?: string;
 }> {
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
+    let base: URL;
+    try { base = new URL(url.startsWith("http") ? url : `https://${url}`); }
+    catch { throw new Error(`Invalid URL: ${url}`); }
 
-    const response = await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      },
-      signal: controller.signal,
-    });
+    const html = await fetchPage(base.href);
+    if (!html) throw new Error(`HTTP error fetching ${base.href}`);
 
-    clearTimeout(timeout);
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-
-    const html = await response.text();
-    
-    const result: ReturnType<typeof crawlWebsite> extends Promise<infer T> ? T : never = {
-      html,
-    };
+    const result: ReturnType<typeof crawlWebsite> extends Promise<infer T> ? T : never = { html };
 
     const bookingInfo = detectBookingSoftware(html, url);
     if (bookingInfo) {
@@ -332,14 +337,32 @@ export async function crawlWebsite(url: string): Promise<{
       result.softwareName = bookingInfo.software;
     }
 
-    const email = extractEmail(html);
-    if (email) result.email = email;
+    // Scan homepage first
+    result.email = extractEmail(html) ?? undefined;
+    result.phone = extractPhone(html) ?? undefined;
+    result.contactFormUrl = detectContactForm(html, url) ?? undefined;
 
-    const phone = extractPhone(html);
-    if (phone) result.phone = phone;
-
-    const contactForm = detectContactForm(html, url);
-    if (contactForm) result.contactFormUrl = contactForm;
+    // If email or phone still missing, scan common sub-pages in parallel
+    const subPaths = ["/contact", "/contact-us", "/about", "/about-us", "/reach-us", "/get-in-touch"];
+    const needsMore = !result.email || !result.phone;
+    if (needsMore) {
+      const subPages = await Promise.allSettled(
+        subPaths.map(path => fetchPage(`${base.origin}${path}`))
+      );
+      for (const settled of subPages) {
+        if (settled.status !== "fulfilled" || !settled.value) continue;
+        const subHtml = settled.value;
+        if (!result.email) {
+          const found = extractEmail(subHtml);
+          if (found) result.email = found;
+        }
+        if (!result.phone) {
+          const found = extractPhone(subHtml);
+          if (found) result.phone = found;
+        }
+        if (result.email && result.phone) break;
+      }
+    }
 
     return result;
   } catch (error) {
