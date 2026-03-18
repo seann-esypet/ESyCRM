@@ -473,6 +473,24 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
 
         <div className="space-y-4 pt-2 border-t border-border">
           <h3 className="text-sm font-semibold text-foreground">Phone Numbers</h3>
+          <FormField
+            control={form.control}
+            name="phone"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Phone</FormLabel>
+                <FormControl>
+                  <Input
+                    {...field}
+                    value={field.value || ""}
+                    placeholder="(555) 000-0000"
+                    data-testid="input-phone"
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
           <div className="grid grid-cols-3 gap-4">
             <FormField
               control={form.control}

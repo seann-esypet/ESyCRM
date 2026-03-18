@@ -675,6 +675,7 @@ export async function importResultsToCRM(
         lastName: leadResult.lastName || leadResult.company?.split(" ").slice(1).join(" ") || "Business",
         email: leadResult.email,
         phone: leadResult.phone,
+        phoneWork: leadResult.phone,
         address: leadResult.address,
         company: leadResult.company,
         jobTitle: leadResult.jobTitle,
