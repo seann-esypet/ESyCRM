@@ -91,6 +91,7 @@ export default function Deals() {
     queryKey: ["/api/email-sequence-logs", emailHistoryContactId],
     queryFn: async () => {
       const response = await fetch(`/api/email-sequence-logs?contactId=${emailHistoryContactId}`);
+      if (!response.ok) return [];
       return response.json();
     },
     enabled: !!emailHistoryContactId,
@@ -105,6 +106,7 @@ export default function Deals() {
     queryKey: ["/api/inbox", emailHistoryContactId],
     queryFn: async () => {
       const response = await fetch(`/api/inbox?contactId=${emailHistoryContactId}`);
+      if (!response.ok) return [];
       return response.json();
     },
     enabled: !!emailHistoryContactId,
