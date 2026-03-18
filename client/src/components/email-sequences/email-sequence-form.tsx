@@ -26,7 +26,11 @@ export default function EmailSequenceForm({ sequence, onSuccess, onCancel }: Ema
   const { toast } = useToast();
   const { user } = useAuth();
   const isEdit = !!sequence?.id;
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  // Tracks the last cursor position the user placed in the textarea.
+  // Stays null until the user actually clicks/types in the textarea,
+  // so we can distinguish "cursor at position 0" from "no cursor placed".
+  const lastCursorPos = useRef<number | null>(null);
   const sequenceNumber = sequence?.sequenceNumber || 1;
   const sequenceTrack = sequence?.sequenceTrack || "no_software";
 
@@ -110,18 +114,22 @@ export default function EmailSequenceForm({ sequence, onSuccess, onCancel }: Ema
 
   const isPending = createMutation.isPending || updateMutation.isPending;
 
+  function trackCursor(e: React.SyntheticEvent<HTMLTextAreaElement>) {
+    lastCursorPos.current = e.currentTarget.selectionStart;
+  }
+
   function insertSignUpLink() {
     const el = textareaRef.current;
     const current = form.getValues("body") || "";
-    // Browsers preserve selectionStart even after the textarea loses focus,
-    // so this correctly reads the last cursor position after clicking the button.
-    // Falls back to end of text only if selectionStart is null/undefined.
-    const pos = el?.selectionStart ?? current.length;
+    // Use the explicitly tracked position if the user has placed a cursor;
+    // otherwise append at the end (lastCursorPos stays null until first interaction).
+    const pos = lastCursorPos.current ?? current.length;
     const newValue = current.slice(0, pos) + SIGNUP_LINK + current.slice(pos);
     form.setValue("body", newValue, { shouldDirty: true });
     // Restore focus and place cursor right after the inserted link
     if (el) {
       const newPos = pos + SIGNUP_LINK.length;
+      lastCursorPos.current = newPos;
       requestAnimationFrame(() => {
         el.focus();
         el.setSelectionRange(newPos, newPos);
@@ -175,12 +183,15 @@ export default function EmailSequenceForm({ sequence, onSuccess, onCancel }: Ema
                     {...field}
                     ref={(el) => {
                       field.ref(el);
-                      (textareaRef as { current: HTMLTextAreaElement | null }).current = el;
+                      textareaRef.current = el;
                     }}
                     rows={12}
                     placeholder="Write your email content here..."
                     data-testid="input-body"
                     className="font-mono text-sm"
+                    onClick={trackCursor}
+                    onKeyUp={trackCursor}
+                    onSelect={trackCursor}
                   />
                 </FormControl>
                 <FormDescription>
