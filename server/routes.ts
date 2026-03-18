@@ -495,7 +495,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const steps: { label: string; result: string }[] = [];
 
       // ── Helpers ───────────────────────────────────────────────────────────
-      const SKIP_WORDS = new Set(["The","Our","Your","All","For","With","From","After","When","This","That","Here","Call","Visit","Come","More","Best","Google","Yelp","Facebook","Check","Contact","Book","Find","Open","Click","Learn","Read","See","Get","Now","Today","New","Top","Bay","Dog","Cat","Pet","Pup","We","My","His","Her","Its","Are","Was","Has","Had","Did"]);
+      const SKIP_WORDS = new Set([
+        "The","Our","Your","All","For","With","From","After","When","This","That","Here","We","My","His","Her","Its","Are","Was","Has","Had","Did","And","But","Not","Any","One","Two",
+        "Information","About","Business","Details","Location","Hours","Photos","Reviews","Services","Menu","Overview","Contact","Home","Welcome","Please","Thank","Write","Share","Edit","Report","Directions","Website","Address","Email","Phone","Map","More","View","Read","See","Learn","Click","Call","Visit","Come","Find","Open","Book","Check","Get","Now","Today","New","Top","Back","Next","Prev","Skip","Save","Send","Submit","Cancel","Close","Show","Hide","Sign","Log","Join","Follow","Like","Add","Remove","Update","Delete","Search","Filter","Sort","Print","Download","Upload","Copy",
+        "Best","Bay","Dog","Cat","Pet","Pup","Salon","Grooming","Resort","Boarding","Daycare","Spa","Studio","Groomer","Appointment","Booking","Schedule","Available","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday","January","February","March","April","June","July","August","September","October","November","December",
+        "Google","Yelp","Facebook","Instagram","Twitter","Bing","Yahoo","Nextdoor","Angi","Thumbtack",
+        "Meet","Owner","Founder","Manager","Staff","Team","Principal","President","Director","Certified","Licensed","Professional","Experienced",
+      ]);
 
       function extractFirstName(text: string): string | null {
         const patterns = [
@@ -507,13 +513,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // BBB "Principal Contacts" section
           /Principal\s+Contacts?\s+(?:Mr\.|Ms\.|Mrs\.|Dr\.)?\s*([A-Z][a-z]{2,})/i,
           /(?:Mr\.|Ms\.|Mrs\.|Dr\.)\s+([A-Z][a-z]{2,})\s+\w+,?\s*(?:owner|president|ceo|founder|proprietor)/i,
-          // Yelp "Meet the Business Owner" section
-          /Meet the Business Owner\s+([A-Z][a-z]{2,})\b/i,
-          /From the business\s+(?:Meet\s+)?([A-Z][a-z]{2,})\b/i,
+          // Yelp "Meet the Business Owner" section — requires "owner" context before capturing name
+          /Meet the (?:Business )?Owner[:\s]+([A-Z][a-z]{2,})\b/i,
+          /From the [Bb]usiness[:\s]+Meet (?:the )?[Oo]wner[:\s]+([A-Z][a-z]{2,})\b/i,
         ];
         for (const p of patterns) {
           const m = text.match(p);
-          if (m?.[1] && !SKIP_WORDS.has(m[1])) return m[1];
+          if (!m?.[1]) continue;
+          const captured = m[1];
+          const normalized = captured.charAt(0).toUpperCase() + captured.slice(1).toLowerCase();
+          if (!SKIP_WORDS.has(normalized)) return normalized;
         }
         return null;
       }
@@ -769,11 +778,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (name) {
           const confidence = chunk.priority === 0 ? "high" : "medium";
           console.log(`[OwnerDiscovery] Regex HIT: "${name}" from ${chunk.source}`);
-          steps.push({ label: "Google Search", result: "Searched" });
-          if (contact.websiteUrl) steps.push({ label: "Website scrape", result: "Scraped" });
-          if (chunks.some(c => c.source === "BBB Listing")) steps.push({ label: "BBB listing", result: "Scraped" });
-          if (chunks.some(c => c.source === "Yelp Listing")) steps.push({ label: "Yelp listing", result: "Scraped" });
-          steps.push({ label: "Pattern matching", result: `Found "${name}"` });
+          steps.push({ label: "Google Search", result: serpKey ? `Searched (${chunks.filter(c => c.source === "Google Search").length} result sets)` : "Skipped — API not configured" });
+          steps.push({ label: "Website scrape", result: contact.websiteUrl ? `Scraped ${chunks.filter(c => c.source.startsWith("Website")).length} pages` : "Skipped — no website on record" });
+          steps.push({ label: "BBB listing", result: chunks.some(c => c.source === "BBB Listing") ? "Scraped" : (serpKey ? "No BBB listing found" : "Skipped — API not configured") });
+          steps.push({ label: "Yelp listing", result: chunks.some(c => c.source === "Yelp Listing") ? "Scraped" : (serpKey ? "No Yelp listing found" : "Skipped — API not configured") });
+          steps.push({ label: "Pattern matching", result: `Found "${name}" via ${chunk.source}` });
           return res.json({ found: true, firstName: name, source: chunk.source, confidence, steps });
         }
       }
