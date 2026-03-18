@@ -502,7 +502,6 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
                     <Input 
                       {...field} 
                       value={field.value || ""}
-                      placeholder="(555) 123-4567"
                       data-testid="input-phoneCell"
                     />
                   </FormControl>
@@ -521,7 +520,6 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
                     <Input 
                       {...field} 
                       value={field.value || ""}
-                      placeholder="(555) 987-6543"
                       data-testid="input-phoneWork"
                     />
                   </FormControl>
@@ -540,7 +538,6 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
                     <Input 
                       {...field} 
                       value={field.value || ""}
-                      placeholder="(555) 111-2222"
                       data-testid="input-phoneOther"
                     />
                   </FormControl>
@@ -579,7 +576,6 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
                     <Input
                       {...field}
                       value={field.value || ""}
-                      placeholder="City"
                       data-testid="input-city"
                     />
                   </FormControl>
@@ -597,7 +593,6 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
                     <Input
                       {...field}
                       value={field.value || ""}
-                      placeholder="TX"
                       maxLength={2}
                       className="uppercase"
                       onChange={e => field.onChange(e.target.value.toUpperCase())}
@@ -618,7 +613,6 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
                     <Input
                       {...field}
                       value={field.value || ""}
-                      placeholder="77001"
                       data-testid="input-zipCode"
                     />
                   </FormControl>
