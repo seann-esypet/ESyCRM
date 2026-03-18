@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation } from "@tanstack/react-query";
@@ -11,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/useAuth";
+import { Link2 } from "lucide-react";
 
 interface EmailSequenceFormProps {
   sequence?: Partial<EmailSequence>;
@@ -18,10 +20,13 @@ interface EmailSequenceFormProps {
   onCancel: () => void;
 }
 
+const SIGNUP_LINK = '<a href="https://signup.esypet.net/">EsyPet Sign-Up</a>';
+
 export default function EmailSequenceForm({ sequence, onSuccess, onCancel }: EmailSequenceFormProps) {
   const { toast } = useToast();
   const { user } = useAuth();
   const isEdit = !!sequence?.id;
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const sequenceNumber = sequence?.sequenceNumber || 1;
   const sequenceTrack = sequence?.sequenceTrack || "no_software";
 
@@ -105,6 +110,22 @@ export default function EmailSequenceForm({ sequence, onSuccess, onCancel }: Ema
 
   const isPending = createMutation.isPending || updateMutation.isPending;
 
+  function insertSignUpLink() {
+    const el = textareaRef.current;
+    const current = form.getValues("body") || "";
+    const pos = el ? (el.selectionStart ?? current.length) : current.length;
+    const newValue = current.slice(0, pos) + SIGNUP_LINK + current.slice(pos);
+    form.setValue("body", newValue, { shouldDirty: true });
+    // Restore cursor position after the inserted link
+    if (el) {
+      const newPos = pos + SIGNUP_LINK.length;
+      requestAnimationFrame(() => {
+        el.focus();
+        el.setSelectionRange(newPos, newPos);
+      });
+    }
+  }
+
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6" data-testid="form-email-sequence">
@@ -132,10 +153,27 @@ export default function EmailSequenceForm({ sequence, onSuccess, onCancel }: Ema
             name="body"
             render={({ field }) => (
               <FormItem className="md:col-span-2">
-                <FormLabel>Email Body</FormLabel>
+                <div className="flex items-center justify-between">
+                  <FormLabel>Email Body</FormLabel>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={insertSignUpLink}
+                    data-testid="button-insert-signup-link"
+                    className="h-7 text-xs gap-1.5"
+                  >
+                    <Link2 className="h-3.5 w-3.5" />
+                    Insert Sign-Up Link
+                  </Button>
+                </div>
                 <FormControl>
-                  <Textarea 
-                    {...field} 
+                  <Textarea
+                    {...field}
+                    ref={(el) => {
+                      field.ref(el);
+                      (textareaRef as { current: HTMLTextAreaElement | null }).current = el;
+                    }}
                     rows={12}
                     placeholder="Write your email content here..."
                     data-testid="input-body"
