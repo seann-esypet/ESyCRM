@@ -125,6 +125,7 @@ const BOOKING_SOFTWARE_PATTERNS: Record<string, string> = {
   "wix.com": "Wix Booking",
   "booking.esypet.com": "EsyPet",
   "esypet.com": "EsyPet",
+  "groomer.io": "Groomer.io",
 };
 
 const BOOKING_BUTTON_KEYWORDS = [
