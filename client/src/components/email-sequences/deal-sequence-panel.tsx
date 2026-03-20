@@ -13,15 +13,36 @@ import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import {
   Mail, Plus, CalendarClock, Pencil, Building2, Phone,
-  Trash2, Clock, CheckCircle2, XCircle, Loader2, SendHorizontal, User, Save, Link2
+  Trash2, Clock, CheckCircle2, XCircle, Loader2, SendHorizontal, User, Save, Link2, Info
 } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 import type { Contact, EmailSequence, EmailSequenceLog } from "@shared/schema";
 
-const QUICK_LINKS = [
+const QUICK_LINKS: { label: string; html: string; description?: string }[] = [
   { label: "Insert Sign-Up Link", html: '<a href="https://signup.esypet.net/">EsyPet Sign-Up</a>' },
   { label: "Visit EsyPet",        html: '<a href="https://software.esypet.com/">Visit EsyPet</a>' },
   { label: "Pricing",             html: '<a href="https://software.esypet.com/pricing/">Pricing</a>' },
+  {
+    label: "Video: Getting Set Up",
+    html: '<a href="https://esy.pet/Salon-SignUp">&#9654; Video: Getting Set Up</a>',
+    description: "How quick and easy it is to get a salon up and running. They visit signup.esypet.net and set up salon images, employee images, prices, and services.",
+  },
+  {
+    label: "Video: Customization",
+    html: '<a href="https://esy.pet/Lib_Dir_temp">&#9654; Video: Customization</a>',
+    description: "Shows how customizable the software is — setting up directories and libraries to customize prices, sizes, breeds, service names (main and add-on), and grooming note templates.",
+  },
+  {
+    label: "Video: Pet Parent Registration",
+    html: '<a href="https://esy.pet/Reg_Settings">&#9654; Video: Pet Parent Registration</a>',
+    description: "How a pet parent registers with the salon to book a groom. Covers notification preferences and how they access their records — vaccination records, credit card on file, and profile info.",
+  },
+  {
+    label: "Video: Apps & Wellness Check",
+    html: '<a href="https://esy.pet/Cal_Apps">&#9654; Video: Apps &amp; Wellness Check</a>',
+    description: "A look at the two main apps — the Salon App and the Pet Parent App — plus the booking calendar. Walks through a groomer and a bather checking in a pet and completing grooming steps. Also includes the 7-point Wellness Check.",
+  },
 ];
 
 interface DealSequencePanelProps {
@@ -270,21 +291,32 @@ function UpdateSequenceDialog({ log, open, onOpenChange, onSuccess }: UpdateDial
                   <span className="text-muted-foreground font-normal ml-1">(from template — edit to override)</span>
                 )}
               </Label>
-              <div className="flex gap-1 flex-wrap justify-end">
-                {QUICK_LINKS.map(link => (
-                  <Button
-                    key={link.label}
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => insertQuickLinkUpdate(link.html)}
-                    className="h-6 text-xs gap-1 px-2"
-                  >
-                    <Link2 className="h-3 w-3" />
-                    {link.label}
-                  </Button>
-                ))}
-              </div>
+              <TooltipProvider delayDuration={200}>
+                <div className="flex gap-1 flex-wrap justify-end">
+                  {QUICK_LINKS.map(link => (
+                    <Tooltip key={link.label}>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => insertQuickLinkUpdate(link.html)}
+                          className="h-6 text-xs gap-1 px-2"
+                        >
+                          <Link2 className="h-3 w-3" />
+                          {link.label}
+                          {link.description && <Info className="h-3 w-3 text-muted-foreground" />}
+                        </Button>
+                      </TooltipTrigger>
+                      {link.description && (
+                        <TooltipContent side="bottom" className="max-w-xs text-xs leading-relaxed">
+                          {link.description}
+                        </TooltipContent>
+                      )}
+                    </Tooltip>
+                  ))}
+                </div>
+              </TooltipProvider>
             </div>
             <p className="text-xs text-muted-foreground">
               Tokens: <code className="bg-muted px-1 rounded text-xs">[Contact_First_Name]</code>{" "}
@@ -592,21 +624,32 @@ function SequenceComposerDialog({ contact, open, onOpenChange, onSuccess }: Comp
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between gap-2">
                     <Label className="text-xs">Body <span className="text-destructive">*</span></Label>
-                    <div className="flex gap-1 flex-wrap justify-end">
-                      {QUICK_LINKS.map(link => (
-                        <Button
-                          key={link.label}
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => insertQuickLink(link.html)}
-                          className="h-6 text-xs gap-1 px-2"
-                        >
-                          <Link2 className="h-3 w-3" />
-                          {link.label}
-                        </Button>
-                      ))}
-                    </div>
+                    <TooltipProvider delayDuration={200}>
+                      <div className="flex gap-1 flex-wrap justify-end">
+                        {QUICK_LINKS.map(link => (
+                          <Tooltip key={link.label}>
+                            <TooltipTrigger asChild>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => insertQuickLink(link.html)}
+                                className="h-6 text-xs gap-1 px-2"
+                              >
+                                <Link2 className="h-3 w-3" />
+                                {link.label}
+                                {link.description && <Info className="h-3 w-3 text-muted-foreground" />}
+                              </Button>
+                            </TooltipTrigger>
+                            {link.description && (
+                              <TooltipContent side="bottom" className="max-w-xs text-xs leading-relaxed">
+                                {link.description}
+                              </TooltipContent>
+                            )}
+                          </Tooltip>
+                        ))}
+                      </div>
+                    </TooltipProvider>
                   </div>
                   <Textarea
                     ref={customBodyRef}

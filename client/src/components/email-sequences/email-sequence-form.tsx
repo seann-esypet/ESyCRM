@@ -12,7 +12,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/useAuth";
-import { Link2 } from "lucide-react";
+import { Link2, Info } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface EmailSequenceFormProps {
   sequence?: Partial<EmailSequence>;
@@ -20,10 +21,30 @@ interface EmailSequenceFormProps {
   onCancel: () => void;
 }
 
-const LINKS = [
+const LINKS: { label: string; html: string; description?: string }[] = [
   { label: "Insert Sign-Up Link", html: '<a href="https://signup.esypet.net/">EsyPet Sign-Up</a>' },
   { label: "Visit EsyPet",        html: '<a href="https://software.esypet.com/">Visit EsyPet</a>' },
   { label: "Pricing",             html: '<a href="https://software.esypet.com/pricing/">Pricing</a>' },
+  {
+    label: "Video: Getting Set Up",
+    html: '<a href="https://esy.pet/Salon-SignUp">&#9654; Video: Getting Set Up</a>',
+    description: "How quick and easy it is to get a salon up and running. They visit signup.esypet.net and set up salon images, employee images, prices, and services.",
+  },
+  {
+    label: "Video: Customization",
+    html: '<a href="https://esy.pet/Lib_Dir_temp">&#9654; Video: Customization</a>',
+    description: "Shows how customizable the software is — setting up directories and libraries to customize prices, sizes, breeds, service names (main and add-on), and grooming note templates.",
+  },
+  {
+    label: "Video: Pet Parent Registration",
+    html: '<a href="https://esy.pet/Reg_Settings">&#9654; Video: Pet Parent Registration</a>',
+    description: "How a pet parent registers with the salon to book a groom. Covers notification preferences and how they access their records — vaccination records, credit card on file, and profile info.",
+  },
+  {
+    label: "Video: Apps & Wellness Check",
+    html: '<a href="https://esy.pet/Cal_Apps">&#9654; Video: Apps &amp; Wellness Check</a>',
+    description: "A look at the two main apps — the Salon App and the Pet Parent App — plus the booking calendar. Walks through a groomer and a bather checking in a pet and completing grooming steps. Also includes the 7-point Wellness Check.",
+  },
 ];
 
 export default function EmailSequenceForm({ sequence, onSuccess, onCancel }: EmailSequenceFormProps) {
@@ -158,22 +179,33 @@ export default function EmailSequenceForm({ sequence, onSuccess, onCancel }: Ema
               <FormItem className="md:col-span-2">
                 <div className="flex items-center justify-between gap-2">
                   <FormLabel>Email Body</FormLabel>
-                  <div className="flex gap-1.5 flex-wrap justify-end">
-                    {LINKS.map((link) => (
-                      <Button
-                        key={link.label}
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => insertLink(link.html)}
-                        data-testid={`button-insert-link-${link.label.toLowerCase().replace(/\s+/g, "-")}`}
-                        className="h-7 text-xs gap-1.5"
-                      >
-                        <Link2 className="h-3.5 w-3.5" />
-                        {link.label}
-                      </Button>
-                    ))}
-                  </div>
+                  <TooltipProvider delayDuration={200}>
+                    <div className="flex gap-1.5 flex-wrap justify-end">
+                      {LINKS.map((link) => (
+                        <Tooltip key={link.label}>
+                          <TooltipTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => insertLink(link.html)}
+                              data-testid={`button-insert-link-${link.label.toLowerCase().replace(/\s+/g, "-")}`}
+                              className="h-7 text-xs gap-1.5"
+                            >
+                              <Link2 className="h-3.5 w-3.5" />
+                              {link.label}
+                              {link.description && <Info className="h-3 w-3 text-muted-foreground" />}
+                            </Button>
+                          </TooltipTrigger>
+                          {link.description && (
+                            <TooltipContent side="bottom" className="max-w-xs text-xs leading-relaxed">
+                              {link.description}
+                            </TooltipContent>
+                          )}
+                        </Tooltip>
+                      ))}
+                    </div>
+                  </TooltipProvider>
                 </div>
                 <FormControl>
                   <Textarea
