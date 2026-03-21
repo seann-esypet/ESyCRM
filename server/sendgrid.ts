@@ -95,7 +95,9 @@ export async function sendEmail({
     sender: { name: fromName, email: DEFAULT_FROM_EMAIL },
     to: [{ email: to }],
     subject,
-    htmlContent: body.replace(/\n/g, "<br>"),
+    htmlContent: (body.trimStart().startsWith("<!DOCTYPE") || body.trimStart().startsWith("<html"))
+      ? body
+      : body.replace(/\n/g, "<br>"),
   };
 
   if (replyTo) {
