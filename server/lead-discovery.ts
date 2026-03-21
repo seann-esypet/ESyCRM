@@ -517,6 +517,203 @@ export function isDuplicate(
   return false;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// CONTACT DETAIL SOURCES
+// Each source is searched (in parallel) when a business's email/phone is still
+// missing after crawling their own website. Add new sources to this list to
+// extend coverage — each just needs a name and a fetch function.
+// ─────────────────────────────────────────────────────────────────────────────
+
+type ContactDetailResult = { email?: string; phone?: string };
+type ContactDetailSource = {
+  name: string;
+  fetch: (businessName: string, serpKey: string) => Promise<ContactDetailResult>;
+};
+
+/** Shared email/phone extractor used by all contact detail sources */
+function extractContactDetails(text: string): ContactDetailResult {
+  const NOISE_DOMAINS = [
+    "example.com", "sentry.io", "wixpress.com", "w3.org", "schema.org",
+    "cloudflare.com", "facebook.com", "yelp.com", "google.com",
+    "bbb.org", "yellowpages.com", "angi.com", "thumbtack.com",
+  ];
+  const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+  const PHONE_RE = /(?:\+1[\s.-]?)?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}/g;
+
+  const decoded = text
+    .replace(/&#64;|&commat;/gi, "@")
+    .replace(/&#46;/gi, ".")
+    .replace(/&amp;/gi, "&")
+    .replace(/\s*\[at\]\s*/gi, "@")
+    .replace(/\s*\(at\)\s*/gi, "@");
+
+  const emailMatches = decoded.match(EMAIL_RE);
+  const email = emailMatches?.find(
+    e =>
+      NOISE_DOMAINS.every(d => !e.includes(d)) &&
+      !e.endsWith(".png") && !e.endsWith(".jpg") &&
+      !e.endsWith(".gif") && !e.endsWith(".svg")
+  ) ?? undefined;
+
+  const phoneMatches = decoded.match(PHONE_RE);
+  const phone = phoneMatches?.[0] ?? undefined;
+
+  return { email, phone };
+}
+
+/** Helper: fetch a page URL and return its raw HTML (or null on failure) */
+async function fetchPageHtml(url: string, userAgent?: string): Promise<string | null> {
+  try {
+    const r = await fetch(url, {
+      headers: {
+        "User-Agent": userAgent ?? "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        Accept: "text/html,application/xhtml+xml",
+      },
+      signal: AbortSignal.timeout(14000),
+    });
+    return r.ok ? await r.text() : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Helper: run a SerpAPI Google search and return result objects */
+async function serpSearch(serpKey: string, query: string, num = 5): Promise<any[]> {
+  try {
+    const params = new URLSearchParams({ api_key: serpKey, engine: "google", q: query, num: String(num) });
+    const r = await fetch(`https://serpapi.com/search?${params}`, { signal: AbortSignal.timeout(12000) });
+    if (!r.ok) return [];
+    const data = await r.json() as any;
+    return data.organic_results ?? [];
+  } catch {
+    return [];
+  }
+}
+
+// ─── List of sources that may have the business's email/phone ────────────────
+
+const CONTACT_DETAIL_SOURCES: ContactDetailSource[] = [
+  // 1. Google — broad search; email often appears directly in result snippets
+  {
+    name: "Google",
+    async fetch(businessName, serpKey) {
+      const results = await serpSearch(serpKey, `"${businessName}" grooming email contact`, 5);
+      const text = results.map((r: any) => `${r.title ?? ""} ${r.snippet ?? ""}`).join(" ");
+      return extractContactDetails(text);
+    },
+  },
+
+  // 2. Facebook — About section lists email, phone, and website
+  {
+    name: "Facebook",
+    async fetch(businessName, serpKey) {
+      const results = await serpSearch(serpKey, `site:facebook.com "${businessName}" grooming`, 3);
+      const fbResult = results.find(
+        (r: any) =>
+          typeof r.link === "string" &&
+          r.link.includes("facebook.com/") &&
+          !r.link.includes("/search") &&
+          !r.link.includes("/groups") &&
+          !r.link.includes("/events")
+      );
+      if (!fbResult) return {};
+      // Check snippet first (fastest)
+      const snippetDetails = extractContactDetails(`${fbResult.title ?? ""} ${fbResult.snippet ?? ""}`);
+      if (snippetDetails.email || snippetDetails.phone) return snippetDetails;
+      // Fetch the actual page (Facebook externalhit UA gets About section)
+      const html = await fetchPageHtml(
+        fbResult.link,
+        "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)"
+      );
+      return html ? extractContactDetails(html) : {};
+    },
+  },
+
+  // 3. Yelp — business listing sometimes has contact email and always has phone
+  {
+    name: "Yelp",
+    async fetch(businessName, serpKey) {
+      const results = await serpSearch(serpKey, `site:yelp.com/biz "${businessName}" grooming`, 3);
+      const yelpResult = results.find((r: any) => r.link?.includes("yelp.com/biz/"));
+      if (!yelpResult) return {};
+      const snippetDetails = extractContactDetails(`${yelpResult.title ?? ""} ${yelpResult.snippet ?? ""}`);
+      if (snippetDetails.email || snippetDetails.phone) return snippetDetails;
+      const html = await fetchPageHtml(yelpResult.link);
+      return html ? extractContactDetails(html) : {};
+    },
+  },
+
+  // 4. BBB — Principal Contacts and contact info are listed on profile pages
+  {
+    name: "BBB",
+    async fetch(businessName, serpKey) {
+      const results = await serpSearch(serpKey, `site:bbb.org/us "${businessName}" grooming`, 3);
+      const bbbResult = results.find((r: any) => r.link?.includes("bbb.org") && r.link?.includes("/profile/"));
+      if (!bbbResult) return {};
+      const snippetDetails = extractContactDetails(`${bbbResult.title ?? ""} ${bbbResult.snippet ?? ""}`);
+      if (snippetDetails.email || snippetDetails.phone) return snippetDetails;
+      const html = await fetchPageHtml(bbbResult.link);
+      return html ? extractContactDetails(html) : {};
+    },
+  },
+
+  // 5. Yellow Pages — has business phone and sometimes email
+  {
+    name: "Yellow Pages",
+    async fetch(businessName, serpKey) {
+      const results = await serpSearch(serpKey, `site:yellowpages.com "${businessName}" grooming`, 3);
+      const ypResult = results.find((r: any) => r.link?.includes("yellowpages.com/"));
+      if (!ypResult) return {};
+      const snippetDetails = extractContactDetails(`${ypResult.title ?? ""} ${ypResult.snippet ?? ""}`);
+      if (snippetDetails.email || snippetDetails.phone) return snippetDetails;
+      const html = await fetchPageHtml(ypResult.link);
+      return html ? extractContactDetails(html) : {};
+    },
+  },
+];
+
+/**
+ * Run all CONTACT_DETAIL_SOURCES in parallel and return the first email found
+ * (and separately the first phone found), with which source provided each.
+ */
+async function findContactDetailsFromAlternativeSources(
+  businessName: string,
+): Promise<{ email?: string; emailSource?: string; phone?: string; phoneSource?: string }> {
+  const serpKey = process.env.SERPAPI_API_KEY;
+  if (!serpKey) return {};
+
+  console.log(`[Discovery] Gap-fill: searching ${CONTACT_DETAIL_SOURCES.length} sources for "${businessName}"`);
+
+  const results = await Promise.allSettled(
+    CONTACT_DETAIL_SOURCES.map(async (source) => {
+      const details = await source.fetch(businessName, serpKey);
+      return { source: source.name, ...details };
+    })
+  );
+
+  let email: string | undefined;
+  let emailSource: string | undefined;
+  let phone: string | undefined;
+  let phoneSource: string | undefined;
+
+  for (const result of results) {
+    if (result.status !== "fulfilled") continue;
+    const { source, email: e, phone: p } = result.value;
+    if (e && !email) {
+      email = e;
+      emailSource = source;
+      console.log(`[Discovery] Gap-fill: email "${e}" found via ${source}`);
+    }
+    if (p && !phone) {
+      phone = p;
+      phoneSource = source;
+      console.log(`[Discovery] Gap-fill: phone "${p}" found via ${source}`);
+    }
+  }
+
+  return { email, emailSource, phone, phoneSource };
+}
+
 export async function runLeadDiscoveryJob(jobId: string, userId: string): Promise<void> {
   const job = await storage.getLeadDiscoveryJob(jobId, null);
   if (!job) {
@@ -600,6 +797,26 @@ export async function runLeadDiscoveryJob(jobId: string, userId: string): Promis
                 }
               }
 
+              // Gap-fill: if email or phone is still missing after website crawl,
+              // run all CONTACT_DETAIL_SOURCES in parallel to find them.
+              const needsEmail = !crawlData?.email;
+              const needsPhone = !crawlData?.phone && !businessData.phone;
+              let gapFillEmail: string | undefined;
+              let gapFillEmailSource: string | undefined;
+              let gapFillPhone: string | undefined;
+              let gapFillPhoneSource: string | undefined;
+              if (needsEmail || needsPhone) {
+                const gapFill = await findContactDetailsFromAlternativeSources(businessData.company);
+                if (needsEmail && gapFill.email) {
+                  gapFillEmail = gapFill.email;
+                  gapFillEmailSource = gapFill.emailSource;
+                }
+                if (needsPhone && gapFill.phone) {
+                  gapFillPhone = gapFill.phone;
+                  gapFillPhoneSource = gapFill.phoneSource;
+                }
+              }
+
               // Determine software classification with improved logic
               const knownChain = checkKnownChain(businessData.company);
               let usesSoftware: string;
@@ -629,8 +846,8 @@ export async function runLeadDiscoveryJob(jobId: string, userId: string): Promis
               const leadResult: InsertLeadDiscoveryResult = {
                 jobId,
                 company: businessData.company,
-                phone: crawlData?.phone || businessData.phone || null,
-                email: crawlData?.email || null,
+                phone: crawlData?.phone || businessData.phone || gapFillPhone || null,
+                email: crawlData?.email || gapFillEmail || null,
                 address: businessData.address || null,
                 firstName: crawlData?.ownerName?.split(" ")[0] || null,
                 lastName: crawlData?.ownerName?.split(" ").slice(1).join(" ") || null,
@@ -642,9 +859,15 @@ export async function runLeadDiscoveryJob(jobId: string, userId: string): Promis
                 usesSoftware,
                 contactRequestFormUrl: crawlData?.contactFormUrl || null,
                 leadSource: "Google Maps",
-                notes: crawlError
-                  ? `Crawl failed: ${crawlError}`
-                  : (classificationNote ?? (crawlData?.softwareName === "Unknown" ? "Booking link detected but software unclear" : null)),
+                notes: (() => {
+                  const parts: string[] = [];
+                  if (crawlError) parts.push(`Crawl failed: ${crawlError}`);
+                  else if (classificationNote) parts.push(classificationNote);
+                  else if (crawlData?.softwareName === "Unknown") parts.push("Booking link detected but software unclear");
+                  if (gapFillEmail && gapFillEmailSource) parts.push(`Email found via ${gapFillEmailSource}`);
+                  if (gapFillPhone && gapFillPhoneSource) parts.push(`Phone found via ${gapFillPhoneSource}`);
+                  return parts.length ? parts.join(" | ") : null;
+                })(),
                 zipCode: zip,
                 searchQuery: query,
                 isDuplicate: "false",
@@ -720,7 +943,7 @@ export async function importResultsToCRM(
         address: leadResult.address,
         company: leadResult.company,
         jobTitle: leadResult.jobTitle,
-        usesSoftware: leadResult.usesSoftware,
+        usesSoftware: leadResult.usesSoftware ?? "Unknown",
         currentSoftware: leadResult.currentSoftware,
         bookingSoftwareUrl: leadResult.bookingSoftwareUrl,
         hasWebsite: leadResult.hasWebsite,

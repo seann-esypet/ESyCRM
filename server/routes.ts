@@ -895,10 +895,93 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } catch (e: any) { console.log(`[OwnerDiscovery] Daily Groomer scrape exception: ${e.message}`); }
       }
 
-      // Run all 7 collectors in parallel
+      async function collectThumbTack(): Promise<void> {
+        if (!serpKey) { console.log("[OwnerDiscovery] Thumbtack: skipped — no SERPAPI_API_KEY"); return; }
+        let ttUrl: string | null = null;
+        try {
+          const q = `site:thumbtack.com "${businessName}"${city ? ` "${city}"` : ""} grooming`;
+          const params = new URLSearchParams({ api_key: serpKey, engine: "google", q, num: "3" });
+          const r = await fetch(`https://serpapi.com/search?${params}`, { signal: AbortSignal.timeout(10000) });
+          if (r.ok) {
+            const data = await r.json() as any;
+            const ttResult = (data.organic_results || []).find((res: any) => res.link?.includes("thumbtack.com/"));
+            if (ttResult) {
+              ttUrl = ttResult.link;
+              const snippet = [ttResult.title, ttResult.snippet].filter(Boolean).join(" ");
+              if (snippet.trim()) chunks.push({ text: snippet, source: "Thumbtack (search snippet)", priority: 1 });
+              console.log(`[OwnerDiscovery] Thumbtack: found listing at ${ttUrl}`);
+            } else { console.log("[OwnerDiscovery] Thumbtack: no listing found"); }
+          }
+        } catch (e: any) { console.log(`[OwnerDiscovery] Thumbtack search exception: ${e.message}`); }
+        if (!ttUrl) return;
+        try {
+          const r = await fetch(ttUrl, {
+            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
+            signal: AbortSignal.timeout(12000),
+          });
+          if (!r.ok) { console.log(`[OwnerDiscovery] Thumbtack: HTTP ${r.status}`); return; }
+          const html = await r.text();
+          const ogTitle = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)/i)?.[1] ||
+                          html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["']/i)?.[1] || "";
+          const pageTitle = html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1] || "";
+          const combined = `${ogTitle} ${pageTitle} ${extractMeta(html)} ${stripHtml(html).slice(0, 2500)}`.trim();
+          if (combined.length > 30) {
+            chunks.push({ text: combined, source: "Thumbtack Listing", priority: 0 });
+            console.log(`[OwnerDiscovery] Thumbtack: scraped ${combined.length} chars`);
+          }
+        } catch (e: any) { console.log(`[OwnerDiscovery] Thumbtack scrape exception: ${e.message}`); }
+      }
+
+      async function collectAngi(): Promise<void> {
+        if (!serpKey) { console.log("[OwnerDiscovery] Angi: skipped — no SERPAPI_API_KEY"); return; }
+        let angiUrl: string | null = null;
+        try {
+          const q = `site:angi.com "${businessName}"${city ? ` "${city}"` : ""} grooming`;
+          const params = new URLSearchParams({ api_key: serpKey, engine: "google", q, num: "3" });
+          const r = await fetch(`https://serpapi.com/search?${params}`, { signal: AbortSignal.timeout(10000) });
+          if (r.ok) {
+            const data = await r.json() as any;
+            const angiResult = (data.organic_results || []).find((res: any) => res.link?.includes("angi.com/"));
+            if (angiResult) {
+              angiUrl = angiResult.link;
+              const snippet = [angiResult.title, angiResult.snippet].filter(Boolean).join(" ");
+              if (snippet.trim()) chunks.push({ text: snippet, source: "Angi (search snippet)", priority: 1 });
+              console.log(`[OwnerDiscovery] Angi: found listing at ${angiUrl}`);
+            } else { console.log("[OwnerDiscovery] Angi: no listing found"); }
+          }
+        } catch (e: any) { console.log(`[OwnerDiscovery] Angi search exception: ${e.message}`); }
+        if (!angiUrl) return;
+        try {
+          const r = await fetch(angiUrl, {
+            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
+            signal: AbortSignal.timeout(12000),
+          });
+          if (!r.ok) { console.log(`[OwnerDiscovery] Angi: HTTP ${r.status}`); return; }
+          const html = await r.text();
+          const ogTitle = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)/i)?.[1] ||
+                          html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["']/i)?.[1] || "";
+          const pageTitle = html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1] || "";
+          const combined = `${ogTitle} ${pageTitle} ${extractMeta(html)} ${stripHtml(html).slice(0, 2500)}`.trim();
+          if (combined.length > 30) {
+            chunks.push({ text: combined, source: "Angi Listing", priority: 0 });
+            console.log(`[OwnerDiscovery] Angi: scraped ${combined.length} chars`);
+          }
+        } catch (e: any) { console.log(`[OwnerDiscovery] Angi scrape exception: ${e.message}`); }
+      }
+
+      // ─────────────────────────────────────────────────────────────────────────
+      // OWNER NAME SOURCES — all run in parallel, results are tallied by votes.
+      // To add a new source: write a collectXxx() function above and add it here.
+      //   1. Google Search        6. Nextdoor
+      //   2. Business Website     7. The Daily Groomer
+      //   3. BBB Listing          8. Thumbtack
+      //   4. Yelp Listing         9. Angi
+      //   5. Facebook Page
+      // ─────────────────────────────────────────────────────────────────────────
       await Promise.allSettled([
         collectGoogle(), collectWebsite(), collectBBB(), collectYelp(),
         collectFacebook(), collectNextdoor(), collectDailyGroomer(),
+        collectThumbTack(), collectAngi(),
       ]);
       console.log(`[OwnerDiscovery] All sources collected — ${chunks.length} total chunks`);
 
