@@ -523,6 +523,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           /\bowner:\s*([A-Z][a-z]{2,})\b/i,
           // Yelp "Meet the Business Owner: Name" — requires explicit colon
           /Meet the (?:Business )?Owner:\s*([A-Z][a-z]{2,})\b/i,
+          // Facebook / social page title: "Holly Dean Grooms" — first name before last name + Grooms
+          /^([A-Z][a-z]{2,})\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\s+(?:Grooms?|Grooming|Groomers?)\b/i,
+          // Page title "FirstName LastName | Pet/Dog Groomer" — profile/listing style
+          /^([A-Z][a-z]{2,})\s+[A-Z][a-z]+\s*\|\s*(?:(?:Pet|Dog|Mobile|Cat|Animal)\s+)?(?:Groomer|Grooming|Owner|Proprietor|Stylist)/i,
+          // "ask for Name" / "contact Name" — used on some listing pages
+          /\b(?:ask for|contact)\s+([A-Z][a-z]{2,})\b/i,
+          // The Daily Groomer style: "Business by FirstName LastName"
+          /\bby\s+([A-Z][a-z]{2,})\s+[A-Z][a-z]{2,}\b/,
         ];
         for (const p of patterns) {
           const m = text.match(p);
@@ -772,72 +780,205 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      // Run all four in parallel
-      await Promise.allSettled([collectGoogle(), collectWebsite(), collectBBB(), collectYelp()]);
-      console.log(`[OwnerDiscovery] Parallel collection done — ${chunks.length} total chunks`);
-
-      // ── Step 2a: Claude on Yelp/BBB first (directory pages — too noisy for regex) ──
-      const directoryChunks = chunks.filter(c => c.source === "Yelp Listing" || c.source === "BBB Listing");
-      const nonDirectoryChunks = chunks.filter(c => c.source !== "Yelp Listing" && c.source !== "BBB Listing");
-      if (anthropicKey && directoryChunks.length > 0) {
-        console.log(`[OwnerDiscovery] Claude (directory): trying ${directoryChunks.length} Yelp/BBB chunk(s) first`);
-        for (const chunk of directoryChunks) {
-          const result = await askClaude(chunk.text, chunk.source);
-          if (result) {
-            steps.push({ label: "Google Search", result: serpKey ? `Searched (${chunks.filter(c => c.source === "Google Search").length} result sets)` : "Skipped — API not configured" });
-            steps.push({ label: "Website scrape", result: contact.websiteUrl ? `Scraped ${chunks.filter(c => c.source.startsWith("Website")).length} pages` : "Skipped — no website on record" });
-            steps.push({ label: "BBB listing", result: chunks.some(c => c.source === "BBB Listing") ? "Scraped" : (serpKey ? "No BBB listing found" : "Skipped — API not configured") });
-            steps.push({ label: "Yelp listing", result: chunks.some(c => c.source === "Yelp Listing") ? "Scraped" : (serpKey ? "No Yelp listing found" : "Skipped — API not configured") });
-            steps.push({ label: "Claude AI", result: `Found "${result.firstName}" via ${chunk.source}` });
-            return res.json({ found: true, ...result, steps });
+      async function collectFacebook(): Promise<void> {
+        if (!serpKey) { console.log("[OwnerDiscovery] Facebook: skipped — no SERPAPI_API_KEY"); return; }
+        let fbUrl: string | null = null;
+        try {
+          const q = `site:facebook.com "${businessName}"${city ? ` "${city}"` : ""} grooming`;
+          const params = new URLSearchParams({ api_key: serpKey, engine: "google", q, num: "3" });
+          const r = await fetch(`https://serpapi.com/search?${params}`, { signal: AbortSignal.timeout(10000) });
+          if (r.ok) {
+            const data = await r.json() as any;
+            const fbResult = (data.organic_results || []).find((res: any) =>
+              res.link?.includes("facebook.com/") && !res.link?.includes("/search") && !res.link?.includes("/events")
+            );
+            if (fbResult) {
+              fbUrl = fbResult.link;
+              const snippet = [fbResult.title, fbResult.snippet].filter(Boolean).join(" ");
+              if (snippet.trim()) chunks.push({ text: snippet, source: "Facebook (search snippet)", priority: 1 });
+              console.log(`[OwnerDiscovery] Facebook: found page at ${fbUrl}`);
+            } else {
+              console.log("[OwnerDiscovery] Facebook: no page found in search results");
+            }
           }
-        }
-        console.log("[OwnerDiscovery] Claude (directory): no name found in Yelp/BBB chunks");
+        } catch (e: any) { console.log(`[OwnerDiscovery] Facebook search exception: ${e.message}`); }
+        if (!fbUrl) return;
+        try {
+          const r = await fetch(fbUrl, {
+            headers: { "User-Agent": "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)" },
+            signal: AbortSignal.timeout(12000),
+          });
+          if (!r.ok) { console.log(`[OwnerDiscovery] Facebook: HTTP ${r.status}`); return; }
+          const html = await r.text();
+          const ogTitle = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)/i)?.[1] ||
+                          html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["']/i)?.[1] || "";
+          const pageTitle = html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1] || "";
+          const combined = `${ogTitle} ${pageTitle} ${extractMeta(html)} ${stripHtml(html).slice(0, 2000)}`.trim();
+          if (combined.length > 30) {
+            chunks.push({ text: combined, source: "Facebook Page", priority: 0 });
+            console.log(`[OwnerDiscovery] Facebook: scraped ${combined.length} chars (ogTitle: "${ogTitle}")`);
+          }
+        } catch (e: any) { console.log(`[OwnerDiscovery] Facebook scrape exception: ${e.message}`); }
       }
 
-      // ── Step 2b: Regex scan on Google + Website chunks only ─────────────────
-      nonDirectoryChunks.sort((a, b) => a.priority - b.priority);
-      for (const chunk of nonDirectoryChunks) {
+      async function collectNextdoor(): Promise<void> {
+        if (!serpKey) { console.log("[OwnerDiscovery] Nextdoor: skipped — no SERPAPI_API_KEY"); return; }
+        let ndUrl: string | null = null;
+        try {
+          const q = `site:nextdoor.com "${businessName}"${city ? ` "${city}"` : ""}`;
+          const params = new URLSearchParams({ api_key: serpKey, engine: "google", q, num: "3" });
+          const r = await fetch(`https://serpapi.com/search?${params}`, { signal: AbortSignal.timeout(10000) });
+          if (r.ok) {
+            const data = await r.json() as any;
+            const ndResult = (data.organic_results || []).find((res: any) => res.link?.includes("nextdoor.com/"));
+            if (ndResult) {
+              ndUrl = ndResult.link;
+              const snippet = [ndResult.title, ndResult.snippet].filter(Boolean).join(" ");
+              if (snippet.trim()) chunks.push({ text: snippet, source: "Nextdoor (search snippet)", priority: 1 });
+              console.log(`[OwnerDiscovery] Nextdoor: found page at ${ndUrl}`);
+            } else { console.log("[OwnerDiscovery] Nextdoor: no page found"); }
+          }
+        } catch (e: any) { console.log(`[OwnerDiscovery] Nextdoor search exception: ${e.message}`); }
+        if (!ndUrl) return;
+        try {
+          const r = await fetch(ndUrl, {
+            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
+            signal: AbortSignal.timeout(12000),
+          });
+          if (!r.ok) { console.log(`[OwnerDiscovery] Nextdoor: HTTP ${r.status}`); return; }
+          const html = await r.text();
+          const ogTitle = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)/i)?.[1] ||
+                          html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["']/i)?.[1] || "";
+          const pageTitle = html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1] || "";
+          const combined = `${ogTitle} ${pageTitle} ${extractMeta(html)} ${stripHtml(html).slice(0, 2000)}`.trim();
+          if (combined.length > 30) {
+            chunks.push({ text: combined, source: "Nextdoor Page", priority: 0 });
+            console.log(`[OwnerDiscovery] Nextdoor: scraped ${combined.length} chars`);
+          }
+        } catch (e: any) { console.log(`[OwnerDiscovery] Nextdoor scrape exception: ${e.message}`); }
+      }
+
+      async function collectDailyGroomer(): Promise<void> {
+        if (!serpKey) { console.log("[OwnerDiscovery] Daily Groomer: skipped — no SERPAPI_API_KEY"); return; }
+        let dgUrl: string | null = null;
+        try {
+          const q = `site:thedailygroomer.com "${businessName}"`;
+          const params = new URLSearchParams({ api_key: serpKey, engine: "google", q, num: "3" });
+          const r = await fetch(`https://serpapi.com/search?${params}`, { signal: AbortSignal.timeout(10000) });
+          if (r.ok) {
+            const data = await r.json() as any;
+            const dgResult = (data.organic_results || []).find((res: any) => res.link?.includes("thedailygroomer.com/"));
+            if (dgResult) {
+              dgUrl = dgResult.link;
+              const snippet = [dgResult.title, dgResult.snippet].filter(Boolean).join(" ");
+              if (snippet.trim()) chunks.push({ text: snippet, source: "Daily Groomer (search snippet)", priority: 1 });
+              console.log(`[OwnerDiscovery] Daily Groomer: found listing at ${dgUrl}`);
+            } else { console.log("[OwnerDiscovery] Daily Groomer: no listing found"); }
+          }
+        } catch (e: any) { console.log(`[OwnerDiscovery] Daily Groomer search exception: ${e.message}`); }
+        if (!dgUrl) return;
+        try {
+          const r = await fetch(dgUrl, {
+            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
+            signal: AbortSignal.timeout(12000),
+          });
+          if (!r.ok) { console.log(`[OwnerDiscovery] Daily Groomer: HTTP ${r.status}`); return; }
+          const html = await r.text();
+          const ogTitle = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)/i)?.[1] ||
+                          html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["']/i)?.[1] || "";
+          const pageTitle = html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1] || "";
+          const combined = `${ogTitle} ${pageTitle} ${extractMeta(html)} ${stripHtml(html).slice(0, 3000)}`.trim();
+          if (combined.length > 30) {
+            chunks.push({ text: combined, source: "The Daily Groomer", priority: 0 });
+            console.log(`[OwnerDiscovery] Daily Groomer: scraped ${combined.length} chars`);
+          }
+        } catch (e: any) { console.log(`[OwnerDiscovery] Daily Groomer scrape exception: ${e.message}`); }
+      }
+
+      // Run all 7 collectors in parallel
+      await Promise.allSettled([
+        collectGoogle(), collectWebsite(), collectBBB(), collectYelp(),
+        collectFacebook(), collectNextdoor(), collectDailyGroomer(),
+      ]);
+      console.log(`[OwnerDiscovery] All sources collected — ${chunks.length} total chunks`);
+
+      // ── Step 2: Collect all name candidates from every chunk (regex + Claude) ─
+      const allCandidates: { name: string; source: string }[] = [];
+
+      // Regex on all chunks
+      for (const chunk of chunks) {
         const name = extractFirstName(chunk.text);
         if (name) {
-          const confidence = chunk.priority === 0 ? "high" : "medium";
           console.log(`[OwnerDiscovery] Regex HIT: "${name}" from ${chunk.source}`);
-          steps.push({ label: "Google Search", result: serpKey ? `Searched (${chunks.filter(c => c.source === "Google Search").length} result sets)` : "Skipped — API not configured" });
-          steps.push({ label: "Website scrape", result: contact.websiteUrl ? `Scraped ${chunks.filter(c => c.source.startsWith("Website")).length} pages` : "Skipped — no website on record" });
-          steps.push({ label: "BBB listing", result: chunks.some(c => c.source === "BBB Listing") ? "Scraped" : (serpKey ? "No BBB listing found" : "Skipped — API not configured") });
-          steps.push({ label: "Yelp listing", result: chunks.some(c => c.source === "Yelp Listing") ? "Scraped" : (serpKey ? "No Yelp listing found" : "Skipped — API not configured") });
-          steps.push({ label: "Pattern matching", result: `Found "${name}" via ${chunk.source}` });
-          return res.json({ found: true, firstName: name, source: chunk.source, confidence, steps });
+          allCandidates.push({ name, source: chunk.source });
         }
       }
-      console.log(`[OwnerDiscovery] Regex: no match in ${nonDirectoryChunks.length} Google/Website chunks`);
-      steps.push({ label: "Google Search", result: serpKey ? `Searched (${chunks.filter(c => c.source === "Google Search").length} result sets, no name found)` : "Skipped — API not configured" });
-      steps.push({ label: "Website scrape", result: contact.websiteUrl ? `Scraped ${chunks.filter(c => c.source.startsWith("Website")).length} pages, no name found` : "Skipped — no website on record" });
-      steps.push({ label: "BBB listing", result: serpKey ? (chunks.some(c => c.source === "BBB Listing") ? "Scraped, sent to AI" : "No BBB listing found") : "Skipped — API not configured" });
-      steps.push({ label: "Yelp listing", result: serpKey ? (chunks.some(c => c.source === "Yelp Listing") ? "Scraped, sent to AI" : "No Yelp listing found") : "Skipped — API not configured" });
-      steps.push({ label: "Pattern matching (regex)", result: "No owner pattern detected in Google/website text" });
 
-      // ── Step 3: Claude on remaining (Google + Website) chunks ─────────────────
-      if (anthropicKey && nonDirectoryChunks.length > 0) {
-        console.log(`[OwnerDiscovery] Trying Claude on ${nonDirectoryChunks.length} Google/Website chunks`);
-        for (const chunk of nonDirectoryChunks) {
-          const result = await askClaude(chunk.text, `${chunk.source} (AI)`);
+      // Claude on all chunks in parallel
+      if (anthropicKey && chunks.length > 0) {
+        console.log(`[OwnerDiscovery] Running Claude on ${chunks.length} chunks in parallel...`);
+        const claudeResults = await Promise.all(chunks.map(c => askClaude(c.text, c.source)));
+        for (const result of claudeResults) {
           if (result) {
-            steps.push({ label: "Claude AI", result: `Found "${result.firstName}"` });
-            return res.json({ found: true, ...result, steps });
+            console.log(`[OwnerDiscovery] Claude HIT: "${result.firstName}" from ${result.source}`);
+            allCandidates.push({ name: result.firstName, source: result.source });
           }
         }
-        steps.push({ label: "Claude AI", result: "Could not identify owner name from available text" });
-        console.log("[OwnerDiscovery] Claude: no name found");
-      } else if (!anthropicKey) {
-        steps.push({ label: "Claude AI", result: "Skipped — API key not configured" });
-        console.log("[OwnerDiscovery] Claude: skipped — no API key");
-      } else {
-        steps.push({ label: "Claude AI", result: "Skipped — no text collected to analyze" });
-        console.log("[OwnerDiscovery] Claude: skipped — no chunks");
       }
 
-      // ── Step 4: Email prefix heuristic ────────────────────────────────────
+      // ── Step 3: Tally votes — pick the name confirmed by the most sources ──
+      const votes = new Map<string, { count: number; uniqueSources: Set<string> }>();
+      for (const { name, source } of allCandidates) {
+        if (!votes.has(name)) votes.set(name, { count: 0, uniqueSources: new Set() });
+        const v = votes.get(name)!;
+        v.count++;
+        v.uniqueSources.add(source);
+      }
+
+      // Sort by unique source count first, total mentions second
+      const sortedVotes = [...votes.entries()].sort((a, b) => {
+        const srcDiff = b[1].uniqueSources.size - a[1].uniqueSources.size;
+        return srcDiff !== 0 ? srcDiff : b[1].count - a[1].count;
+      });
+
+      console.log(`[OwnerDiscovery] Candidates: ${[...votes.entries()].map(([n, v]) => `"${n}"(${v.uniqueSources.size} src, ${v.count} mentions)`).join(", ") || "none"}`);
+
+      // Build source steps
+      const SOURCE_DEFS = [
+        { key: "Google Search", label: "Google Search", needsSerp: true },
+        { key: "Website", label: "Website scrape", needsSerp: false, checkWebsite: true },
+        { key: "BBB Listing", label: "BBB listing", needsSerp: true },
+        { key: "Yelp Listing", label: "Yelp listing", needsSerp: true },
+        { key: "Facebook", label: "Facebook page", needsSerp: true },
+        { key: "Nextdoor", label: "Nextdoor page", needsSerp: true },
+        { key: "The Daily Groomer", label: "The Daily Groomer", needsSerp: true },
+      ];
+      for (const { key, label, needsSerp, checkWebsite } of SOURCE_DEFS) {
+        const found = chunks.some(c => c.source.includes(key));
+        if (needsSerp && !serpKey) {
+          steps.push({ label, result: "Skipped — API not configured" });
+        } else if (checkWebsite && !contact.websiteUrl) {
+          steps.push({ label, result: found ? `Scraped ${chunks.filter(c => c.source.startsWith("Website")).length} page(s)` : "Skipped — no website on record" });
+        } else {
+          steps.push({ label, result: found ? `Scraped` : "Not found" });
+        }
+      }
+
+      if (sortedVotes.length > 0) {
+        const [winner, { count, uniqueSources }] = sortedVotes[0];
+        const srcList = [...uniqueSources].join(", ");
+        const confidence = uniqueSources.size >= 3 ? "high" : uniqueSources.size >= 2 ? "medium" : "low";
+        const voteNote = uniqueSources.size >= 2
+          ? `"${winner}" confirmed by ${uniqueSources.size} sources: ${srcList}`
+          : `"${winner}" found via ${srcList}`;
+        steps.push({ label: anthropicKey ? "Pattern match + AI voting" : "Pattern matching", result: voteNote });
+        console.log(`[OwnerDiscovery] Winner: "${winner}" (${count} mention(s) across ${uniqueSources.size} source(s): ${srcList})`);
+        return res.json({ found: true, firstName: winner, source: srcList, confidence, votes: count, steps });
+      }
+
+      steps.push({ label: anthropicKey ? "Pattern match + AI voting" : "Pattern matching", result: "No owner name found across any source" });
+
+      // ── Step 4: Email prefix heuristic (last resort) ───────────────────────
       const email = contact.email || "";
       if (email) {
         const prefix = email.split("@")[0].toLowerCase().replace(/[^a-z]/g, "");
