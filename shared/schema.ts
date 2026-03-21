@@ -164,6 +164,9 @@ export const emailSequenceLogs = pgTable("email_sequence_logs", {
   customSubject: text("custom_subject"), // Per-contact email subject override (used for "custom" track)
   customBody: text("custom_body"),       // Per-contact email body override (used for "custom" track)
   errorMessage: text("error_message"),   // Stores the SendGrid error if status = failed
+  brevoMessageId: text("brevo_message_id"), // Brevo messageId returned after sending (for open/click tracking)
+  openedAt: timestamp("opened_at"),         // First time the email was opened (from Brevo events API)
+  clickedAt: timestamp("clicked_at"),       // First time a link was clicked (from Brevo events API)
   createdAt: timestamp("created_at").defaultNow(),
 });
 

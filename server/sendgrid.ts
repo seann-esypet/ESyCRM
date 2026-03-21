@@ -115,8 +115,9 @@ export async function sendEmail({
 
     if (res.status === 201 || res.status === 200) {
       const responseBody = await res.json() as any;
-      console.log(`[Brevo] Email sent successfully to ${to}. MessageId: ${responseBody.messageId}`);
-      return { success: true };
+      const messageId: string | undefined = responseBody.messageId;
+      console.log(`[Brevo] Email sent successfully to ${to}. MessageId: ${messageId}`);
+      return { success: true, messageId };
     } else {
       const errBody = await res.json().catch(() => ({})) as any;
       console.error(`[Brevo] Send failed — HTTP ${res.status}. Body:`, JSON.stringify(errBody));
@@ -144,7 +145,7 @@ export async function sendSequenceEmail({
   sequence: EmailSequence;
   customSubject?: string | null;
   customBody?: string | null;
-}): Promise<{ success: boolean; error?: string }> {
+}): Promise<{ success: boolean; messageId?: string; error?: string }> {
   if (!contact.email) {
     return { success: false, error: "Contact has no email address" };
   }

@@ -317,6 +317,7 @@ export async function processEmailSequences(): Promise<{
             {
               status: "sent",
               sentAt,
+              ...(result.messageId ? { brevoMessageId: result.messageId } : {}),
             },
             null
           );

@@ -2033,6 +2033,91 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Sync open/click analytics from Brevo for a single log entry
+  app.post("/api/email-sequence-logs/:id/sync-analytics", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const log = await storage.getEmailSequenceLogById(req.params.id, userId);
+      if (!log) return res.status(404).json({ message: "Log not found" });
+      if (!log.brevoMessageId) return res.json({ ...log, _syncNote: "No Brevo message ID stored for this email" });
+
+      const BREVO_API_KEY = process.env.BREVO_API_KEY;
+      if (!BREVO_API_KEY) return res.status(500).json({ message: "Brevo API key not configured" });
+
+      const mid = encodeURIComponent(log.brevoMessageId);
+      const [openRes, clickRes] = await Promise.all([
+        fetch(`https://api.brevo.com/v3/smtp/statistics/events?messageId=${mid}&event=opened&limit=10`, { headers: { "api-key": BREVO_API_KEY } }),
+        fetch(`https://api.brevo.com/v3/smtp/statistics/events?messageId=${mid}&event=clicks&limit=10`, { headers: { "api-key": BREVO_API_KEY } }),
+      ]);
+
+      const [openData, clickData] = await Promise.all([
+        openRes.ok ? openRes.json() as any : { events: [] },
+        clickRes.ok ? clickRes.json() as any : { events: [] },
+      ]);
+
+      const openEvents: any[] = openData?.events ?? [];
+      const clickEvents: any[] = clickData?.events ?? [];
+      const updates: Record<string, unknown> = {};
+      if (openEvents.length > 0 && !log.openedAt) {
+        updates.openedAt = new Date(openEvents[0].date);
+      }
+      if (clickEvents.length > 0 && !log.clickedAt) {
+        updates.clickedAt = new Date(clickEvents[0].date);
+      }
+
+      if (Object.keys(updates).length > 0) {
+        await storage.updateEmailSequenceLog(log.id, updates as any, null);
+      }
+      const updated = await storage.getEmailSequenceLogById(req.params.id, userId);
+      res.json(updated);
+    } catch (error) {
+      console.error("Error syncing analytics:", error);
+      res.status(500).json({ message: "Failed to sync analytics" });
+    }
+  });
+
+  // Bulk sync: refresh analytics for all sent sequence emails that have a brevoMessageId
+  app.post("/api/email-analytics/sync-all", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const BREVO_API_KEY = process.env.BREVO_API_KEY;
+      if (!BREVO_API_KEY) return res.status(500).json({ message: "Brevo API key not configured" });
+
+      const logs = await storage.getEmailSequenceLogs(userId);
+      const sentWithId = logs.filter(l => l.status === "sent" && l.brevoMessageId && (!l.openedAt || !l.clickedAt));
+
+      let updated = 0;
+      for (const log of sentWithId) {
+        try {
+          const mid = encodeURIComponent(log.brevoMessageId!);
+          const [openRes, clickRes] = await Promise.all([
+            fetch(`https://api.brevo.com/v3/smtp/statistics/events?messageId=${mid}&event=opened&limit=10`, { headers: { "api-key": BREVO_API_KEY } }),
+            fetch(`https://api.brevo.com/v3/smtp/statistics/events?messageId=${mid}&event=clicks&limit=10`, { headers: { "api-key": BREVO_API_KEY } }),
+          ]);
+          const [openData, clickData] = await Promise.all([
+            openRes.ok ? openRes.json() as any : { events: [] },
+            clickRes.ok ? clickRes.json() as any : { events: [] },
+          ]);
+          const openEvents: any[] = openData?.events ?? [];
+          const clickEvents: any[] = clickData?.events ?? [];
+          const updates: Record<string, unknown> = {};
+          if (openEvents.length > 0 && !log.openedAt) updates.openedAt = new Date(openEvents[0].date);
+          if (clickEvents.length > 0 && !log.clickedAt) updates.clickedAt = new Date(clickEvents[0].date);
+          if (Object.keys(updates).length > 0) {
+            await storage.updateEmailSequenceLog(log.id, updates as any, null);
+            updated++;
+          }
+        } catch (e) {
+          console.error(`[Analytics] Failed for log ${log.id}:`, e);
+        }
+      }
+      res.json({ checked: sentWithId.length, updated });
+    } catch (error) {
+      console.error("Error in bulk analytics sync:", error);
+      res.status(500).json({ message: "Failed to sync analytics" });
+    }
+  });
+
   app.post("/api/email-sequence-logs/initiate", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
