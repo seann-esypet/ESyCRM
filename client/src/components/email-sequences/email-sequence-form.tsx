@@ -22,7 +22,6 @@ interface EmailSequenceFormProps {
 }
 
 const LINKS: { label: string; html: string; description?: string }[] = [
-  { label: "Insert Sign-Up Link", html: '<a href="https://signup.esypet.net/">EsyPet Sign-Up</a>' },
   { label: "Visit EsyPet",        html: '<a href="https://software.esypet.com/">Visit EsyPet</a>' },
   { label: "Pricing",             html: '<a href="https://software.esypet.com/pricing/">Pricing</a>' },
   {

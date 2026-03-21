@@ -20,7 +20,6 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import type { Contact, EmailSequence, EmailSequenceLog } from "@shared/schema";
 
 const QUICK_LINKS: { label: string; html: string; description?: string }[] = [
-  { label: "Insert Sign-Up Link", html: '<a href="https://signup.esypet.net/">EsyPet Sign-Up</a>' },
   { label: "Visit EsyPet",        html: '<a href="https://software.esypet.com/">Visit EsyPet</a>' },
   { label: "Pricing",             html: '<a href="https://software.esypet.com/pricing/">Pricing</a>' },
   {
