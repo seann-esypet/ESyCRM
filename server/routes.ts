@@ -1432,10 +1432,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (dealData.stage === "qualified_lead" && deal.contactId) {
         const contact = await storage.getContact(deal.contactId, userId);
         if (contact) {
-          // Determine sequence track based on businessType + usesSoftware
           const bType = contact.businessType || "salon";
-          const softwareStatus = contact.usesSoftware === "Yes" ? "uses_competitor" : "no_software";
-          const sequenceTrack = `${bType}_${softwareStatus}`;
+          let sequenceTrack: string;
+          if (contact.usesSoftware === "Yes") {
+            // Check if we know the specific competitor — assign a targeted track when possible
+            const software = (contact.currentSoftware || "").toLowerCase();
+            if (software.includes("moego") || software.includes("moe go")) {
+              sequenceTrack = `${bType}_competitor_moego`;
+            } else {
+              sequenceTrack = `${bType}_uses_competitor`;
+            }
+          } else {
+            sequenceTrack = `${bType}_no_software`;
+          }
           await storage.updateContact(deal.contactId, { sequenceTrack }, userId);
         }
       }

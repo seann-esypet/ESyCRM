@@ -15,7 +15,7 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
 type BusinessType = "salon" | "mobile";
-type SubTrack = "no_software" | "uses_competitor" | "custom";
+type SubTrack = "no_software" | "uses_competitor" | "competitor_moego" | "custom";
 type SequenceTrack = `${BusinessType}_${SubTrack}`;
 
 export default function EmailSequences() {
@@ -29,20 +29,24 @@ export default function EmailSequences() {
   const [isQueueViewerOpen, setIsQueueViewerOpen] = useState(false);
   const { toast } = useToast();
 
-  const { data: salonNoSoftware,    isLoading: loadingSNS } = useQuery<EmailSequence[]>({ queryKey: ["/api/email-sequences?track=salon_no_software"] });
-  const { data: salonCompetitor,    isLoading: loadingSC  } = useQuery<EmailSequence[]>({ queryKey: ["/api/email-sequences?track=salon_uses_competitor"] });
-  const { data: salonCustom,        isLoading: loadingSCu } = useQuery<EmailSequence[]>({ queryKey: ["/api/email-sequences?track=salon_custom"] });
-  const { data: mobileNoSoftware,   isLoading: loadingMNS } = useQuery<EmailSequence[]>({ queryKey: ["/api/email-sequences?track=mobile_no_software"] });
-  const { data: mobileCompetitor,   isLoading: loadingMC  } = useQuery<EmailSequence[]>({ queryKey: ["/api/email-sequences?track=mobile_uses_competitor"] });
-  const { data: mobileCustom,       isLoading: loadingMCu } = useQuery<EmailSequence[]>({ queryKey: ["/api/email-sequences?track=mobile_custom"] });
+  const { data: salonNoSoftware,      isLoading: loadingSNS  } = useQuery<EmailSequence[]>({ queryKey: ["/api/email-sequences?track=salon_no_software"] });
+  const { data: salonCompetitor,      isLoading: loadingSC   } = useQuery<EmailSequence[]>({ queryKey: ["/api/email-sequences?track=salon_uses_competitor"] });
+  const { data: salonMoeGo,           isLoading: loadingSMG  } = useQuery<EmailSequence[]>({ queryKey: ["/api/email-sequences?track=salon_competitor_moego"] });
+  const { data: salonCustom,          isLoading: loadingSCu  } = useQuery<EmailSequence[]>({ queryKey: ["/api/email-sequences?track=salon_custom"] });
+  const { data: mobileNoSoftware,     isLoading: loadingMNS  } = useQuery<EmailSequence[]>({ queryKey: ["/api/email-sequences?track=mobile_no_software"] });
+  const { data: mobileCompetitor,     isLoading: loadingMC   } = useQuery<EmailSequence[]>({ queryKey: ["/api/email-sequences?track=mobile_uses_competitor"] });
+  const { data: mobileMoeGo,          isLoading: loadingMMG  } = useQuery<EmailSequence[]>({ queryKey: ["/api/email-sequences?track=mobile_competitor_moego"] });
+  const { data: mobileCustom,         isLoading: loadingMCu  } = useQuery<EmailSequence[]>({ queryKey: ["/api/email-sequences?track=mobile_custom"] });
 
   const trackData: Record<SequenceTrack, { data: EmailSequence[] | undefined; loading: boolean }> = {
-    salon_no_software:    { data: salonNoSoftware,  loading: loadingSNS },
-    salon_uses_competitor:{ data: salonCompetitor,  loading: loadingSC  },
-    salon_custom:         { data: salonCustom,      loading: loadingSCu },
-    mobile_no_software:   { data: mobileNoSoftware, loading: loadingMNS },
-    mobile_uses_competitor:{ data: mobileCompetitor,loading: loadingMC  },
-    mobile_custom:        { data: mobileCustom,     loading: loadingMCu },
+    salon_no_software:       { data: salonNoSoftware,  loading: loadingSNS  },
+    salon_uses_competitor:   { data: salonCompetitor,  loading: loadingSC   },
+    salon_competitor_moego:  { data: salonMoeGo,       loading: loadingSMG  },
+    salon_custom:            { data: salonCustom,      loading: loadingSCu  },
+    mobile_no_software:      { data: mobileNoSoftware, loading: loadingMNS  },
+    mobile_uses_competitor:  { data: mobileCompetitor, loading: loadingMC   },
+    mobile_competitor_moego: { data: mobileMoeGo,      loading: loadingMMG  },
+    mobile_custom:           { data: mobileCustom,     loading: loadingMCu  },
   };
 
   const activeTrack: SequenceTrack = `${activeBiz}_${activeSub}`;
@@ -282,9 +286,10 @@ export default function EmailSequences() {
               <TabsContent key={biz} value={biz} className="space-y-4">
                 {/* Inner: Software track */}
                 <Tabs value={activeSub} onValueChange={(v) => setActiveSub(v as SubTrack)} className="space-y-4">
-                  <TabsList className="grid w-full grid-cols-3 max-w-lg" data-testid={`tabs-sub-${biz}`}>
+                  <TabsList className="grid w-full grid-cols-4 max-w-2xl" data-testid={`tabs-sub-${biz}`}>
                     <TabsTrigger value="no_software" data-testid={`tab-${biz}-no-software`}>No Software</TabsTrigger>
-                    <TabsTrigger value="uses_competitor" data-testid={`tab-${biz}-uses-competitor`}>Uses Competitor</TabsTrigger>
+                    <TabsTrigger value="uses_competitor" data-testid={`tab-${biz}-uses-competitor`}>Uses Competitor - Any</TabsTrigger>
+                    <TabsTrigger value="competitor_moego" data-testid={`tab-${biz}-moego`}>MoeGo</TabsTrigger>
                     <TabsTrigger value="custom" data-testid={`tab-${biz}-general`}>General</TabsTrigger>
                   </TabsList>
 
@@ -300,12 +305,22 @@ export default function EmailSequences() {
 
                   <TabsContent value="uses_competitor" className="space-y-4">
                     <div className="p-4 bg-orange-50 dark:bg-orange-950 border border-orange-200 dark:border-orange-800 rounded-lg">
-                      <h3 className="font-semibold text-orange-900 dark:text-orange-100 mb-1">{biz === "salon" ? "Salon" : "Mobile"} — Uses Competitor Track</h3>
+                      <h3 className="font-semibold text-orange-900 dark:text-orange-100 mb-1">{biz === "salon" ? "Salon" : "Mobile"} — Uses Competitor (Any) Track</h3>
                       <p className="text-sm text-orange-800 dark:text-orange-200">
-                        Sent to {biz} contacts using competitor software (MoeGo, Vagaro, etc.). Focus on switching benefits and competitive advantages.
+                        Sent to {biz} contacts using any competitor software (Vagaro, 123Pets, Pawfinity, etc.). Focus on switching benefits and competitive advantages.
                       </p>
                     </div>
                     {renderSequenceTable(trackData[`${biz}_uses_competitor`].data, trackData[`${biz}_uses_competitor`].loading, `${biz}_uses_competitor`)}
+                  </TabsContent>
+
+                  <TabsContent value="competitor_moego" className="space-y-4">
+                    <div className="p-4 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg">
+                      <h3 className="font-semibold text-red-900 dark:text-red-100 mb-1">{biz === "salon" ? "Salon" : "Mobile"} — Uses MoeGo Track</h3>
+                      <p className="text-sm text-red-800 dark:text-red-200">
+                        Targeted specifically at {biz} contacts currently using MoeGo. Speak directly to MoeGo's limitations and EsyPet's advantages over it.
+                      </p>
+                    </div>
+                    {renderSequenceTable(trackData[`${biz}_competitor_moego`].data, trackData[`${biz}_competitor_moego`].loading, `${biz}_competitor_moego`)}
                   </TabsContent>
 
                   <TabsContent value="custom" className="space-y-4">
@@ -347,8 +362,9 @@ export default function EmailSequences() {
                   ({selectedSequence.sequenceTrack
                     .replace("salon_", "Salon — ")
                     .replace("mobile_", "Mobile — ")
+                    .replace("competitor_moego", "MoeGo")
+                    .replace("uses_competitor", "Uses Competitor - Any")
                     .replace("no_software", "No Software")
-                    .replace("uses_competitor", "Uses Competitor")
                     .replace("custom", "General")} Track)
                 </span>
               )}
@@ -382,8 +398,9 @@ export default function EmailSequences() {
                   {queueViewerSequence.sequenceTrack
                     .replace("salon_", "Salon — ")
                     .replace("mobile_", "Mobile — ")
+                    .replace("competitor_moego", "MoeGo")
+                    .replace("uses_competitor", "Uses Competitor - Any")
                     .replace("no_software", "No Software")
-                    .replace("uses_competitor", "Uses Competitor")
                     .replace("custom", "General")}
                 </Badge>
               )}

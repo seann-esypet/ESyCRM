@@ -1181,6 +1181,9 @@ export class DatabaseStorage implements IStorage {
         // - bare "custom" track → accepts any contact (full bypass)
         // - "salon_custom" / "mobile_custom" → accepts any salon/mobile contact
         //   regardless of whether they use software (these are the "General" tracks)
+        // - "salon_competitor_moego" / "mobile_competitor_moego" → accepts contacts
+        //   whose software is MoeGo (contactTrack = competitor_moego) OR any contact
+        //   on the generic uses_competitor track for that business type
         // - all other tracks → contact track must match exactly
         const seqTrack = sequence.sequenceTrack;
         const bType = contact.businessType === "mobile" ? "mobile" : "salon";
@@ -1196,6 +1199,18 @@ export class DatabaseStorage implements IStorage {
             failed.push({
               contactId,
               error: `This sequence is for ${seqBizType} businesses but contact is a ${bType} business`
+            });
+            continue;
+          }
+        } else if (seqTrack === `${bType}_competitor_moego`) {
+          // Competitor-specific track (e.g. MoeGo) — accepts contacts explicitly
+          // on this competitor track OR on the general uses_competitor track,
+          // as long as business type matches
+          const allowedTracks = [`${bType}_competitor_moego`, `${bType}_uses_competitor`];
+          if (!allowedTracks.includes(contactTrack)) {
+            failed.push({
+              contactId,
+              error: `Contact (track: ${contactTrack}) is not on a competitor track for ${bType}`
             });
             continue;
           }
