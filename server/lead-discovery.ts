@@ -444,9 +444,22 @@ function extractEmail(html: string): string | null {
 }
 
 function extractPhone(html: string): string | null {
-  const phonePattern = /(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/g;
-  const matches = html.match(phonePattern);
-  return matches ? matches[0] : null;
+  // Separators are REQUIRED between groups (not optional) so we don't accidentally
+  // match 10-digit tracking IDs, Unix timestamps, or URL parameters.
+  // Area code must start with 2-9 (US area codes never start with 0 or 1).
+  const phonePattern = /(?:\+?1[\s.-]?)?\(?([2-9]\d{2})\)?[\s.-]\d{3}[\s.-]\d{4}/g;
+
+  // Strip scripts and style blocks first to avoid matching noise
+  const cleaned = html
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, " ");
+
+  const matches = cleaned.match(phonePattern);
+  if (!matches) return null;
+
+  // Prefer matches that look like formatted phone numbers (have non-digit separators)
+  const formatted = matches.find(m => /[().\s-]/.test(m));
+  return formatted ?? matches[0];
 }
 
 function detectContactForm(html: string, baseUrl: string): string | null {
@@ -531,16 +544,22 @@ type ContactDetailSource = {
 };
 
 /** Shared email/phone extractor used by all contact detail sources */
-function extractContactDetails(text: string): ContactDetailResult {
+function extractContactDetails(rawText: string): ContactDetailResult {
   const NOISE_DOMAINS = [
     "example.com", "sentry.io", "wixpress.com", "w3.org", "schema.org",
     "cloudflare.com", "facebook.com", "yelp.com", "google.com",
     "bbb.org", "yellowpages.com", "angi.com", "thumbtack.com",
   ];
   const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
-  const PHONE_RE = /(?:\+1[\s.-]?)?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}/g;
+  // Separators required; area code must start with 2-9 (valid US area codes)
+  const PHONE_RE = /(?:\+?1[\s.-]?)?\(?([2-9]\d{2})\)?[\s.-]\d{3}[\s.-]\d{4}/g;
 
-  const decoded = text
+  // Strip script/style noise before parsing
+  const cleaned = rawText
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, " ");
+
+  const decoded = cleaned
     .replace(/&#64;|&commat;/gi, "@")
     .replace(/&#46;/gi, ".")
     .replace(/&amp;/gi, "&")
@@ -556,7 +575,8 @@ function extractContactDetails(text: string): ContactDetailResult {
   ) ?? undefined;
 
   const phoneMatches = decoded.match(PHONE_RE);
-  const phone = phoneMatches?.[0] ?? undefined;
+  // Prefer a formatted-looking match (has punctuation/spaces) over a bare digit string
+  const phone = (phoneMatches?.find(m => /[().\s-]/.test(m)) ?? phoneMatches?.[0]) as string | undefined;
 
   return { email, phone };
 }
