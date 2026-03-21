@@ -91,11 +91,14 @@ function contactDisplay(c: { firstName?: string | null; lastName?: string | null
 function buildEmailHtml(
   sentRows: SentRow[],
   replyRows: ReplyRow[],
+  analyticsRows: AnalyticsRow[],
   dateLabel?: string
 ): string {
   const date = dateLabel ?? todayLabel();
-  const totalSent    = sentRows.length;
-  const totalReplies = replyRows.length;
+  const totalSent     = sentRows.length;
+  const totalReplies  = replyRows.length;
+  const totalOpens    = analyticsRows.filter(r => r.openedAt).length;
+  const totalClicks   = analyticsRows.filter(r => r.clickedAt).length;
 
   const thStyle = `padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid #e5e7eb;background:#f9fafb;white-space:nowrap;`;
   const tdStyle = `padding:9px 12px;font-size:13px;color:#111827;border-bottom:1px solid #f3f4f6;vertical-align:top;`;
@@ -112,6 +115,27 @@ function buildEmailHtml(
         <td style="${tdStyle}">${escHtml(r.salespersonName)}</td>
         <td style="${tdStyle}"><span style="background:#dbeafe;color:#1d4ed8;padding:2px 7px;border-radius:4px;font-size:11px;white-space:nowrap;">Seq #${r.sequenceNumber} &middot; ${escHtml(r.track)}</span></td>
         <td style="${tdStyle}"><span style="background:#f3f4f6;color:#374151;padding:2px 7px;border-radius:4px;font-size:11px;white-space:nowrap;">${escHtml(r.dealStage)}</span></td>
+      </tr>`).join("");
+
+  // Analytics table rows — opens and clicks today
+  const analyticsTableRows = analyticsRows.length === 0
+    ? `<tr><td colspan="6" style="${tdMutedStyle}text-align:center;font-style:italic;">No opens or clicks recorded today</td></tr>`
+    : analyticsRows.map((r, i) => `
+      <tr style="background:${i % 2 === 0 ? '#ffffff' : '#fafafa'};">
+        <td style="${tdStyle}font-weight:500;">${escHtml(r.recipientName)}</td>
+        <td style="${tdMutedStyle}">${escHtml(r.businessName)}</td>
+        <td style="${tdMutedStyle}">${escHtml(r.location)}</td>
+        <td style="${tdStyle}">${escHtml(r.salespersonName)}</td>
+        <td style="${tdStyle}text-align:center;">
+          ${r.openedAt
+            ? `<span style="background:#ede9fe;color:#7c3aed;padding:2px 8px;border-radius:4px;font-size:11px;white-space:nowrap;">&#128065; ${formatDate(r.openedAt)}</span>`
+            : `<span style="color:#d1d5db;font-size:12px;">—</span>`}
+        </td>
+        <td style="${tdStyle}text-align:center;">
+          ${r.clickedAt
+            ? `<span style="background:#fef3c7;color:#b45309;padding:2px 8px;border-radius:4px;font-size:11px;white-space:nowrap;">&#128279; ${formatDate(r.clickedAt)}</span>`
+            : `<span style="color:#d1d5db;font-size:12px;">—</span>`}
+        </td>
       </tr>`).join("");
 
   // Reply table rows — shows the business contact who replied + the from email for clarity
@@ -158,13 +182,21 @@ function buildEmailHtml(
           <td style="background:#ffffff;border-left:1px solid #e5e7eb;border-right:1px solid #e5e7eb;">
             <table width="100%" cellpadding="0" cellspacing="0" border="0">
               <tr>
-                <td width="50%" class="card-td" style="padding:16px 24px;border-right:1px solid #e5e7eb;">
+                <td width="25%" class="card-td" style="padding:16px 20px;border-right:1px solid #e5e7eb;">
                   <p style="margin:0;color:#6b7280;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;font-family:Arial,sans-serif;">Emails Sent</p>
-                  <p style="margin:4px 0 0;color:#1d4ed8;font-size:36px;font-weight:700;line-height:1;font-family:Arial,sans-serif;">${totalSent}</p>
+                  <p style="margin:4px 0 0;color:#1d4ed8;font-size:32px;font-weight:700;line-height:1;font-family:Arial,sans-serif;">${totalSent}</p>
                 </td>
-                <td width="50%" class="card-td" style="padding:16px 24px;">
+                <td width="25%" class="card-td" style="padding:16px 20px;border-right:1px solid #e5e7eb;">
                   <p style="margin:0;color:#6b7280;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;font-family:Arial,sans-serif;">Replies Received</p>
-                  <p style="margin:4px 0 0;color:#16a34a;font-size:36px;font-weight:700;line-height:1;font-family:Arial,sans-serif;">${totalReplies}</p>
+                  <p style="margin:4px 0 0;color:#16a34a;font-size:32px;font-weight:700;line-height:1;font-family:Arial,sans-serif;">${totalReplies}</p>
+                </td>
+                <td width="25%" class="card-td" style="padding:16px 20px;border-right:1px solid #e5e7eb;">
+                  <p style="margin:0;color:#6b7280;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;font-family:Arial,sans-serif;">Emails Opened</p>
+                  <p style="margin:4px 0 0;color:#7c3aed;font-size:32px;font-weight:700;line-height:1;font-family:Arial,sans-serif;">${totalOpens}</p>
+                </td>
+                <td width="25%" class="card-td" style="padding:16px 20px;">
+                  <p style="margin:0;color:#6b7280;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;font-family:Arial,sans-serif;">Links Clicked</p>
+                  <p style="margin:4px 0 0;color:#b45309;font-size:32px;font-weight:700;line-height:1;font-family:Arial,sans-serif;">${totalClicks}</p>
                 </td>
               </tr>
             </table>
@@ -226,6 +258,35 @@ function buildEmailHtml(
           </table>
         </td></tr>
 
+        <!-- ANALYTICS SECTION -->
+        <tr><td style="padding-top:16px;">
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-radius:6px;overflow:hidden;border:1px solid #e5e7eb;">
+            <tr>
+              <td style="background:#faf5ff;padding:13px 16px;border-bottom:1px solid #e5e7eb;">
+                <span style="font-size:14px;font-weight:700;color:#6d28d9;font-family:Arial,sans-serif;">Email Opens &amp; Clicks Today &mdash; ${analyticsRows.length} emails</span>
+                <span style="margin-left:12px;font-size:11px;color:#8b5cf6;font-family:Arial,sans-serif;">${totalOpens} opened &middot; ${totalClicks} clicked</span>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+                  <thead>
+                    <tr>
+                      <th style="${thStyle}">Recipient</th>
+                      <th style="${thStyle}">Business</th>
+                      <th style="${thStyle}">City</th>
+                      <th style="${thStyle}">Salesperson</th>
+                      <th style="${thStyle}text-align:center;">&#128065; Opened</th>
+                      <th style="${thStyle}text-align:center;">&#128279; Clicked</th>
+                    </tr>
+                  </thead>
+                  <tbody>${analyticsTableRows}</tbody>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </td></tr>
+
         <!-- FOOTER -->
         <tr>
           <td style="padding:18px 0 8px;text-align:center;">
@@ -271,6 +332,16 @@ interface ReplyRow {
   salespersonName: string;
   dealStage: string;
   fromEmail: string;
+}
+
+interface AnalyticsRow {
+  recipientName: string;
+  businessName: string;
+  location: string;
+  salespersonName: string;
+  sequenceNumber: number;
+  openedAt: Date | null;
+  clickedAt: Date | null;
 }
 
 const TRACK_LABELS: Record<string, string> = {
@@ -381,13 +452,87 @@ export async function sendDailyReport(options?: { overrideStart?: Date; override
       };
     });
 
-    if (sentRows.length === 0 && replyRows.length === 0) {
+    // ── Sync Brevo analytics for recent sent emails ──────────────────────────
+    const BREVO_API_KEY = process.env.BREVO_API_KEY;
+    const recentCutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+    const logsToSync = allLogs.filter(l =>
+      l.status === "sent" &&
+      l.brevoMessageId &&
+      l.sentAt && new Date(l.sentAt) >= recentCutoff &&
+      (!l.openedAt || !l.clickedAt)
+    ).slice(0, 50);
+
+    if (BREVO_API_KEY && logsToSync.length > 0) {
+      console.log(`[DailyReport] Syncing analytics for ${logsToSync.length} emails from Brevo...`);
+      const BATCH = 10;
+      for (let i = 0; i < logsToSync.length; i += BATCH) {
+        const batch = logsToSync.slice(i, i + BATCH);
+        await Promise.all(batch.map(async (log) => {
+          try {
+            const mid = encodeURIComponent(log.brevoMessageId!);
+            const [openRes, clickRes] = await Promise.all([
+              fetch(`https://api.brevo.com/v3/smtp/statistics/events?messageId=${mid}&event=opened&limit=5`, {
+                headers: { "api-key": BREVO_API_KEY }
+              }),
+              fetch(`https://api.brevo.com/v3/smtp/statistics/events?messageId=${mid}&event=clicks&limit=5`, {
+                headers: { "api-key": BREVO_API_KEY }
+              }),
+            ]);
+            const [openData, clickData] = await Promise.all([
+              openRes.ok ? openRes.json() as any : { events: [] },
+              clickRes.ok ? clickRes.json() as any : { events: [] },
+            ]);
+            const openEvents: any[] = openData?.events ?? [];
+            const clickEvents: any[] = clickData?.events ?? [];
+            const updates: Record<string, unknown> = {};
+            if (openEvents.length > 0 && !log.openedAt) {
+              log.openedAt = new Date(openEvents[0].date) as any;
+              updates.openedAt = log.openedAt;
+            }
+            if (clickEvents.length > 0 && !log.clickedAt) {
+              log.clickedAt = new Date(clickEvents[0].date) as any;
+              updates.clickedAt = log.clickedAt;
+            }
+            if (Object.keys(updates).length > 0) {
+              await storage.updateEmailSequenceLog(log.id, updates as any, null);
+            }
+          } catch (syncErr) {
+            console.warn("[DailyReport] Analytics sync error for log", log.id, syncErr);
+          }
+        }));
+      }
+      console.log("[DailyReport] Analytics sync complete.");
+    }
+
+    // ── Opens & Clicks today ───────────────────────────────────────────────
+    const analyticsLogs = allLogs.filter(l => {
+      const opened = l.openedAt && new Date(l.openedAt) >= start && new Date(l.openedAt) <= end;
+      const clicked = l.clickedAt && new Date(l.clickedAt) >= start && new Date(l.clickedAt) <= end;
+      return opened || clicked;
+    });
+
+    const analyticsRows: AnalyticsRow[] = analyticsLogs.map(l => {
+      const contact = contactMap.get(l.contactId);
+      return {
+        recipientName: contact ? contactDisplay(contact) : "Unknown",
+        businessName: contact?.company || "—",
+        location: contact ? locationStr(contact) : "—",
+        salespersonName: getSalesperson(l.userId),
+        sequenceNumber: l.sequenceNumber,
+        openedAt: l.openedAt ? new Date(l.openedAt) : null,
+        clickedAt: l.clickedAt ? new Date(l.clickedAt) : null,
+      };
+    });
+
+    if (sentRows.length === 0 && replyRows.length === 0 && analyticsRows.length === 0) {
       console.log("[DailyReport] No activity today — sending report anyway.");
     }
 
     const reportLabel = options?.label ?? todayLabel();
-    const subject = `EsyPet CRM Daily Report — ${reportLabel} · ${sentRows.length} sent, ${replyRows.length} repl${replyRows.length === 1 ? "y" : "ies"}`;
-    const html = buildEmailHtml(sentRows, replyRows, reportLabel);
+    const totalOpens = analyticsRows.filter(r => r.openedAt).length;
+    const totalClicks = analyticsRows.filter(r => r.clickedAt).length;
+    const subject = `EsyPet CRM Daily Report — ${reportLabel} · ${sentRows.length} sent, ${replyRows.length} repl${replyRows.length === 1 ? "y" : "ies"}, ${totalOpens} open${totalOpens === 1 ? "" : "s"}`;
+    const html = buildEmailHtml(sentRows, replyRows, analyticsRows, reportLabel);
 
     // Send to all recipients
     const results = await Promise.allSettled(
