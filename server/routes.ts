@@ -183,9 +183,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Admin: trigger daily report immediately (test)
-  app.post('/api/admin/send-daily-report', isAdmin, async (_req, res) => {
+  app.post('/api/admin/send-daily-report', isAdmin, async (req: any, res) => {
     try {
-      sendDailyReport().catch(err => console.error("[DailyReport] Test send error:", err));
+      const { to } = req.body ?? {};
+      const overrideRecipients = to ? [to] : undefined;
+      sendDailyReport({ overrideRecipients }).catch(err => console.error("[DailyReport] Test send error:", err));
       res.json({ message: "Daily report queued — check email in a few seconds." });
     } catch (err) {
       res.status(500).json({ message: "Failed to trigger report" });

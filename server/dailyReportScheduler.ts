@@ -361,7 +361,7 @@ const TRACK_LABELS: Record<string, string> = {
 // Main report function
 // ────────────────────────────────────────────────────────────────────────────
 
-export async function sendDailyReport(options?: { overrideStart?: Date; overrideEnd?: Date; label?: string }): Promise<void> {
+export async function sendDailyReport(options?: { overrideStart?: Date; overrideEnd?: Date; label?: string; overrideRecipients?: string[] }): Promise<void> {
   console.log("[DailyReport] Building daily activity report...");
 
   const { start, end } = options?.overrideStart
@@ -535,16 +535,17 @@ export async function sendDailyReport(options?: { overrideStart?: Date; override
     const html = buildEmailHtml(sentRows, replyRows, analyticsRows, reportLabel);
 
     // Send to all recipients
+    const recipients = options?.overrideRecipients ?? REPORT_RECIPIENTS;
     const results = await Promise.allSettled(
-      REPORT_RECIPIENTS.map(to => sendEmail({ to, subject, body: html }))
+      recipients.map(to => sendEmail({ to, subject, body: html }))
     );
 
     results.forEach((r, i) => {
       if (r.status === "fulfilled" && r.value.success) {
-        console.log(`[DailyReport] Sent to ${REPORT_RECIPIENTS[i]}`);
+        console.log(`[DailyReport] Sent to ${recipients[i]}`);
       } else {
         const err = r.status === "rejected" ? r.reason : (r.value as any).error;
-        console.error(`[DailyReport] Failed to send to ${REPORT_RECIPIENTS[i]}:`, err);
+        console.error(`[DailyReport] Failed to send to ${recipients[i]}:`, err);
       }
     });
 
