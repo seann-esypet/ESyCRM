@@ -218,7 +218,7 @@ export default function AdminUsers() {
 
   if (currentUser?.role !== "admin") {
     return (
-      <div className="flex-1 overflow-auto p-6">
+      <div className="flex-1 min-h-0 overflow-auto p-6">
         <Card>
           <CardContent className="pt-6">
             <div className="text-center text-muted-foreground">
@@ -232,7 +232,7 @@ export default function AdminUsers() {
   }
 
   return (
-    <div className="flex-1 overflow-auto p-6" data-testid="admin-users-page">
+    <div className="flex-1 min-h-0 overflow-auto p-6" data-testid="admin-users-page">
       <div className="mb-6 flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2" data-testid="text-page-title">

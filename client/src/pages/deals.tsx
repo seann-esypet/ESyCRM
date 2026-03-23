@@ -481,7 +481,7 @@ export default function Deals() {
     return (
       <>
         <Header title="Pipeline" onAddNew={() => setIsFormOpen(true)} addButtonText="New Deal" />
-        <main className="flex-1 overflow-auto p-6 bg-muted/30">
+        <main className="flex-1 min-h-0 overflow-auto p-6 bg-muted/30">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {[...Array(6)].map((_, i) => (
               <Card key={i} className="animate-pulse">
@@ -576,7 +576,7 @@ export default function Deals() {
         }
       />
       
-      <main className="flex-1 overflow-auto p-6 bg-muted/30" data-testid="deals-content">
+      <main className="flex-1 min-h-0 overflow-auto p-6 bg-muted/30" data-testid="deals-content">
         {!deals?.length ? (
           <Card>
             <CardContent className="p-12 text-center">

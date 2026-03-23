@@ -195,7 +195,7 @@ export default function Reports() {
     return (
       <>
         <Header title="Reports" showAddButton={false} />
-        <main className="flex-1 overflow-auto p-6 bg-muted/30">
+        <main className="flex-1 min-h-0 overflow-auto p-6 bg-muted/30">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
             {[...Array(4)].map((_, i) => (
               <Card key={i} className="animate-pulse">
@@ -229,7 +229,7 @@ export default function Reports() {
       return (
         <>
           <Header title="Salesperson Rankings" showAddButton={false} />
-          <main className="flex-1 overflow-auto p-6 bg-muted/30">
+          <main className="flex-1 min-h-0 overflow-auto p-6 bg-muted/30">
             <Card>
               <CardContent className="p-12 text-center">
                 <Trophy className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
@@ -247,7 +247,7 @@ export default function Reports() {
     return (
       <>
         <Header title="Salesperson Rankings" showAddButton={false} />
-        <main className="flex-1 overflow-auto p-6 bg-muted/30" data-testid="admin-rankings-content">
+        <main className="flex-1 min-h-0 overflow-auto p-6 bg-muted/30" data-testid="admin-rankings-content">
           {/* Rankings Table */}
           <Card className="mb-8" data-testid="rankings-table">
             <CardHeader>
@@ -449,7 +449,7 @@ export default function Reports() {
     return (
       <>
         <Header title="Reports" showAddButton={false} />
-        <main className="flex-1 overflow-auto p-6 bg-muted/30">
+        <main className="flex-1 min-h-0 overflow-auto p-6 bg-muted/30">
           <Card>
             <CardContent className="p-12 text-center">
               <BarChart3 className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
@@ -468,7 +468,7 @@ export default function Reports() {
     <>
       <Header title="Reports" showAddButton={false} />
       
-      <main className="flex-1 overflow-auto p-6 bg-muted/30" data-testid="reports-content">
+      <main className="flex-1 min-h-0 overflow-auto p-6 bg-muted/30" data-testid="reports-content">
         {/* Key Metrics */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <Card data-testid="revenue-metric">
