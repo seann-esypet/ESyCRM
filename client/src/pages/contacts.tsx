@@ -279,7 +279,7 @@ export default function Contacts() {
         }
       />
       
-      <main className="flex-1 overflow-y-auto p-6 bg-muted/30" data-testid="contacts-content">
+      <main className="flex-1 overflow-auto p-6 bg-muted/30" data-testid="contacts-content">
         <div className="flex items-center gap-3 mb-4">
           <span className="text-sm font-medium text-muted-foreground">Uses Software:</span>
           {(["all", "Yes", "No", "Unknown"] as const).map((val) => (

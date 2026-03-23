@@ -273,7 +273,7 @@ export default function EmailSequences() {
         showAddButton={false}
       />
       
-      <main className="flex-1 overflow-y-auto p-6 bg-muted/30" data-testid="email-sequences-content">
+      <main className="flex-1 overflow-auto p-6 bg-muted/30" data-testid="email-sequences-content">
         <div className="max-w-6xl mx-auto">
           {/* Outer: Business Type */}
           <Tabs value={activeBiz} onValueChange={(v) => setActiveBiz(v as BusinessType)} className="space-y-4">
