@@ -1,5 +1,6 @@
 import { storage } from "./storage";
 import type { LeadDiscoveryJob, LeadDiscoveryResult, InsertLeadDiscoveryResult, SerpUsage, LeadDiscoveryConfig } from "@shared/schema";
+import { parseAddressString } from "@shared/utils";
 
 // New reduced query set for budget management
 const DEFAULT_QUERIES = [
@@ -954,13 +955,18 @@ export async function importResultsToCRM(
         continue;
       }
 
+      const parsedAddr = parseAddressString(leadResult.address);
+
       const contact = await storage.createContact({
         firstName: leadResult.firstName || leadResult.company?.split(" ")[0] || "Unknown",
         lastName: leadResult.lastName || leadResult.company?.split(" ").slice(1).join(" ") || "Business",
         email: leadResult.email,
         phone: leadResult.phone,
         phoneWork: leadResult.phone,
-        address: leadResult.address,
+        address: parsedAddr.street,
+        city: parsedAddr.city,
+        state: parsedAddr.state,
+        zipCode: parsedAddr.zip ?? leadResult.zipCode ?? null,
         company: leadResult.company,
         jobTitle: leadResult.jobTitle,
         usesSoftware: leadResult.usesSoftware ?? "Unknown",

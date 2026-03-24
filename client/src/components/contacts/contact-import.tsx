@@ -125,23 +125,77 @@ export default function ContactImport({ open, onOpenChange }: ContactImportProps
 
       setProgress(30);
 
-      const contacts = parsedData.map((row: any) => ({
-        firstName: (row.firstName || row.first_name || row.FirstName || "").trim(),
-        lastName: (row.lastName || row.last_name || row.LastName || "").trim(),
-        email: (row.email || row.Email || "").trim() || null,
-        phone: (row.phone || row.Phone || "").trim() || null,
-        company: (row.company || row.Company || "").trim() || null,
-        jobTitle: (row.jobTitle || row.job_title || row.JobTitle || "").trim() || null,
-        usesSoftware: (row["Currently uses software"] || row.usesSoftware || row.uses_software || "").trim() || null,
-        currentSoftware: (row["Software Used"] || row.currentSoftware || row.current_software || "").trim() || null,
-        bookingSoftwareUrl: (row["Booking Software URL"] || row.bookingSoftwareUrl || row.booking_software_url || "").trim() || null,
-        hasWebsite: (row["Has Web Site"] || row.hasWebsite || row.has_website || "").trim() || null,
-        websiteUrl: (row["Web Site Address"] || row.websiteUrl || row.website_url || "").trim() || null,
-        contactRequestFormUrl: (row["Contact Request Form URL"] || row.contactRequestFormUrl || row.contact_request_form_url || "").trim() || null,
-        leadSource: (row.source || row.leadSource || row.lead_source || "").trim() || null,
-        notes: (row.notes || row.Notes || "").trim() || null,
-        status: (row.status || row.Status || "active").trim() || "active",
-      }));
+      const contacts = parsedData.map((row: any) => {
+        // Read explicit city/state/zip columns first
+        const rawCity    = (row.city    || row.City    || row["City"]             || "").trim() || null;
+        const rawState   = (row.state   || row.State   || row["State"]            || "").trim() || null;
+        const rawZip     = (row.zipCode || row.zip     || row.Zip || row.ZipCode  || row["Zip Code"] || row["zip_code"] || "").trim() || null;
+        const rawAddress = (row.address || row.Address || row["Street Address"]   || "").trim() || null;
+
+        // If a full address was placed in the address column without separate city/state/zip,
+        // try to parse it out so each field lands in the right place.
+        let street = rawAddress;
+        let city   = rawCity;
+        let state  = rawState;
+        let zip    = rawZip;
+
+        if (rawAddress && (!rawCity || !rawState)) {
+          // Detect if the address column contains a full address (has a comma + 2-letter state)
+          const looksFullAddress = /,\s*[A-Za-z]{2}[\s,]/.test(rawAddress);
+          if (looksFullAddress) {
+            // Remove trailing ", USA" / ", United States"
+            const cleaned = rawAddress.replace(/,?\s*(USA|United States)\s*$/i, "").trim();
+
+            // "STREET, CITY, ST 00000"
+            const m1 = cleaned.match(/^(.+?),\s*(.+?),\s*([A-Za-z]{2})\s*(\d{5}(?:-\d{4})?)\s*$/);
+            if (m1) {
+              street = m1[1].trim() || null;
+              city   = city   || m1[2].trim() || null;
+              state  = state  || m1[3].toUpperCase();
+              zip    = zip    || m1[4].trim();
+            } else {
+              // "STREET, CITY ST 00000"
+              const m2 = cleaned.match(/^(.+?),\s*(.+?)\s+([A-Za-z]{2})\s+(\d{5}(?:-\d{4})?)\s*$/);
+              if (m2) {
+                street = m2[1].trim() || null;
+                city   = city   || m2[2].trim() || null;
+                state  = state  || m2[3].toUpperCase();
+                zip    = zip    || m2[4].trim();
+              } else {
+                // "STREET, CITY, ST"
+                const m3 = cleaned.match(/^(.+?),\s*(.+?),\s*([A-Za-z]{2})\s*$/);
+                if (m3) {
+                  street = m3[1].trim() || null;
+                  city   = city   || m3[2].trim() || null;
+                  state  = state  || m3[3].toUpperCase();
+                }
+              }
+            }
+          }
+        }
+
+        return {
+          firstName: (row.firstName || row.first_name || row.FirstName || "").trim(),
+          lastName: (row.lastName || row.last_name || row.LastName || "").trim(),
+          email: (row.email || row.Email || "").trim() || null,
+          phone: (row.phone || row.Phone || "").trim() || null,
+          company: (row.company || row.Company || "").trim() || null,
+          jobTitle: (row.jobTitle || row.job_title || row.JobTitle || "").trim() || null,
+          address: street,
+          city,
+          state,
+          zipCode: zip,
+          usesSoftware: (row["Currently uses software"] || row.usesSoftware || row.uses_software || "").trim() || null,
+          currentSoftware: (row["Software Used"] || row.currentSoftware || row.current_software || "").trim() || null,
+          bookingSoftwareUrl: (row["Booking Software URL"] || row.bookingSoftwareUrl || row.booking_software_url || "").trim() || null,
+          hasWebsite: (row["Has Web Site"] || row.hasWebsite || row.has_website || "").trim() || null,
+          websiteUrl: (row["Web Site Address"] || row.websiteUrl || row.website_url || "").trim() || null,
+          contactRequestFormUrl: (row["Contact Request Form URL"] || row.contactRequestFormUrl || row.contact_request_form_url || "").trim() || null,
+          leadSource: (row.source || row.leadSource || row.lead_source || "").trim() || null,
+          notes: (row.notes || row.Notes || "").trim() || null,
+          status: (row.status || row.Status || "active").trim() || "active",
+        };
+      });
 
       setParsedContacts(contacts);
       setProgress(50);
