@@ -114,6 +114,7 @@ const BOOKING_SOFTWARE_PATTERNS: Record<string, string> = {
   "setmore.com": "Setmore",
   "pawfinity.com": "Pawfinity",
   "gingr.app": "Gingr",
+  "gingrapp.com": "Gingr",
   "propetware.com": "ProPet",
   "gooseberry.app": "Gooseberry",
   "daysmart.com": "DaySmart",
