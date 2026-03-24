@@ -376,10 +376,12 @@ export async function crawlWebsite(url: string): Promise<{
 
 function detectBookingSoftware(html: string, baseUrl: string): { url: string; software: string } | null {
   const lowerHtml = html.toLowerCase();
-  
+
+  // Pass 1: scan the entire HTML (case-insensitive) for any known software domain.
+  // This catches direct links, iframe src attrs, JS variables, data- attrs, etc.
   for (const [pattern, software] of Object.entries(BOOKING_SOFTWARE_PATTERNS)) {
-    if (html.includes(pattern)) {
-      const urlMatch = html.match(new RegExp(`https?://[^"'\\s]*${pattern.replace(/\./g, "\\.")}[^"'\\s]*`, "i"));
+    if (lowerHtml.includes(pattern)) {
+      const urlMatch = html.match(new RegExp(`https?://[^"'\\s<>]*${pattern.replace(/\./g, "\\.")}[^"'\\s<>]*`, "i"));
       return {
         url: urlMatch ? urlMatch[0] : `https://${pattern}`,
         software,
@@ -387,23 +389,39 @@ function detectBookingSoftware(html: string, baseUrl: string): { url: string; so
     }
   }
 
-  const hrefPattern = /href=["']([^"']+)["'][^>]*>([^<]*(?:book|schedule|appointment)[^<]*)/gi;
+  // Pass 2: look for any href or src that links to a booking-related URL.
+  // Matches href AND src attributes (catches iframes and script-loaded widgets).
+  // The booking-keyword check scans a wider window around the attribute so nested
+  // tags (e.g. <a href="..."><span>Salon Booking</span></a>) still match.
+  const attrPattern = /(?:href|src)=["']([^"']+)["']/gi;
+  const bookingKeywords = /book|schedule|appointment|groom|salon|reserve/i;
+
   let match;
-  while ((match = hrefPattern.exec(html)) !== null) {
-    const href = match[1];
+  while ((match = attrPattern.exec(html)) !== null) {
+    const url = match[1];
+
+    // Check if the URL itself is a known software domain
     for (const [pattern, software] of Object.entries(BOOKING_SOFTWARE_PATTERNS)) {
-      if (href.includes(pattern)) {
-        return { url: href, software };
+      if (url.toLowerCase().includes(pattern)) {
+        return { url, software };
       }
     }
-    
-    if (href.startsWith("http")) {
-      return { url: href, software: "Unknown" };
-    } else if (href.startsWith("/")) {
-      try {
-        const base = new URL(baseUrl);
-        return { url: `${base.origin}${href}`, software: "Unknown" };
-      } catch {}
+
+    // For unknown URLs, only count them if they look like a booking link.
+    // Look at up to 300 chars before and after the attribute for booking context.
+    const windowStart = Math.max(0, match.index - 300);
+    const windowEnd   = Math.min(html.length, match.index + match[0].length + 300);
+    const context = html.slice(windowStart, windowEnd);
+
+    if (bookingKeywords.test(context)) {
+      if (url.startsWith("http")) {
+        return { url, software: "Unknown" };
+      } else if (url.startsWith("/")) {
+        try {
+          const base = new URL(baseUrl);
+          return { url: `${base.origin}${url}`, software: "Unknown" };
+        } catch {}
+      }
     }
   }
 
