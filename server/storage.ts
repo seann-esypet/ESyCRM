@@ -1203,10 +1203,20 @@ export class DatabaseStorage implements IStorage {
             continue;
           }
         } else if (seqTrack === `${bType}_competitor_moego`) {
-          // Competitor-specific track (e.g. MoeGo) — accepts contacts explicitly
-          // on this competitor track OR on the general uses_competitor track,
-          // as long as business type matches
+          // Competitor-specific track (MoeGo) — accepts contacts explicitly
+          // on this competitor track OR on the general uses_competitor track
           const allowedTracks = [`${bType}_competitor_moego`, `${bType}_uses_competitor`];
+          if (!allowedTracks.includes(contactTrack)) {
+            failed.push({
+              contactId,
+              error: `Contact (track: ${contactTrack}) is not on a competitor track for ${bType}`
+            });
+            continue;
+          }
+        } else if (seqTrack === `${bType}_competitor_groomerio`) {
+          // Competitor-specific track (Groomer.io) — accepts contacts explicitly
+          // on this competitor track OR on the general uses_competitor track
+          const allowedTracks = [`${bType}_competitor_groomerio`, `${bType}_uses_competitor`];
           if (!allowedTracks.includes(contactTrack)) {
             failed.push({
               contactId,

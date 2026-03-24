@@ -1439,6 +1439,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             const software = (contact.currentSoftware || "").toLowerCase();
             if (software.includes("moego") || software.includes("moe go")) {
               sequenceTrack = `${bType}_competitor_moego`;
+            } else if (software.includes("groomer.io") || software.includes("groomerio")) {
+              sequenceTrack = `${bType}_competitor_groomerio`;
             } else {
               sequenceTrack = `${bType}_uses_competitor`;
             }
