@@ -754,6 +754,292 @@ async function findContactDetailsFromAlternativeSources(
   return { email, emailSource, phone, phoneSource };
 }
 
+// Representative ZIP codes for each US state (largest city)
+export const STATE_ZIPS: Record<string, string> = {
+  AL: "35203", AK: "99501", AZ: "85001", AR: "72201", CA: "90001",
+  CO: "80202", CT: "06103", DE: "19801", FL: "33101", GA: "30301",
+  HI: "96813", ID: "83702", IL: "60601", IN: "46202", IA: "50309",
+  KS: "66101", KY: "40202", LA: "70112", ME: "04101", MD: "21201",
+  MA: "02101", MI: "48201", MN: "55401", MS: "39201", MO: "63101",
+  MT: "59601", NE: "68102", NV: "89101", NH: "03101", NJ: "07102",
+  NM: "87101", NY: "10001", NC: "28202", ND: "58102", OH: "44101",
+  OK: "73102", OR: "97201", PA: "19102", RI: "02903", SC: "29201",
+  SD: "57101", TN: "37201", TX: "77001", UT: "84101", VT: "05601",
+  VA: "23219", WA: "98101", WV: "25301", WI: "53202", WY: "82001",
+};
+
+const ALL_STATES = Object.keys(STATE_ZIPS);
+
+/** National search: runs one SERP query per state, stores up to maxPerState results, tracks progress. */
+export async function runNationalSearchJob(nationalJobId: string, userId: string): Promise<void> {
+  const MAX_PER_STATE = 3;
+  const MAX_HOURLY_RETRIES = 10;
+  const RETRY_WAIT_MS = 65_000; // wait 65 s when hourly limit hit
+
+  // Helper: terminate the national job as failed — atomic, never overwrites cancelled
+  async function failNationalJob(message: string, statesCompleted: number, leadsFound: number): Promise<void> {
+    await storage.updateNationalSearchJobIfNotCancelled(nationalJobId, {
+      status: "failed",
+      errorMessage: message,
+      completedAt: new Date(),
+      statesCompleted,
+      leadsFound,
+    });
+  }
+
+  try {
+    // FIX 1: Hard-stop if quota is already exhausted before we even begin
+    const initialQuota = await getSerpUsageStatus();
+    if (initialQuota.isQuotaReached) {
+      await failNationalJob("SERP quota reached — upgrade required to run a national search.", 0, 0);
+      return;
+    }
+
+    // FIX 3: Transition to running atomically — if the job was cancelled while pending,
+    // the conditional update returns undefined and we stop without resurrecting it.
+    const started = await storage.updateNationalSearchJobIfNotCancelled(nationalJobId, {
+      status: "running",
+      statesTotal: ALL_STATES.length,
+    });
+    if (!started) {
+      console.log(`[NationalSearch] Job ${nationalJobId} was cancelled before it could start — aborting.`);
+      return;
+    }
+
+    let totalLeadsFound = 0;
+    let statesCompleted = 0; // FIX 2: track completed states explicitly
+
+    for (let i = 0; i < ALL_STATES.length; i++) {
+      const stateCode = ALL_STATES[i];
+      const zip = STATE_ZIPS[stateCode];
+
+      // FIX 3: Check for cancellation at start of each state — never overwrite cancelled
+      const natJob = await storage.getNationalSearchJob(nationalJobId, null);
+      if (natJob?.status === "cancelled") {
+        console.log(`[NationalSearch] Cancelled at state ${stateCode}`);
+        return; // exit immediately without touching status
+      }
+
+      // Create a sub-job for this state (for result grouping)
+      const subJob = await storage.createLeadDiscoveryJob(
+        {
+          state: stateCode,
+          zipCodes: zip,
+          searchEngines: "google_maps",
+          maxResultsPerZip: MAX_PER_STATE,
+          status: "running",
+          totalZipCodes: 1,
+          processedZipCodes: 0,
+          totalBusinessesFound: 0,
+          duplicatesRemoved: 0,
+        },
+        userId,
+        nationalJobId
+      );
+
+      const queryTemplate = DEFAULT_QUERIES[0]; // "Dog Groomer in {STATE}, Zip code {ZIP}"
+      const query = queryTemplate.replace("{STATE}", stateCode).replace("{ZIP}", zip);
+
+      let stateFound = 0;
+      let retries = 0;
+      let stateSucceeded = false; // FIX 2: track terminal success explicitly
+
+      while (retries < MAX_HOURLY_RETRIES) {
+        // FIX 1: Re-check quota before each attempt — quota exhaustion is a hard stop
+        const quotaCheck = await getSerpUsageStatus();
+        if (quotaCheck.isQuotaReached) {
+          console.log(`[NationalSearch] Quota exhausted at state ${stateCode} — terminating job.`);
+          await storage.updateLeadDiscoveryJob(subJob.id, {
+            status: "failed",
+            errorMessage: "SERP quota reached — national search stopped.",
+            completedAt: new Date(),
+          }, null);
+          await failNationalJob(
+            `SERP quota reached after ${statesCompleted} of ${ALL_STATES.length} states. Export what was found so far.`,
+            statesCompleted,
+            totalLeadsFound,
+          );
+          return; // stop — don't mark as completed
+        }
+
+        // Check hourly rate limit
+        const canRun = await canRunDiscovery(userId, 1, true);
+        if (!canRun.allowed) {
+          console.log(`[NationalSearch] Hourly rate limit for ${stateCode}, waiting ${RETRY_WAIT_MS / 1000}s… (retry ${retries + 1}/${MAX_HOURLY_RETRIES})`);
+          await new Promise(resolve => setTimeout(resolve, RETRY_WAIT_MS));
+          retries++;
+          continue;
+        }
+
+        try {
+          const { results: searchResults } = await searchWithSerpApi(query, zip, stateCode, queryTemplate);
+          const existingResults: import("@shared/schema").LeadDiscoveryResult[] = [];
+
+          for (const result of searchResults) {
+            if (stateFound >= MAX_PER_STATE) break;
+            if (!result.title || !result.link) continue;
+
+            const businessData: BusinessData = {
+              company: result.title,
+              websiteUrl: result.link.startsWith("http") ? result.link : undefined,
+              phone: result.phone,
+              address: result.address,
+            };
+
+            if (isDuplicate(businessData, existingResults)) continue;
+
+            // Crawl website for software detection
+            let crawlData: Awaited<ReturnType<typeof crawlWebsite>> | null = null;
+            let crawlStatus = "pending";
+            let crawlError: string | undefined;
+            if (businessData.websiteUrl) {
+              try {
+                crawlData = await crawlWebsite(businessData.websiteUrl);
+                crawlStatus = "completed";
+              } catch (err) {
+                crawlStatus = "failed";
+                crawlError = err instanceof Error ? err.message : "Unknown error";
+              }
+            }
+
+            const knownChain = checkKnownChain(businessData.company);
+            let usesSoftware: string;
+            let currentSoftware: string | null = crawlData?.softwareName || null;
+
+            if (crawlData?.bookingUrl) {
+              usesSoftware = "Yes";
+            } else if (knownChain) {
+              usesSoftware = "Yes";
+              currentSoftware = currentSoftware || knownChain.software;
+            } else if (crawlStatus === "failed" || !businessData.websiteUrl) {
+              usesSoftware = "Unknown";
+            } else if (hasSchedulingLanguage(crawlData?.html ?? "")) {
+              usesSoftware = "Unknown";
+            } else {
+              usesSoftware = "No";
+            }
+
+            const leadResult: import("@shared/schema").InsertLeadDiscoveryResult = {
+              jobId: subJob.id,
+              company: businessData.company,
+              phone: crawlData?.phone || businessData.phone || null,
+              email: crawlData?.email || null,
+              address: businessData.address || null,
+              firstName: crawlData?.ownerName?.split(" ")[0] || null,
+              lastName: crawlData?.ownerName?.split(" ").slice(1).join(" ") || null,
+              jobTitle: crawlData?.jobTitle || null,
+              hasWebsite: businessData.websiteUrl ? "Yes" : "No",
+              websiteUrl: businessData.websiteUrl || null,
+              bookingSoftwareUrl: crawlData?.bookingUrl || null,
+              currentSoftware,
+              usesSoftware,
+              contactRequestFormUrl: crawlData?.contactFormUrl || null,
+              leadSource: "Google Maps",
+              notes: crawlError ? `Crawl failed: ${crawlError}` : null,
+              zipCode: zip,
+              searchQuery: query,
+              isDuplicate: "false",
+              isImported: "false",
+              crawlStatus,
+              crawlError,
+            };
+
+            const saved = await storage.createLeadDiscoveryResult(leadResult, userId);
+            existingResults.push(saved);
+            stateFound++;
+            totalLeadsFound++;
+          }
+
+          await storage.updateLeadDiscoveryJob(subJob.id, {
+            status: "completed",
+            completedAt: new Date(),
+            processedZipCodes: 1,
+            totalBusinessesFound: stateFound,
+          }, null);
+
+          stateSucceeded = true;
+          break; // success — move to next state
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+
+          // FIX 1: Quota errors are a hard stop — do not retry
+          if (msg.toLowerCase().includes("quota")) {
+            console.log(`[NationalSearch] Quota error at ${stateCode} — terminating.`);
+            await storage.updateLeadDiscoveryJob(subJob.id, {
+              status: "failed",
+              errorMessage: msg,
+              completedAt: new Date(),
+            }, null);
+            await failNationalJob(
+              `SERP quota reached after ${statesCompleted} of ${ALL_STATES.length} states. Export what was found so far.`,
+              statesCompleted,
+              totalLeadsFound,
+            );
+            return;
+          }
+
+          if (msg.includes("Hourly SERP limit") || msg.includes("hourly")) {
+            console.log(`[NationalSearch] SERP hourly error at ${stateCode}, waiting…`);
+            await new Promise(resolve => setTimeout(resolve, RETRY_WAIT_MS));
+            retries++;
+          } else {
+            // Non-retryable, non-quota error: mark sub-job failed and move on
+            console.error(`[NationalSearch] Search failed for ${stateCode}:`, msg);
+            await storage.updateLeadDiscoveryJob(subJob.id, {
+              status: "failed",
+              errorMessage: msg,
+              completedAt: new Date(),
+            }, null);
+            break;
+          }
+        }
+      }
+
+      // FIX 2: Only count state as completed when it had a definite terminal outcome.
+      // Retry-exhausted states leave stateSucceeded=false and are NOT counted.
+      if (!stateSucceeded && retries >= MAX_HOURLY_RETRIES) {
+        const errorMsg = `Hourly rate-limit retry limit exceeded for state ${stateCode} — state skipped.`;
+        console.error(`[NationalSearch] ${errorMsg}`);
+        await storage.updateLeadDiscoveryJob(subJob.id, {
+          status: "failed",
+          errorMessage: errorMsg,
+          completedAt: new Date(),
+        }, null);
+        // Update leads count but don't increment statesCompleted
+        await storage.updateNationalSearchJob(nationalJobId, { leadsFound: totalLeadsFound });
+      } else if (stateSucceeded) {
+        statesCompleted++;
+        await storage.updateNationalSearchJob(nationalJobId, { statesCompleted, leadsFound: totalLeadsFound });
+      } else {
+        // Non-retryable failure — still count as "processed" so progress advances
+        statesCompleted++;
+        await storage.updateNationalSearchJob(nationalJobId, { statesCompleted, leadsFound: totalLeadsFound });
+      }
+
+      // Small polite delay between states
+      if (i < ALL_STATES.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 1200));
+      }
+    }
+
+    // FIX 3: Use atomic conditional update — silently skips if job was cancelled
+    await storage.updateNationalSearchJobIfNotCancelled(nationalJobId, {
+      status: "completed",
+      completedAt: new Date(),
+      statesCompleted,
+      leadsFound: totalLeadsFound,
+    });
+  } catch (error) {
+    console.error("[NationalSearch] Unhandled error:", error);
+    // FIX 3: Never overwrite cancelled status (atomic)
+    await failNationalJob(
+      error instanceof Error ? error.message : "Unknown error",
+      0,
+      0,
+    );
+  }
+}
+
 export async function runLeadDiscoveryJob(jobId: string, userId: string): Promise<void> {
   const job = await storage.getLeadDiscoveryJob(jobId, null);
   if (!job) {

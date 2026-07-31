@@ -22,6 +22,7 @@ import {
   type InsertDealTask,
   type InboxMessage,
   type InsertInboxMessage,
+  type NationalSearchJob,
   type LeadDiscoveryJob,
   type InsertLeadDiscoveryJob,
   type LeadDiscoveryResult,
@@ -47,6 +48,7 @@ import {
   emailSequences,
   emailSequenceLogs,
   inboxMessages,
+  nationalSearchJobs,
   leadDiscoveryJobs,
   leadDiscoveryResults,
   serpUsage,
@@ -199,10 +201,20 @@ export interface IStorage {
   getDealsWithUnreadReplies(userId: string | null): Promise<string[]>;
   markRepliesReadForDeal(dealId: string, userId: string | null): Promise<void>;
 
+  // National Search Jobs
+  createNationalSearchJob(userId: string): Promise<NationalSearchJob>;
+  getNationalSearchJob(id: string, userId: string | null): Promise<NationalSearchJob | undefined>;
+  getNationalSearchJobs(userId: string | null): Promise<NationalSearchJob[]>;
+  updateNationalSearchJob(id: string, updates: Partial<NationalSearchJob>): Promise<NationalSearchJob | undefined>;
+  /** Same as updateNationalSearchJob but silently skips the write if the current status is 'cancelled'. */
+  updateNationalSearchJobIfNotCancelled(id: string, updates: Partial<NationalSearchJob>): Promise<NationalSearchJob | undefined>;
+  getActiveNationalSearchJob(userId: string): Promise<NationalSearchJob | undefined>;
+  getNationalJobResults(nationalJobId: string, userId: string | null): Promise<Array<LeadDiscoveryResult & { state: string }>>;
+
   // Lead Discovery
   getLeadDiscoveryJobs(userId: string | null): Promise<LeadDiscoveryJob[]>;
   getLeadDiscoveryJob(id: string, userId: string | null): Promise<LeadDiscoveryJob | undefined>;
-  createLeadDiscoveryJob(job: InsertLeadDiscoveryJob, userId: string): Promise<LeadDiscoveryJob>;
+  createLeadDiscoveryJob(job: InsertLeadDiscoveryJob, userId: string, nationalJobId?: string): Promise<LeadDiscoveryJob>;
   updateLeadDiscoveryJob(id: string, job: Partial<LeadDiscoveryJob>, userId: string | null): Promise<LeadDiscoveryJob | undefined>;
   deleteLeadDiscoveryJob(id: string, userId: string | null): Promise<boolean>;
   getLeadDiscoveryResults(jobId: string, userId: string | null): Promise<LeadDiscoveryResult[]>;
@@ -1416,6 +1428,101 @@ export class DatabaseStorage implements IStorage {
       .where(and(eq(inboxMessages.contactId, deal.contactId), eq(inboxMessages.isRead, "false")));
   }
 
+  // National Search Job operations
+  /**
+   * Atomically creates a national search job — acquires a user-scoped advisory lock
+   * inside a transaction so concurrent requests are serialized and only one succeeds.
+   * Returns null if a job is already active (caller should respond 409).
+   */
+  async createNationalSearchJob(userId: string): Promise<NationalSearchJob | null> {
+    return await db.transaction(async (tx) => {
+      // Advisory lock scoped to this user — serializes concurrent create requests atomically.
+      // The lock is automatically released when the transaction ends.
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${userId}))`);
+
+      // Now check for an existing active job — no race possible due to the lock
+      const [existing] = await tx
+        .select()
+        .from(nationalSearchJobs)
+        .where(and(
+          eq(nationalSearchJobs.userId, userId),
+          or(eq(nationalSearchJobs.status, "running"), eq(nationalSearchJobs.status, "pending")),
+        ))
+        .limit(1);
+
+      if (existing) return null; // caller returns 409
+
+      const [job] = await tx.insert(nationalSearchJobs).values({ userId }).returning();
+      return job;
+    });
+  }
+
+  async getNationalSearchJob(id: string, userId: string | null): Promise<NationalSearchJob | undefined> {
+    const whereClause = userId === null
+      ? eq(nationalSearchJobs.id, id)
+      : and(eq(nationalSearchJobs.id, id), eq(nationalSearchJobs.userId, userId));
+    const [job] = await db.select().from(nationalSearchJobs).where(whereClause);
+    return job;
+  }
+
+  async getNationalSearchJobs(userId: string | null): Promise<NationalSearchJob[]> {
+    const whereClause = userId === null ? undefined : eq(nationalSearchJobs.userId, userId);
+    const query = db.select().from(nationalSearchJobs);
+    if (whereClause) return await query.where(whereClause).orderBy(desc(nationalSearchJobs.createdAt));
+    return await query.orderBy(desc(nationalSearchJobs.createdAt));
+  }
+
+  async updateNationalSearchJob(id: string, updates: Partial<NationalSearchJob>): Promise<NationalSearchJob | undefined> {
+    const [updated] = await db.update(nationalSearchJobs).set(updates).where(eq(nationalSearchJobs.id, id)).returning();
+    return updated;
+  }
+
+  async updateNationalSearchJobIfNotCancelled(id: string, updates: Partial<NationalSearchJob>): Promise<NationalSearchJob | undefined> {
+    // Atomic conditional update — only writes when status is NOT already 'cancelled'
+    const [updated] = await db
+      .update(nationalSearchJobs)
+      .set(updates)
+      .where(and(eq(nationalSearchJobs.id, id), ne(nationalSearchJobs.status, "cancelled")))
+      .returning();
+    return updated;
+  }
+
+  async getActiveNationalSearchJob(userId: string): Promise<NationalSearchJob | undefined> {
+    const [job] = await db
+      .select()
+      .from(nationalSearchJobs)
+      .where(and(
+        eq(nationalSearchJobs.userId, userId),
+        or(eq(nationalSearchJobs.status, "running"), eq(nationalSearchJobs.status, "pending")),
+      ))
+      .limit(1);
+    return job;
+  }
+
+  async getNationalJobResults(nationalJobId: string, userId: string | null): Promise<Array<LeadDiscoveryResult & { state: string }>> {
+    // Fetch all sub-jobs belonging to this national job
+    const subJobs = await db
+      .select()
+      .from(leadDiscoveryJobs)
+      .where(eq(leadDiscoveryJobs.nationalJobId, nationalJobId));
+
+    if (subJobs.length === 0) return [];
+
+    const subJobIds = subJobs.map(j => j.id);
+    const whereClause = userId === null
+      ? inArray(leadDiscoveryResults.jobId, subJobIds)
+      : and(inArray(leadDiscoveryResults.jobId, subJobIds), eq(leadDiscoveryResults.userId, userId));
+
+    const results = await db
+      .select()
+      .from(leadDiscoveryResults)
+      .where(whereClause)
+      .orderBy(leadDiscoveryResults.createdAt);
+
+    const jobStateMap = new Map(subJobs.map(j => [j.id, j.state]));
+    return results.map(r => ({ ...r, state: jobStateMap.get(r.jobId) || '' }));
+  }
+
   // Lead Discovery operations
   async getLeadDiscoveryJobs(userId: string | null): Promise<LeadDiscoveryJob[]> {
     const whereClause = userId === null
@@ -1441,7 +1548,7 @@ export class DatabaseStorage implements IStorage {
     return job;
   }
 
-  async createLeadDiscoveryJob(job: InsertLeadDiscoveryJob, userId: string): Promise<LeadDiscoveryJob> {
+  async createLeadDiscoveryJob(job: InsertLeadDiscoveryJob, userId: string, nationalJobId?: string): Promise<LeadDiscoveryJob> {
     const zipCodeList = job.zipCodes.split(',').map(z => z.trim()).filter(z => z);
     const [newJob] = await db
       .insert(leadDiscoveryJobs)
@@ -1449,6 +1556,7 @@ export class DatabaseStorage implements IStorage {
         ...job,
         userId,
         totalZipCodes: zipCodeList.length,
+        ...(nationalJobId ? { nationalJobId } : {}),
       })
       .returning();
     return newJob;

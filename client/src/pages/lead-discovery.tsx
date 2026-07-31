@@ -18,8 +18,10 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
-import { Search, Plus, Download, Upload, Trash2, Eye, AlertCircle, CheckCircle, Clock, XCircle, RefreshCw, Settings, Pencil, List } from "lucide-react";
-import type { LeadDiscoveryJob, LeadDiscoveryResult } from "@shared/schema";
+import { Search, Plus, Download, Upload, Trash2, Eye, AlertCircle, CheckCircle, Clock, XCircle, RefreshCw, Settings, Pencil, List, Globe } from "lucide-react";
+import type { LeadDiscoveryJob, LeadDiscoveryResult, NationalSearchJob } from "@shared/schema";
+
+type NationalResultRow = LeadDiscoveryResult & { state: string };
 
 interface LeadDiscoveryConfig {
   serpApiConfigured: boolean;
@@ -108,6 +110,64 @@ export default function LeadDiscovery() {
     queryKey: ["/api/lead-discovery/all-results"],
     enabled: activeTab === "all-results",
   });
+
+  // ── National Search state ──────────────────────────────────────────────────
+  const [nationalStateFilter, setNationalStateFilter] = useState<string>("all");
+
+  const { data: nationalJobs = [], refetch: refetchNationalJobs } = useQuery<NationalSearchJob[]>({
+    queryKey: ["/api/lead-discovery/national-jobs"],
+    refetchInterval: activeTab === "national" ? 4000 : false,
+  });
+
+  const activeNationalJob = nationalJobs.find(j => j.status === "running" || j.status === "pending");
+  const latestNationalJob = nationalJobs[0] ?? null;
+
+  const { data: nationalResults = [], isLoading: nationalResultsLoading } = useQuery<NationalResultRow[]>({
+    queryKey: ["/api/lead-discovery/national-job", latestNationalJob?.id, "results"],
+    queryFn: async () => {
+      if (!latestNationalJob) return [];
+      const res = await apiRequest("GET", `/api/lead-discovery/national-job/${latestNationalJob.id}/results`);
+      return res.json();
+    },
+    enabled: !!latestNationalJob && activeTab === "national",
+    refetchInterval: activeNationalJob ? 6000 : false,
+  });
+
+  const startNationalJobMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/lead-discovery/national-job");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/lead-discovery/national-jobs"] });
+      toast({ title: "National search started", description: "Searching all 50 states — this will take a while. Progress updates every few seconds." });
+    },
+    onError: (error: any) => {
+      toast({ title: "Error", description: error.message || "Failed to start national search", variant: "destructive" });
+    },
+  });
+
+  const cancelNationalJobMutation = useMutation({
+    mutationFn: async (jobId: string) => {
+      const res = await apiRequest("POST", `/api/lead-discovery/national-job/${jobId}/cancel`);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/lead-discovery/national-jobs"] });
+      toast({ title: "Cancellation requested" });
+    },
+  });
+
+  const handleNationalExport = (jobId: string) => {
+    window.open(`/api/lead-discovery/national-job/${jobId}/export`, "_blank");
+  };
+
+  const filteredNationalResults = nationalStateFilter === "all"
+    ? nationalResults
+    : nationalResults.filter(r => r.state === nationalStateFilter);
+
+  const nationalStatesPresent = Array.from(new Set(nationalResults.map(r => r.state))).sort();
+  // ──────────────────────────────────────────────────────────────────────────
 
   const createJobMutation = useMutation({
     mutationFn: async (data: { state: string; zipCodes: string }) => {
@@ -395,6 +455,15 @@ export default function LeadDiscovery() {
               <TabsTrigger value="all-results" data-testid="tab-all-results">
                 <List className="h-3.5 w-3.5 mr-1.5" />
                 All Results
+              </TabsTrigger>
+              <TabsTrigger value="national" data-testid="tab-national">
+                <Globe className="h-3.5 w-3.5 mr-1.5" />
+                National Search
+                {activeNationalJob && (
+                  <span className="ml-1.5 inline-flex items-center justify-center rounded-full bg-blue-500 px-1.5 py-0.5 text-[10px] text-white leading-none">
+                    {activeNationalJob.statesCompleted}/{activeNationalJob.statesTotal}
+                  </span>
+                )}
               </TabsTrigger>
             </TabsList>
 
@@ -821,6 +890,234 @@ export default function LeadDiscovery() {
             )}
           </TabsContent>
         </Tabs>
+
+          {/* ── National Search Tab ─────────────────────────────────────── */}
+          <TabsContent value="national" className="space-y-4">
+            {/* Header row */}
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="font-semibold text-lg">National Search — All 50 States</h3>
+                <p className="text-sm text-muted-foreground">
+                  Searches for 3 grooming businesses in every state at once, then exports the full list as Excel.
+                </p>
+              </div>
+              <div className="flex gap-2 flex-shrink-0">
+                {latestNationalJob && (latestNationalJob.status === "completed" || latestNationalJob.status === "cancelled") && (
+                  <Button
+                    variant="outline"
+                    onClick={() => handleNationalExport(latestNationalJob.id)}
+                    data-testid="btn-national-export"
+                  >
+                    <Download className="h-4 w-4 mr-2" />
+                    Export All to Excel
+                  </Button>
+                )}
+                {activeNationalJob ? (
+                  <Button
+                    variant="outline"
+                    onClick={() => cancelNationalJobMutation.mutate(activeNationalJob.id)}
+                    disabled={cancelNationalJobMutation.isPending}
+                  >
+                    <XCircle className="h-4 w-4 mr-2" />
+                    Cancel Search
+                  </Button>
+                ) : (
+                  <Button
+                    onClick={() => startNationalJobMutation.mutate()}
+                    disabled={startNationalJobMutation.isPending || !config?.serpApiConfigured || config?.usage?.isQuotaReached}
+                    data-testid="btn-start-national-search"
+                  >
+                    <Globe className="h-4 w-4 mr-2" />
+                    {startNationalJobMutation.isPending ? "Starting…" : "Run National Search (All 50 States)"}
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            {/* Active job progress */}
+            {activeNationalJob && (
+              <Card className="border-blue-300 bg-blue-50 dark:bg-blue-900/20">
+                <CardContent className="pt-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium flex items-center gap-2">
+                      <RefreshCw className="h-4 w-4 animate-spin text-blue-600" />
+                      Searching…
+                    </span>
+                    <span className="text-sm font-bold text-blue-700 dark:text-blue-300">
+                      {activeNationalJob.statesCompleted} / {activeNationalJob.statesTotal} states
+                    </span>
+                  </div>
+                  <Progress
+                    value={(activeNationalJob.statesCompleted / activeNationalJob.statesTotal) * 100}
+                    className="h-2 [&>div]:bg-blue-500"
+                  />
+                  <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">
+                    {activeNationalJob.leadsFound} leads found so far — results appear below as states complete
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Past job summary cards */}
+            {nationalJobs.length > 0 && (
+              <div className="flex flex-wrap gap-3">
+                {nationalJobs.map(job => (
+                  <Card
+                    key={job.id}
+                    className={`flex-1 min-w-[220px] max-w-xs cursor-pointer ${latestNationalJob?.id === job.id ? "ring-2 ring-primary" : ""}`}
+                  >
+                    <CardContent className="pt-3 pb-3 px-4 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-muted-foreground">
+                          {new Date(job.createdAt!).toLocaleDateString()}
+                        </span>
+                        {job.status === "completed" && <Badge variant="default" className="bg-green-500 text-xs"><CheckCircle className="w-3 h-3 mr-1" />Done</Badge>}
+                        {job.status === "running"   && <Badge variant="default" className="bg-blue-500 text-xs"><RefreshCw className="w-3 h-3 mr-1 animate-spin" />Running</Badge>}
+                        {job.status === "cancelled" && <Badge variant="outline" className="text-xs"><XCircle className="w-3 h-3 mr-1" />Cancelled</Badge>}
+                        {job.status === "failed"    && <Badge variant="destructive" className="text-xs"><XCircle className="w-3 h-3 mr-1" />Failed</Badge>}
+                      </div>
+                      <p className="text-sm font-medium">{job.leadsFound} leads &bull; {job.statesCompleted}/{job.statesTotal} states</p>
+                      {job.errorMessage && <p className="text-xs text-red-500 truncate">{job.errorMessage}</p>}
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+
+            {/* Results section */}
+            {latestNationalJob && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-3">
+                  <span className="text-sm font-medium">
+                    {nationalResultsLoading ? "Loading…" : `${filteredNationalResults.length} leads${nationalStateFilter !== "all" ? ` in ${nationalStateFilter}` : " across all states"}`}
+                  </span>
+                  {nationalStatesPresent.length > 0 && (
+                    <Select value={nationalStateFilter} onValueChange={setNationalStateFilter}>
+                      <SelectTrigger className="w-44 h-8 text-sm" data-testid="select-national-state-filter">
+                        <SelectValue placeholder="Filter by state" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All states</SelectItem>
+                        {nationalStatesPresent.map(s => (
+                          <SelectItem key={s} value={s}>{s}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                </div>
+
+                {nationalResultsLoading ? (
+                  <div className="text-center py-8 text-muted-foreground">Loading results…</div>
+                ) : filteredNationalResults.length === 0 ? (
+                  <Card>
+                    <CardContent className="text-center py-8 text-muted-foreground">
+                      {nationalResults.length === 0
+                        ? "No results yet — start a national search or wait for the current one to progress."
+                        : `No results for ${nationalStateFilter}.`}
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <div className="border rounded-lg overflow-hidden">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-12">State</TableHead>
+                          <TableHead>Business</TableHead>
+                          <TableHead>Contact</TableHead>
+                          <TableHead>Address</TableHead>
+                          <TableHead>Website</TableHead>
+                          <TableHead>Uses Software</TableHead>
+                          <TableHead>Software</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {filteredNationalResults.map(result => (
+                          <TableRow key={result.id} className={result.isImported === "true" ? "opacity-60" : ""}>
+                            <TableCell>
+                              <Badge variant="outline" className="font-mono text-xs">{result.state}</Badge>
+                            </TableCell>
+                            <TableCell>
+                              <div className="font-medium">{result.company}</div>
+                              <div className="text-xs text-muted-foreground">{result.zipCode}</div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="text-sm">{result.phone || "-"}</div>
+                              <div className="text-xs text-muted-foreground">{result.email || "-"}</div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="text-sm max-w-[140px] truncate" title={result.address || ""}>
+                                {result.address || "-"}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              {result.websiteUrl ? (
+                                <a
+                                  href={result.websiteUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-blue-500 hover:underline text-sm truncate max-w-[130px] block"
+                                >
+                                  {(() => { try { return new URL(result.websiteUrl).hostname; } catch { return result.websiteUrl; } })()}
+                                </a>
+                              ) : (
+                                <span className="text-muted-foreground text-sm">-</span>
+                              )}
+                            </TableCell>
+                            <TableCell>{getSoftwareBadge(result.usesSoftware)}</TableCell>
+                            <TableCell>
+                              <span className="text-sm">{result.currentSoftware || "-"}</span>
+                            </TableCell>
+                            <TableCell>
+                              {result.isImported === "true"
+                                ? <Badge variant="outline" className="text-green-600 text-xs">Imported</Badge>
+                                : <Badge variant="secondary" className="text-xs">Ready</Badge>}
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setViewDetailsResult(result)}
+                                  title="View details"
+                                >
+                                  <Eye className="h-4 w-4" />
+                                </Button>
+                                {result.isImported === "true" && result.importedContactId && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => setLocation(`/contacts?edit=${result.importedContactId}`)}
+                                    title="Edit contact"
+                                  >
+                                    <Pencil className="h-4 w-4 text-blue-500" />
+                                  </Button>
+                                )}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {nationalJobs.length === 0 && !startNationalJobMutation.isPending && (
+              <Card>
+                <CardContent className="text-center py-12">
+                  <Globe className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                  <h3 className="text-lg font-medium mb-2">No national searches yet</h3>
+                  <p className="text-muted-foreground mb-4 text-sm max-w-md mx-auto">
+                    Click <strong>Run National Search</strong> to automatically find 3 grooming businesses in each of the 50 US states.
+                    Results include business name, address, website, software detection, and more — exportable as a single Excel file.
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+          </TabsContent>
 
         {/* View Details Dialog */}
         <Dialog open={!!viewDetailsResult} onOpenChange={(open) => !open && setViewDetailsResult(null)}>

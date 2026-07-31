@@ -7,7 +7,8 @@ import { insertContactSchema, insertContactGroupSchema, insertDealSchema, insert
 import { getCommissionAmounts } from "@shared/utils";
 import { z } from "zod";
 import Papa from "papaparse";
-import { runLeadDiscoveryJob, importResultsToCRM } from "./lead-discovery";
+import { runLeadDiscoveryJob, importResultsToCRM, runNationalSearchJob } from "./lead-discovery";
+import * as XLSX from "xlsx";
 import { sendDailyReport } from "./dailyReportScheduler";
 import { sendReplyNotificationEmail, sendEmail, replaceTemplateVariables } from "./sendgrid";
 import { format as fmtDate } from "date-fns";
@@ -2906,6 +2907,141 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ allowed: false, reason: "Check failed" });
     }
   });
+
+  // ─── National Search Job Routes ───────────────────────────────────────────
+  // List national jobs for the current user
+  app.get("/api/lead-discovery/national-jobs", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const jobs = await storage.getNationalSearchJobs(userId);
+      res.json(jobs);
+    } catch (error) {
+      console.error("Error fetching national jobs:", error);
+      res.status(500).json({ message: "Failed to fetch national jobs" });
+    }
+  });
+
+  // Create and start a new national search job
+  app.post("/api/lead-discovery/national-job", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+
+      // Enforce per-day run limit (same as regular jobs — counts as one run for the day)
+      const { canRunDiscovery, getSerpUsageStatus } = await import("./lead-discovery");
+      const dailyCheck = await canRunDiscovery(userId, 1); // skipDailyCheck=false (default)
+      if (!dailyCheck.allowed) {
+        return res.status(400).json({ message: dailyCheck.reason || "Daily run limit reached" });
+      }
+
+      // Atomically check for an existing active job and create a new one if clear.
+      // Returns null if a job is already running/pending (advisory lock prevents races).
+      const job = await storage.createNationalSearchJob(userId);
+      if (!job) {
+        return res.status(409).json({
+          message: "A national search is already running. Wait for it to finish (or cancel it) before starting a new one.",
+        });
+      }
+
+      // Start asynchronously
+      runNationalSearchJob(job.id, userId).catch(err => {
+        console.error("[NationalSearch] Job runner error:", err);
+      });
+
+      res.status(201).json(job);
+    } catch (error) {
+      console.error("Error creating national job:", error);
+      res.status(500).json({ message: "Failed to create national search job" });
+    }
+  });
+
+  // Get status / progress of a national job
+  app.get("/api/lead-discovery/national-job/:id/status", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const job = await storage.getNationalSearchJob(req.params.id, userId);
+      if (!job) return res.status(404).json({ message: "National job not found" });
+      res.json(job);
+    } catch (error) {
+      console.error("Error fetching national job status:", error);
+      res.status(500).json({ message: "Failed to fetch status" });
+    }
+  });
+
+  // Cancel a national job
+  app.post("/api/lead-discovery/national-job/:id/cancel", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const job = await storage.getNationalSearchJob(req.params.id, userId);
+      if (!job) return res.status(404).json({ message: "National job not found" });
+      await storage.updateNationalSearchJob(job.id, { status: "cancelled", completedAt: new Date() });
+      res.json({ message: "Cancellation requested" });
+    } catch (error) {
+      console.error("Error cancelling national job:", error);
+      res.status(500).json({ message: "Failed to cancel job" });
+    }
+  });
+
+  // Get all results for a national job (with state info)
+  app.get("/api/lead-discovery/national-job/:id/results", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const job = await storage.getNationalSearchJob(req.params.id, userId);
+      if (!job) return res.status(404).json({ message: "National job not found" });
+      const results = await storage.getNationalJobResults(req.params.id, userId);
+      res.json(results);
+    } catch (error) {
+      console.error("Error fetching national job results:", error);
+      res.status(500).json({ message: "Failed to fetch results" });
+    }
+  });
+
+  // Export national job results as Excel (.xlsx)
+  app.get("/api/lead-discovery/national-job/:id/export", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = getUserIdForQuery(req.user);
+      const job = await storage.getNationalSearchJob(req.params.id, userId);
+      if (!job) return res.status(404).json({ message: "National job not found" });
+
+      const results = await storage.getNationalJobResults(req.params.id, userId);
+
+      const rows = results.map(r => ({
+        "Business Name": r.company || "",
+        "State": r.state || "",
+        "Address": r.address || "",
+        "Phone": r.phone || "",
+        "Email": r.email || "",
+        "Owner First Name": r.firstName || "",
+        "Owner Last Name": r.lastName || "",
+        "Website URL": r.websiteUrl || "",
+        "Uses Software": r.usesSoftware || "Unknown",
+        "Business Type": r.jobTitle || "Salon",
+        "Current Software": r.currentSoftware || "",
+        "Booking Software URL": r.bookingSoftwareUrl || "",
+        "ZIP Code": r.zipCode || "",
+        "Import Status": r.isImported === "true" ? "Imported" : "Not Imported",
+      }));
+
+      const ws = XLSX.utils.json_to_sheet(rows);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "National Search Results");
+
+      // Set column widths
+      ws["!cols"] = [
+        { wch: 35 }, { wch: 6 }, { wch: 35 }, { wch: 16 }, { wch: 30 },
+        { wch: 15 }, { wch: 15 }, { wch: 40 }, { wch: 14 }, { wch: 10 },
+        { wch: 20 }, { wch: 40 }, { wch: 10 }, { wch: 14 },
+      ];
+
+      const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename=national-search-${req.params.id.slice(0, 8)}.xlsx`);
+      res.send(buf);
+    } catch (error) {
+      console.error("Error exporting national job:", error);
+      res.status(500).json({ message: "Failed to export results" });
+    }
+  });
+  // ──────────────────────────────────────────────────────────────────────────
 
   // ─── Admin Brevo Connection Ping ───────────────────────────────────────────
   app.post("/api/admin/sendgrid-ping", isAdmin, async (req: any, res) => {

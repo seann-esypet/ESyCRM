@@ -336,10 +336,24 @@ export const leadDiscoveryConfig = pgTable("lead_discovery_config", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// National Search Jobs — orchestrate 50-state searches
+export const nationalSearchJobs = pgTable("national_search_jobs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onUpdate: "cascade" }),
+  status: text("status").notNull().default("pending"), // pending, running, completed, failed, cancelled
+  statesTotal: integer("states_total").notNull().default(50),
+  statesCompleted: integer("states_completed").notNull().default(0),
+  leadsFound: integer("leads_found").notNull().default(0),
+  errorMessage: text("error_message"),
+  createdAt: timestamp("created_at").defaultNow(),
+  completedAt: timestamp("completed_at"),
+});
+
 // Lead Discovery Module
 export const leadDiscoveryJobs = pgTable("lead_discovery_jobs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id, { onUpdate: "cascade" }),
+  nationalJobId: varchar("national_job_id").references(() => nationalSearchJobs.id, { onDelete: "cascade" }),
   state: text("state").notNull(), // e.g., "NY", "CA"
   zipCodes: text("zip_codes").notNull(), // Comma-separated ZIP codes
   searchEngines: text("search_engines").notNull().default("google,bing"), // Comma-separated: google, bing, yahoo
@@ -405,9 +419,17 @@ export const insertLeadDiscoveryConfigSchema = createInsertSchema(leadDiscoveryC
   updatedAt: true,
 });
 
+export const insertNationalSearchJobSchema = createInsertSchema(nationalSearchJobs).omit({
+  id: true,
+  userId: true,
+  createdAt: true,
+  completedAt: true,
+});
+
 export const insertLeadDiscoveryJobSchema = createInsertSchema(leadDiscoveryJobs).omit({
   id: true,
   userId: true,
+  nationalJobId: true,
   startedAt: true,
   completedAt: true,
   createdAt: true,
@@ -438,6 +460,8 @@ export type EmailSequenceLog = typeof emailSequenceLogs.$inferSelect;
 export type InsertEmailSequenceLog = z.infer<typeof insertEmailSequenceLogSchema>;
 export type InboxMessage = typeof inboxMessages.$inferSelect;
 export type InsertInboxMessage = z.infer<typeof insertInboxMessageSchema>;
+export type NationalSearchJob = typeof nationalSearchJobs.$inferSelect;
+export type InsertNationalSearchJob = z.infer<typeof insertNationalSearchJobSchema>;
 export type LeadDiscoveryJob = typeof leadDiscoveryJobs.$inferSelect;
 export type InsertLeadDiscoveryJob = z.infer<typeof insertLeadDiscoveryJobSchema>;
 export type LeadDiscoveryResult = typeof leadDiscoveryResults.$inferSelect;
