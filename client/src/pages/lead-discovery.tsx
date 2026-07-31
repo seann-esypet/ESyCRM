@@ -889,7 +889,6 @@ export default function LeadDiscovery() {
               </div>
             )}
           </TabsContent>
-        </Tabs>
 
           {/* ── National Search Tab ─────────────────────────────────────── */}
           <TabsContent value="national" className="space-y-4">
@@ -1118,6 +1117,7 @@ export default function LeadDiscovery() {
               </Card>
             )}
           </TabsContent>
+        </Tabs>
 
         {/* View Details Dialog */}
         <Dialog open={!!viewDetailsResult} onOpenChange={(open) => !open && setViewDetailsResult(null)}>
