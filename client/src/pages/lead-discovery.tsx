@@ -901,14 +901,14 @@ export default function LeadDiscovery() {
                 </p>
               </div>
               <div className="flex gap-2 flex-shrink-0">
-                {latestNationalJob && (latestNationalJob.status === "completed" || latestNationalJob.status === "cancelled") && (
+                {latestNationalJob && latestNationalJob.leadsFound > 0 && latestNationalJob.status !== "running" && latestNationalJob.status !== "pending" && (
                   <Button
                     variant="outline"
                     onClick={() => handleNationalExport(latestNationalJob.id)}
                     data-testid="btn-national-export"
                   >
                     <Download className="h-4 w-4 mr-2" />
-                    Export All to Excel
+                    Export All to Excel ({latestNationalJob.leadsFound})
                   </Button>
                 )}
                 {activeNationalJob ? (
