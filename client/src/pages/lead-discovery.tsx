@@ -901,7 +901,7 @@ export default function LeadDiscovery() {
                 </p>
               </div>
               <div className="flex gap-2 flex-shrink-0">
-                {latestNationalJob && latestNationalJob.leadsFound > 0 && latestNationalJob.status !== "running" && latestNationalJob.status !== "pending" && (
+                {latestNationalJob && latestNationalJob.leadsFound > 0 && (
                   <Button
                     variant="outline"
                     onClick={() => handleNationalExport(latestNationalJob.id)}
