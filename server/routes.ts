@@ -2921,10 +2921,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Create and start a new national search job
+  // Create and start a new national search job (full or targeted)
   app.post("/api/lead-discovery/national-job", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
+
+      // Parse optional targeted-search params from request body
+      const bodySchema = z.object({
+        states: z.array(z.string()).optional(),         // targeted state list (omit = all 50)
+        maxPerState: z.number().int().min(1).max(3).optional(), // 1, 2, or 3 (default 3)
+        noSoftwareOnly: z.boolean().optional(),          // filter out "Yes" software leads
+      }).optional();
+
+      const body = bodySchema.parse(req.body ?? {});
+      const opts = body ? {
+        targetStates: body.states,
+        maxPerState: body.maxPerState,
+        noSoftwareOnly: body.noSoftwareOnly,
+      } : undefined;
 
       // Enforce per-day run limit (same as regular jobs — counts as one run for the day)
       const { canRunDiscovery, getSerpUsageStatus } = await import("./lead-discovery");
@@ -2935,7 +2949,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Atomically check for an existing active job and create a new one if clear.
       // Returns null if a job is already running/pending (advisory lock prevents races).
-      const job = await storage.createNationalSearchJob(userId);
+      const job = await storage.createNationalSearchJob(userId, opts);
       if (!job) {
         return res.status(409).json({
           message: "A national search is already running. Wait for it to finish (or cancel it) before starting a new one.",

@@ -114,6 +114,12 @@ export default function LeadDiscovery() {
   // ── National Search state ──────────────────────────────────────────────────
   const [nationalStateFilter, setNationalStateFilter] = useState<string>("all");
 
+  // Targeted search form state
+  const [showTargetedPanel, setShowTargetedPanel] = useState(false);
+  const [targetedStates, setTargetedStates] = useState<string[]>([]);
+  const [targetedMaxPerState, setTargetedMaxPerState] = useState<number>(2);
+  const [targetedNoSoftwareOnly, setTargetedNoSoftwareOnly] = useState(true);
+
   const { data: nationalJobs = [], refetch: refetchNationalJobs } = useQuery<NationalSearchJob[]>({
     queryKey: ["/api/lead-discovery/national-jobs"],
     refetchInterval: activeTab === "national" ? 4000 : false,
@@ -144,6 +150,21 @@ export default function LeadDiscovery() {
     },
     onError: (error: any) => {
       toast({ title: "Error", description: error.message || "Failed to start national search", variant: "destructive" });
+    },
+  });
+
+  const startTargetedJobMutation = useMutation({
+    mutationFn: async (params: { states: string[]; maxPerState: number; noSoftwareOnly: boolean }) => {
+      const res = await apiRequest("POST", "/api/lead-discovery/national-job", params);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/lead-discovery/national-jobs"] });
+      setShowTargetedPanel(false);
+      toast({ title: "Targeted search started", description: `Searching ${targetedStates.length} states with ${targetedMaxPerState} result${targetedMaxPerState > 1 ? "s" : ""} per state.` });
+    },
+    onError: (error: any) => {
+      toast({ title: "Error", description: error.message || "Failed to start targeted search", variant: "destructive" });
     },
   });
 
@@ -895,9 +916,9 @@ export default function LeadDiscovery() {
             {/* Header row */}
             <div className="flex items-start justify-between gap-4">
               <div>
-                <h3 className="font-semibold text-lg">National Search — All 50 States</h3>
+                <h3 className="font-semibold text-lg">National Search</h3>
                 <p className="text-sm text-muted-foreground">
-                  Searches for 3 grooming businesses in every state at once, then exports the full list as Excel.
+                  Find grooming businesses across the US — all 50 states or a targeted subset.
                 </p>
               </div>
               <div className="flex gap-2 flex-shrink-0">
@@ -921,17 +942,183 @@ export default function LeadDiscovery() {
                     Cancel Search
                   </Button>
                 ) : (
-                  <Button
-                    onClick={() => startNationalJobMutation.mutate()}
-                    disabled={startNationalJobMutation.isPending || !config?.serpApiConfigured || config?.usage?.isQuotaReached}
-                    data-testid="btn-start-national-search"
-                  >
-                    <Globe className="h-4 w-4 mr-2" />
-                    {startNationalJobMutation.isPending ? "Starting…" : "Run National Search (All 50 States)"}
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        // Pre-populate with states not yet covered by the latest job
+                        const covered = new Set(nationalStatesPresent);
+                        const missing = US_STATES.map(s => s.code).filter(c => !covered.has(c));
+                        setTargetedStates(missing.length > 0 ? missing : US_STATES.map(s => s.code));
+                        setShowTargetedPanel(prev => !prev);
+                      }}
+                      data-testid="btn-show-targeted-search"
+                    >
+                      <Search className="h-4 w-4 mr-2" />
+                      Targeted Search
+                    </Button>
+                    <Button
+                      onClick={() => startNationalJobMutation.mutate()}
+                      disabled={startNationalJobMutation.isPending || !config?.serpApiConfigured || config?.usage?.isQuotaReached}
+                      data-testid="btn-start-national-search"
+                    >
+                      <Globe className="h-4 w-4 mr-2" />
+                      {startNationalJobMutation.isPending ? "Starting…" : "Run All 50 States"}
+                    </Button>
+                  </div>
                 )}
               </div>
             </div>
+
+            {/* Targeted Search panel */}
+            {showTargetedPanel && !activeNationalJob && (
+              <Card className="border-dashed border-2">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Search className="h-4 w-4" />
+                    Targeted Search
+                  </CardTitle>
+                  <CardDescription>
+                    Pick specific states, cap results per state, and filter out salons that already use booking software.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {/* State multi-select */}
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <Label className="text-sm font-medium">States to search ({targetedStates.length} selected)</Label>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 text-xs px-2"
+                          onClick={() => setTargetedStates(US_STATES.map(s => s.code))}
+                        >
+                          Select all
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 text-xs px-2"
+                          onClick={() => setTargetedStates([])}
+                        >
+                          Clear
+                        </Button>
+                        {nationalStatesPresent.length > 0 && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 text-xs px-2 text-blue-600"
+                            onClick={() => {
+                              const covered = new Set(nationalStatesPresent);
+                              setTargetedStates(US_STATES.map(s => s.code).filter(c => !covered.has(c)));
+                            }}
+                          >
+                            Missing only
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-6 gap-1 max-h-40 overflow-y-auto border rounded p-2 bg-muted/30">
+                      {US_STATES.map(state => (
+                        <label
+                          key={state.code}
+                          className={`flex items-center justify-center gap-1 text-xs cursor-pointer rounded px-1 py-0.5 transition-colors ${
+                            targetedStates.includes(state.code)
+                              ? "bg-primary text-primary-foreground"
+                              : "hover:bg-muted"
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            className="sr-only"
+                            checked={targetedStates.includes(state.code)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setTargetedStates(prev => [...prev, state.code]);
+                              } else {
+                                setTargetedStates(prev => prev.filter(s => s !== state.code));
+                              }
+                            }}
+                          />
+                          {state.code}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Controls row */}
+                  <div className="flex flex-wrap items-end gap-4">
+                    <div>
+                      <Label className="text-sm">Results per state</Label>
+                      <Select
+                        value={String(targetedMaxPerState)}
+                        onValueChange={(v) => setTargetedMaxPerState(Number(v))}
+                      >
+                        <SelectTrigger className="w-24 mt-1">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="1">1</SelectItem>
+                          <SelectItem value="2">2</SelectItem>
+                          <SelectItem value="3">3</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="flex items-center gap-2 pb-1">
+                      <Switch
+                        id="no-software-only"
+                        checked={targetedNoSoftwareOnly}
+                        onCheckedChange={setTargetedNoSoftwareOnly}
+                      />
+                      <div>
+                        <Label htmlFor="no-software-only" className="text-sm cursor-pointer">No-software leads only</Label>
+                        <p className="text-xs text-muted-foreground">Skip salons that already use MoeGo, Booksy, etc.</p>
+                      </div>
+                    </div>
+
+                    <div className="ml-auto text-right pb-1">
+                      <p className="text-xs text-muted-foreground">
+                        ~{targetedStates.length} SERP credit{targetedStates.length !== 1 ? "s" : ""} &bull; {targetedStates.length} state{targetedStates.length !== 1 ? "s" : ""} × 1 call each
+                      </p>
+                      {config?.usage && (
+                        <p className={`text-xs font-medium ${
+                          (config.usage.used + targetedStates.length) >= config.usage.hardStopAt
+                            ? "text-red-600"
+                            : (config.usage.used + targetedStates.length) >= config.usage.quota * 0.7
+                            ? "text-orange-500"
+                            : "text-green-600"
+                        }`}>
+                          {config.usage.used} used + {targetedStates.length} = {config.usage.used + targetedStates.length} / {config.usage.hardStopAt} limit
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-1 border-t">
+                    <Button variant="ghost" onClick={() => setShowTargetedPanel(false)}>Cancel</Button>
+                    <Button
+                      onClick={() => startTargetedJobMutation.mutate({
+                        states: targetedStates,
+                        maxPerState: targetedMaxPerState,
+                        noSoftwareOnly: targetedNoSoftwareOnly,
+                      })}
+                      disabled={
+                        targetedStates.length === 0 ||
+                        startTargetedJobMutation.isPending ||
+                        !config?.serpApiConfigured ||
+                        config?.usage?.isQuotaReached
+                      }
+                      data-testid="btn-run-targeted-search"
+                    >
+                      <Search className="h-4 w-4 mr-2" />
+                      {startTargetedJobMutation.isPending ? "Starting…" : `Run ${targetedStates.length} State${targetedStates.length !== 1 ? "s" : ""}`}
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
 
             {/* Active job progress */}
             {activeNationalJob && (
@@ -976,7 +1163,29 @@ export default function LeadDiscovery() {
                         {job.status === "failed"    && <Badge variant="destructive" className="text-xs"><XCircle className="w-3 h-3 mr-1" />Failed</Badge>}
                       </div>
                       <p className="text-sm font-medium">{job.leadsFound} leads &bull; {job.statesCompleted}/{job.statesTotal} states</p>
+                      {/* Targeted search metadata */}
+                      {job.targetStates && (
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          <Badge variant="secondary" className="text-xs">{job.statesTotal} states</Badge>
+                          <Badge variant="secondary" className="text-xs">{job.maxPerState}/state</Badge>
+                          {job.noSoftwareOnly === "true" && (
+                            <Badge variant="outline" className="text-xs text-green-700 border-green-400">No-software only</Badge>
+                          )}
+                        </div>
+                      )}
                       {job.errorMessage && <p className="text-xs text-red-500 truncate">{job.errorMessage}</p>}
+                      {/* Export button per job */}
+                      {job.leadsFound > 0 && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 text-xs px-2 mt-1"
+                          onClick={(e) => { e.stopPropagation(); handleNationalExport(job.id); }}
+                        >
+                          <Download className="h-3 w-3 mr-1" />
+                          Export
+                        </Button>
+                      )}
                     </CardContent>
                   </Card>
                 ))}

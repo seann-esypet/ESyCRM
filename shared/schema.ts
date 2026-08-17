@@ -345,6 +345,10 @@ export const nationalSearchJobs = pgTable("national_search_jobs", {
   statesCompleted: integer("states_completed").notNull().default(0),
   leadsFound: integer("leads_found").notNull().default(0),
   errorMessage: text("error_message"),
+  // Targeted search fields — null means "all 50 states" (full national search)
+  targetStates: text("target_states"), // comma-separated state codes, e.g. "MA,MI,MN" — null = all 50
+  maxPerState: integer("max_per_state").notNull().default(3), // 1, 2, or 3 results per state
+  noSoftwareOnly: text("no_software_only").notNull().default("false"), // "true" = skip leads where usesSoftware=Yes
   createdAt: timestamp("created_at").defaultNow(),
   completedAt: timestamp("completed_at"),
 });

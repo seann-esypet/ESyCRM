@@ -772,7 +772,6 @@ const ALL_STATES = Object.keys(STATE_ZIPS);
 
 /** National search: runs one SERP query per state, stores up to maxPerState results, tracks progress. */
 export async function runNationalSearchJob(nationalJobId: string, userId: string): Promise<void> {
-  const MAX_PER_STATE = 3;
   const MAX_HOURLY_RETRIES = 10;
   const RETRY_WAIT_MS = 65_000; // wait 65 s when hourly limit hit
 
@@ -795,11 +794,25 @@ export async function runNationalSearchJob(nationalJobId: string, userId: string
       return;
     }
 
+    // Load the job record to get targeted search settings
+    const jobRecord = await storage.getNationalSearchJob(nationalJobId, null);
+    if (!jobRecord) {
+      console.error(`[NationalSearch] Job ${nationalJobId} not found`);
+      return;
+    }
+
+    // Resolve the state list and per-state cap from the job record
+    const statesToSearch = jobRecord.targetStates
+      ? jobRecord.targetStates.split(",").map(s => s.trim()).filter(Boolean)
+      : ALL_STATES;
+    const MAX_PER_STATE = jobRecord.maxPerState ?? 3;
+    const NO_SOFTWARE_ONLY = jobRecord.noSoftwareOnly === "true";
+
     // FIX 3: Transition to running atomically — if the job was cancelled while pending,
     // the conditional update returns undefined and we stop without resurrecting it.
     const started = await storage.updateNationalSearchJobIfNotCancelled(nationalJobId, {
       status: "running",
-      statesTotal: ALL_STATES.length,
+      statesTotal: statesToSearch.length,
     });
     if (!started) {
       console.log(`[NationalSearch] Job ${nationalJobId} was cancelled before it could start — aborting.`);
@@ -809,8 +822,8 @@ export async function runNationalSearchJob(nationalJobId: string, userId: string
     let totalLeadsFound = 0;
     let statesCompleted = 0; // FIX 2: track completed states explicitly
 
-    for (let i = 0; i < ALL_STATES.length; i++) {
-      const stateCode = ALL_STATES[i];
+    for (let i = 0; i < statesToSearch.length; i++) {
+      const stateCode = statesToSearch[i];
       const zip = STATE_ZIPS[stateCode];
 
       // FIX 3: Check for cancellation at start of each state — never overwrite cancelled
@@ -855,7 +868,7 @@ export async function runNationalSearchJob(nationalJobId: string, userId: string
             completedAt: new Date(),
           }, null);
           await failNationalJob(
-            `SERP quota reached after ${statesCompleted} of ${ALL_STATES.length} states. Export what was found so far.`,
+            `SERP quota reached after ${statesCompleted} of ${statesToSearch.length} states. Export what was found so far.`,
             statesCompleted,
             totalLeadsFound,
           );
@@ -919,6 +932,12 @@ export async function runNationalSearchJob(nationalJobId: string, userId: string
               usesSoftware = "No";
             }
 
+            // No-software filter: when enabled, skip any lead that definitively uses software
+            if (NO_SOFTWARE_ONLY && usesSoftware === "Yes") {
+              console.log(`[NationalSearch] Skipping ${businessData.company} (uses ${currentSoftware || "software"}) — noSoftwareOnly filter`);
+              continue;
+            }
+
             const leadResult: import("@shared/schema").InsertLeadDiscoveryResult = {
               jobId: subJob.id,
               company: businessData.company,
@@ -954,7 +973,7 @@ export async function runNationalSearchJob(nationalJobId: string, userId: string
             status: "completed",
             completedAt: new Date(),
             processedZipCodes: 1,
-            totalBusinessesFound: stateFound,
+            totalBusinessesFound: stateFound, // counts only saved (post-filter) results
           }, null);
 
           stateSucceeded = true;
@@ -971,7 +990,7 @@ export async function runNationalSearchJob(nationalJobId: string, userId: string
               completedAt: new Date(),
             }, null);
             await failNationalJob(
-              `SERP quota reached after ${statesCompleted} of ${ALL_STATES.length} states. Export what was found so far.`,
+              `SERP quota reached after ${statesCompleted} of ${statesToSearch.length} states. Export what was found so far.`,
               statesCompleted,
               totalLeadsFound,
             );
@@ -1017,7 +1036,7 @@ export async function runNationalSearchJob(nationalJobId: string, userId: string
       }
 
       // Small polite delay between states
-      if (i < ALL_STATES.length - 1) {
+      if (i < statesToSearch.length - 1) {
         await new Promise(resolve => setTimeout(resolve, 1200));
       }
     }

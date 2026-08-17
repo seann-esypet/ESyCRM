@@ -202,7 +202,7 @@ export interface IStorage {
   markRepliesReadForDeal(dealId: string, userId: string | null): Promise<void>;
 
   // National Search Jobs
-  createNationalSearchJob(userId: string): Promise<NationalSearchJob>;
+  createNationalSearchJob(userId: string, opts?: { targetStates?: string[]; maxPerState?: number; noSoftwareOnly?: boolean }): Promise<NationalSearchJob | null>;
   getNationalSearchJob(id: string, userId: string | null): Promise<NationalSearchJob | undefined>;
   getNationalSearchJobs(userId: string | null): Promise<NationalSearchJob[]>;
   updateNationalSearchJob(id: string, updates: Partial<NationalSearchJob>): Promise<NationalSearchJob | undefined>;
@@ -1434,7 +1434,7 @@ export class DatabaseStorage implements IStorage {
    * inside a transaction so concurrent requests are serialized and only one succeeds.
    * Returns null if a job is already active (caller should respond 409).
    */
-  async createNationalSearchJob(userId: string): Promise<NationalSearchJob | null> {
+  async createNationalSearchJob(userId: string, opts?: { targetStates?: string[]; maxPerState?: number; noSoftwareOnly?: boolean }): Promise<NationalSearchJob | null> {
     return await db.transaction(async (tx) => {
       // Advisory lock scoped to this user — serializes concurrent create requests atomically.
       // The lock is automatically released when the transaction ends.
@@ -1452,7 +1452,22 @@ export class DatabaseStorage implements IStorage {
 
       if (existing) return null; // caller returns 409
 
-      const [job] = await tx.insert(nationalSearchJobs).values({ userId }).returning();
+      const targetStates = opts?.targetStates && opts.targetStates.length > 0
+        ? opts.targetStates.join(",")
+        : null;
+      const maxPerState = opts?.maxPerState ?? 3;
+      const noSoftwareOnly = opts?.noSoftwareOnly ? "true" : "false";
+      const statesTotal = opts?.targetStates && opts.targetStates.length > 0
+        ? opts.targetStates.length
+        : 50;
+
+      const [job] = await tx.insert(nationalSearchJobs).values({
+        userId,
+        targetStates,
+        maxPerState,
+        noSoftwareOnly,
+        statesTotal,
+      }).returning();
       return job;
     });
   }
