@@ -17,10 +17,14 @@ import { useToast } from "@/hooks/use-toast";
 type BusinessType = "salon" | "mobile";
 type SubTrack = "no_software" | "uses_competitor" | "competitor_moego" | "competitor_groomerio" | "custom";
 type SequenceTrack = `${BusinessType}_${SubTrack}`;
+type DirectoryTrack = "directory_general" | "directory_has_software" | "directory_no_software";
+type AnySequenceTrack = SequenceTrack | DirectoryTrack;
 
 export default function EmailSequences() {
   const [activeBiz, setActiveBiz] = useState<BusinessType>("salon");
   const [activeSub, setActiveSub] = useState<SubTrack>("no_software");
+  const [activeStrategy, setActiveStrategy] = useState<"legacy" | "directory_first">("legacy");
+  const [activeDirectoryTrack, setActiveDirectoryTrack] = useState<DirectoryTrack>("directory_general");
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [selectedSequence, setSelectedSequence] = useState<EmailSequence | undefined>();
   const [isAddContactsOpen, setIsAddContactsOpen] = useState(false);
@@ -39,6 +43,9 @@ export default function EmailSequences() {
   const { data: mobileMoeGo,             isLoading: loadingMMG  } = useQuery<EmailSequence[]>({ queryKey: ["/api/email-sequences?track=mobile_competitor_moego"] });
   const { data: mobileGroomerio,         isLoading: loadingMGR  } = useQuery<EmailSequence[]>({ queryKey: ["/api/email-sequences?track=mobile_competitor_groomerio"] });
   const { data: mobileCustom,            isLoading: loadingMCu  } = useQuery<EmailSequence[]>({ queryKey: ["/api/email-sequences?track=mobile_custom"] });
+  const { data: directoryGeneral,        isLoading: loadingDG   } = useQuery<EmailSequence[]>({ queryKey: ["/api/email-sequences?track=directory_general"] });
+  const { data: directoryHasSoftware,    isLoading: loadingDHS  } = useQuery<EmailSequence[]>({ queryKey: ["/api/email-sequences?track=directory_has_software"] });
+  const { data: directoryNoSoftware,     isLoading: loadingDNS  } = useQuery<EmailSequence[]>({ queryKey: ["/api/email-sequences?track=directory_no_software"] });
 
   const trackData: Record<SequenceTrack, { data: EmailSequence[] | undefined; loading: boolean }> = {
     salon_no_software:            { data: salonNoSoftware,   loading: loadingSNS  },
@@ -51,6 +58,11 @@ export default function EmailSequences() {
     mobile_competitor_moego:      { data: mobileMoeGo,       loading: loadingMMG  },
     mobile_competitor_groomerio:  { data: mobileGroomerio,   loading: loadingMGR  },
     mobile_custom:                { data: mobileCustom,      loading: loadingMCu  },
+  };
+  const directoryTrackData: Record<DirectoryTrack, { data: EmailSequence[] | undefined; loading: boolean }> = {
+    directory_general: { data: directoryGeneral, loading: loadingDG },
+    directory_has_software: { data: directoryHasSoftware, loading: loadingDHS },
+    directory_no_software: { data: directoryNoSoftware, loading: loadingDNS },
   };
 
   const activeTrack: SequenceTrack = `${activeBiz}_${activeSub}`;
@@ -123,13 +135,13 @@ export default function EmailSequences() {
     ).length;
   };
 
-  const renderSequenceTable = (sequences: EmailSequence[] | undefined, isLoading: boolean, track: SequenceTrack) => {
+  const renderSequenceTable = (sequences: EmailSequence[] | undefined, isLoading: boolean, track: AnySequenceTrack, stepCount = 5) => {
     const sequenceMap = new Map<number, EmailSequence>();
     sequences?.forEach(seq => {
       sequenceMap.set(seq.sequenceNumber, seq);
     });
 
-    const allSequences = [1, 2, 3, 4, 5].map(num => sequenceMap.get(num));
+    const allSequences = Array.from({ length: stepCount }, (_, index) => sequenceMap.get(index + 1));
 
     return (
       <Card className="overflow-hidden">
@@ -279,6 +291,13 @@ export default function EmailSequences() {
       
       <main className="flex-1 min-h-0 overflow-auto p-6 bg-muted/30" data-testid="email-sequences-content">
         <div className="max-w-6xl mx-auto">
+          <Tabs value={activeStrategy} onValueChange={(value) => setActiveStrategy(value as "legacy" | "directory_first")} className="space-y-5">
+            <TabsList className="grid w-full grid-cols-2 max-w-md" data-testid="tabs-sequence-strategy">
+              <TabsTrigger value="legacy">Existing Sequences</TabsTrigger>
+              <TabsTrigger value="directory_first">Directory-First</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="legacy">
           {/* Outer: Business Type */}
           <Tabs value={activeBiz} onValueChange={(v) => setActiveBiz(v as BusinessType)} className="space-y-4">
             <TabsList className="grid w-full grid-cols-2 max-w-xs" data-testid="tabs-business-type">
@@ -351,6 +370,33 @@ export default function EmailSequences() {
               </TabsContent>
             ))}
           </Tabs>
+            </TabsContent>
+
+            <TabsContent value="directory_first" className="space-y-4">
+              <div className="p-4 bg-emerald-50 dark:bg-emerald-950 border border-emerald-200 dark:border-emerald-800 rounded-lg">
+                <h3 className="font-semibold text-emerald-900 dark:text-emerald-100 mb-1">Directory-First Strategy</h3>
+                <p className="text-sm text-emerald-800 dark:text-emerald-200">
+                  Lead with EsyPet's free directory listing, then introduce software naturally. Each audience receives four emails, one week apart.
+                </p>
+              </div>
+              <Tabs value={activeDirectoryTrack} onValueChange={(value) => setActiveDirectoryTrack(value as DirectoryTrack)} className="space-y-4">
+                <TabsList className="grid w-full grid-cols-3 max-w-2xl">
+                  <TabsTrigger value="directory_general">General / Unknown</TabsTrigger>
+                  <TabsTrigger value="directory_has_software">Has Software</TabsTrigger>
+                  <TabsTrigger value="directory_no_software">No Software</TabsTrigger>
+                </TabsList>
+                <TabsContent value="directory_general">
+                  {renderSequenceTable(directoryTrackData.directory_general.data, directoryTrackData.directory_general.loading, "directory_general", 4)}
+                </TabsContent>
+                <TabsContent value="directory_has_software">
+                  {renderSequenceTable(directoryTrackData.directory_has_software.data, directoryTrackData.directory_has_software.loading, "directory_has_software", 4)}
+                </TabsContent>
+                <TabsContent value="directory_no_software">
+                  {renderSequenceTable(directoryTrackData.directory_no_software.data, directoryTrackData.directory_no_software.loading, "directory_no_software", 4)}
+                </TabsContent>
+              </Tabs>
+            </TabsContent>
+          </Tabs>
 
           <div className="mt-6 p-4 bg-muted border border-border rounded-lg">
             <h3 className="font-semibold text-foreground mb-2">How Email Sequences Work</h3>
@@ -358,7 +404,7 @@ export default function EmailSequences() {
               <li>• When a deal is marked "Qualified Lead", the system automatically selects the right track based on software status</li>
               <li>• Sequence 1 sends on your chosen date and time (Eastern Time)</li>
               <li>• Sequences 2-5 send automatically after specified days if no reply received</li>
-              <li>• Use placeholders: [Contact_First_Name], [Sales_Person], [Business_Name] in your email content</li>
+              <li>• Use placeholders: [Contact_First_Name], [Sales_Person], [Business_Name], and [City] in your email content</li>
               <li>• Requires Reserved VM deployment for 24/7 automation</li>
             </ul>
           </div>
@@ -377,6 +423,9 @@ export default function EmailSequences() {
                   ({selectedSequence.sequenceTrack
                     .replace("salon_", "Salon — ")
                     .replace("mobile_", "Mobile — ")
+                    .replace("directory_general", "Directory — General / Unknown")
+                    .replace("directory_has_software", "Directory — Has Software")
+                    .replace("directory_no_software", "Directory — No Software")
                     .replace("competitor_moego", "MoeGo")
                     .replace("uses_competitor", "Uses Competitor - Any")
                     .replace("no_software", "No Software")
@@ -413,6 +462,9 @@ export default function EmailSequences() {
                   {queueViewerSequence.sequenceTrack
                     .replace("salon_", "Salon — ")
                     .replace("mobile_", "Mobile — ")
+                    .replace("directory_general", "Directory — General / Unknown")
+                    .replace("directory_has_software", "Directory — Has Software")
+                    .replace("directory_no_software", "Directory — No Software")
                     .replace("competitor_moego", "MoeGo")
                     .replace("uses_competitor", "Uses Competitor - Any")
                     .replace("no_software", "No Software")
@@ -453,7 +505,10 @@ export default function EmailSequences() {
               return groups?.find(g => g.id === c.groupId)?.name ?? null;
             };
 
-            const allSequences = Object.values(trackData).flatMap(t => t.data ?? []);
+            const allSequences = [
+              ...Object.values(trackData).flatMap(t => t.data ?? []),
+              ...Object.values(directoryTrackData).flatMap(t => t.data ?? []),
+            ];
 
             const getSubject = (log: EmailSequenceLog) => {
               if (log.customSubject) return log.customSubject;

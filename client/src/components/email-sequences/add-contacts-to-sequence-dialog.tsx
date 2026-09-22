@@ -30,7 +30,7 @@ const SOFTWARE_FILTERS: { value: SoftwareFilter; label: string }[] = [
   { value: "unknown", label: "? Unknown" },
 ];
 
-const PLACEHOLDERS_HELP = "[Contact_First_Name], [Sales_Person], [Business_Name]";
+const PLACEHOLDERS_HELP = "[Contact_First_Name], [Sales_Person], [Business_Name], [City]";
 
 export default function AddContactsToSequenceDialog({
   sequence,
@@ -38,6 +38,7 @@ export default function AddContactsToSequenceDialog({
   onOpenChange,
 }: AddContactsToSequenceDialogProps) {
   const isCustomTrack = sequence.sequenceTrack === "custom";
+  const isDirectoryTrack = sequence.strategy === "directory_first" || sequence.sequenceTrack.startsWith("directory_");
 
   const [selectedContacts, setSelectedContacts] = useState<string[]>([]);
   const [search, setSearch] = useState("");
@@ -249,10 +250,18 @@ export default function AddContactsToSequenceDialog({
     },
   });
 
-  const trackLabel = isCustomTrack
+  const trackLabel = sequence.sequenceTrack === "directory_general"
+    ? "Directory — General / Unknown"
+    : sequence.sequenceTrack === "directory_has_software"
+      ? "Directory — Has Software"
+      : sequence.sequenceTrack === "directory_no_software"
+        ? "Directory — No Software"
+        : isCustomTrack
     ? "Custom / General"
     : sequence.sequenceTrack === "uses_competitor" ? "Uses Competitor" : "No Software";
-  const trackColor = isCustomTrack
+  const trackColor = isDirectoryTrack
+    ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+    : isCustomTrack
     ? "bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300"
     : sequence.sequenceTrack === "uses_competitor"
       ? "bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-300"
@@ -279,7 +288,9 @@ export default function AddContactsToSequenceDialog({
           <DialogDescription>
             {isCustomTrack
               ? "Write a custom email, then pick contacts. The same email will be sent to all selected contacts."
-              : "Create or select a group, then pick contacts to schedule for this sequence."}
+              : isDirectoryTrack
+                ? "Pick the contacts for this directory audience. Their existing salon/mobile or software classification will not be changed."
+                : "Create or select a group, then pick contacts to schedule for this sequence."}
           </DialogDescription>
         </DialogHeader>
 

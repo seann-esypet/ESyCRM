@@ -23,7 +23,9 @@ interface EmailSequenceFormProps {
 
 const LINKS: { label: string; html: string; description?: string }[] = [
   { label: "Visit EsyPet",        html: '<a href="https://software.esypet.com/">Visit EsyPet</a>' },
-  { label: "Pricing",             html: '<a href="https://software.esypet.com/pricing/">Pricing</a>' },
+  { label: "Get Listed Free",     html: '<a href="https://signup.esypet.net/?plan=95625be6-a031-4015-afb7-ba0fdd3f5798">Get Listed Free</a>' },
+  { label: "How Free Listing Works", html: '<a href="https://software.esypet.com/free-network-explained/">How the Free Listing Works</a>' },
+  { label: "Pricing",             html: '<a href="https://software.esypet.com/pricing/">See Full Pricing</a>' },
   {
     label: "Video: Getting Set Up",
     html: '<a href="https://esy.pet/Salon-SignUp">&#9654; Video: Getting Set Up</a>',
@@ -71,6 +73,7 @@ export default function EmailSequenceForm({ sequence, onSuccess, onCancel }: Ema
   const form = useForm({
     resolver: zodResolver(insertEmailSequenceSchema),
     defaultValues: {
+      strategy: sequence?.strategy || "legacy",
       sequenceNumber: sequence?.sequenceNumber || 1,
       sequenceTrack: sequenceTrack,
       subject: sequence?.subject || "",
@@ -220,7 +223,7 @@ export default function EmailSequenceForm({ sequence, onSuccess, onCancel }: Ema
                   />
                 </FormControl>
                 <FormDescription>
-                  Use [Contact_First_Name], [Sales_Person], and [Business_Name] as placeholders. They will be replaced automatically.
+                  Use [Contact_First_Name], [Sales_Person], [Business_Name], and [City] as placeholders. They will be replaced automatically.
                 </FormDescription>
                 <FormMessage />
               </FormItem>

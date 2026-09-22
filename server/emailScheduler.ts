@@ -15,20 +15,6 @@ import type { Contact, EmailSequence, EmailSequenceLog } from "@shared/schema";
 const TIMEZONE = "America/New_York";
 
 /**
- * Fixed days-after-previous-email schedule:
- * Seq 2 → 7 days after Seq 1
- * Seq 3 → 7 days after Seq 2  (14 days total)
- * Seq 4 → 30 days after Seq 3
- * Seq 5 → 30 days after Seq 4
- */
-const SEQUENCE_DAYS_AFTER_PREVIOUS: Record<number, number> = {
-  2: 7,
-  3: 7,
-  4: 30,
-  5: 30,
-};
-
-/**
  * Get current time in Eastern timezone
  */
 function getNowInEastern(): Date {
@@ -100,6 +86,7 @@ function shouldSendSequence1(
  */
 async function shouldSendFollowUpSequence(
   sequenceNumber: number,
+  daysAfterNoReply: number | null,
   existingLogs: EmailSequenceLog[],
   contactId: string
 ): Promise<boolean> {
@@ -129,8 +116,7 @@ async function shouldSendFollowUpSequence(
     return false;
   }
 
-  // Fixed timing per sequence number
-  const daysRequired = SEQUENCE_DAYS_AFTER_PREVIOUS[sequenceNumber] ?? 7;
+  const daysRequired = daysAfterNoReply ?? 7;
   const daysSincePrevious = Math.floor(
     (new Date().getTime() - new Date(previousSequenceLog.sentAt).getTime()) / (1000 * 60 * 60 * 24)
   );
@@ -152,8 +138,8 @@ async function scheduleNextSequence(
   if (sentSequence.sequenceTrack.endsWith("_custom") || sentSequence.sequenceTrack === "custom") return;
 
   const nextNumber = sentSequence.sequenceNumber + 1;
-  const daysRequired = SEQUENCE_DAYS_AFTER_PREVIOUS[nextNumber];
-  if (!daysRequired) return; // No more sequences after 5
+  if (sentSequence.strategy === "directory_first" && nextNumber > 4) return;
+  if (nextNumber > 5) return;
 
   // Stop the chain if the contact has already replied
   const inboxMessages = await storage.getInboxMessages(null, sentLog.contactId);
@@ -176,6 +162,7 @@ async function scheduleNextSequence(
     console.log(`[AutoChain] No Sequence ${nextNumber} template found for user ${sentLog.userId} track ${sentSequence.sequenceTrack}`);
     return;
   }
+  const daysRequired = nextSequence.daysAfterNoReply ?? 7;
 
   // Schedule at sentAt + daysRequired days (same time of day)
   const nextSendAt = new Date(sentAt.getTime() + daysRequired * 24 * 60 * 60 * 1000);

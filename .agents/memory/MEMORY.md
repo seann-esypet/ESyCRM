@@ -1,0 +1,1 @@
+- [Directory-first sequence isolation](directory-first-sequence-isolation.md) — directory audiences are selected at enrollment and must stay independent of legacy contact classification.

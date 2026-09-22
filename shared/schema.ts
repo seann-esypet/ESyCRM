@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, timestamp, decimal, integer, index, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, timestamp, decimal, integer, index, uniqueIndex, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -136,6 +136,7 @@ export const dealActivities = pgTable("deal_activities", {
 export const emailSequences = pgTable("email_sequences", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id, { onUpdate: "cascade" }),
+  strategy: text("strategy").notNull().default("legacy"), // legacy, directory_first
   sequenceTrack: text("sequence_track").notNull().default("salon_no_software"), // salon_no_software, salon_uses_competitor, salon_custom, mobile_no_software, mobile_uses_competitor, mobile_custom
   sequenceNumber: integer("sequence_number").notNull(), // 1-5
   subject: text("subject").notNull(),
@@ -146,7 +147,14 @@ export const emailSequences = pgTable("email_sequences", {
   isActive: text("is_active").notNull().default("true"), // true, false
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
-});
+}, (table) => [
+  uniqueIndex("email_sequences_owner_strategy_track_step_unique").on(
+    table.userId,
+    table.strategy,
+    table.sequenceTrack,
+    table.sequenceNumber,
+  ),
+]);
 
 export const emailSequenceLogs = pgTable("email_sequence_logs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

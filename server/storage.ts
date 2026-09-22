@@ -63,6 +63,7 @@ import {
 import { normalizePhoneNumber, normalizeName, normalizeEmail } from "@shared/utils";
 import { db } from "./db";
 import { eq, desc, and, sql, gte, lte, or, ne, inArray } from "drizzle-orm";
+import { DIRECTORY_FIRST_STRATEGY, DIRECTORY_TRACKS, directoryEmailSequenceTemplates } from "./directoryEmailSequences";
 
 export type PayrollPreviewItem = {
   tempId: string;
@@ -1041,6 +1042,27 @@ export class DatabaseStorage implements IStorage {
       .orderBy(emailSequences.sequenceNumber);
   }
 
+  async ensureDirectoryEmailSequences(userId: string): Promise<void> {
+    const existing = await db.select({
+      sequenceTrack: emailSequences.sequenceTrack,
+      sequenceNumber: emailSequences.sequenceNumber,
+    }).from(emailSequences).where(and(
+      eq(emailSequences.userId, userId),
+      eq(emailSequences.strategy, DIRECTORY_FIRST_STRATEGY),
+    ));
+    const existingKeys = new Set(existing.map(sequence => `${sequence.sequenceTrack}:${sequence.sequenceNumber}`));
+    const missing = directoryEmailSequenceTemplates.filter(
+      sequence => !existingKeys.has(`${sequence.sequenceTrack}:${sequence.sequenceNumber}`),
+    );
+    if (missing.length > 0) {
+      await db.insert(emailSequences).values(missing.map(sequence => ({
+        ...sequence,
+        userId,
+        scheduledDate: sequence.scheduledDate ? new Date(sequence.scheduledDate) : null,
+      }))).onConflictDoNothing();
+    }
+  }
+
   async getEmailSequencesByTrack(userId: string | null, track: string): Promise<EmailSequence[]> {
     if (userId === null) {
       // Admin: get all sequences for track
@@ -1202,7 +1224,10 @@ export class DatabaseStorage implements IStorage {
         const contactTrack = contact.sequenceTrack ||
           `${bType}_${contact.usesSoftware === "Yes" ? "uses_competitor" : "no_software"}`;
 
-        if (seqTrack === "custom") {
+        if ((DIRECTORY_TRACKS as readonly string[]).includes(seqTrack)) {
+          // Directory-first audiences are chosen intentionally at enrollment time
+          // and do not alter or depend on the contact's legacy classification.
+        } else if (seqTrack === "custom") {
           // bare custom — no restriction
         } else if (seqTrack === "salon_custom" || seqTrack === "mobile_custom") {
           // Prefixed general track — only check business type prefix

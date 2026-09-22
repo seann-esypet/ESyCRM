@@ -261,6 +261,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (templateSequences.length > 0) {
           for (const seq of templateSequences) {
             await storage.createEmailSequence({
+              strategy: seq.strategy,
               sequenceTrack: seq.sequenceTrack,
               sequenceNumber: seq.sequenceNumber,
               subject: seq.subject,
@@ -2099,6 +2100,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const userId = getUserIdForQuery(req.user);
       const track = req.query.track as string | undefined;
+      const sequenceOwnerId = userId ?? req.user.claims.sub;
+      await storage.ensureDirectoryEmailSequences(sequenceOwnerId);
       
       let sequences;
       if (track) {
