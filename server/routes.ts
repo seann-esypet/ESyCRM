@@ -3,11 +3,12 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { setupAuth, isAuthenticated, isAdmin } from "./replitAuth";
-import { insertContactSchema, insertContactGroupSchema, insertDealSchema, insertTaskSchema, insertEmailSequenceSchema, insertLeadDiscoveryJobSchema, insertCommissionSchema, type InsertContact } from "@shared/schema";
+import { insertContactSchema, insertContactGroupSchema, insertDealSchema, insertTaskSchema, insertEmailSequenceSchema, insertLeadDiscoveryJobSchema, insertCommissionSchema, insertSalonEnrichmentBatchSchema, insertSalonEnrichmentRowSchema, type InsertContact } from "@shared/schema";
 import { getCommissionAmounts } from "@shared/utils";
 import { z } from "zod";
 import Papa from "papaparse";
 import { runLeadDiscoveryJob, importResultsToCRM, runNationalSearchJob } from "./lead-discovery";
+import { startSalonEnrichment } from "./salonEnrichment";
 import * as XLSX from "xlsx";
 import { sendDailyReport } from "./dailyReportScheduler";
 import { sendReplyNotificationEmail, sendEmail, replaceTemplateVariables } from "./sendgrid";
@@ -2672,6 +2673,167 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Lead Discovery Routes
+  // Fixed-list salon enrichment is intentionally separate from legacy discovery.
+  app.get("/api/salon-enrichment/batches", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const isAdmin = req.user.claims.role === "admin";
+      res.json(await storage.getSalonEnrichmentBatches(isAdmin ? null : userId));
+    } catch (error) {
+      res.status(500).json({ message: error instanceof Error ? error.message : "Failed to load enrichment batches" });
+    }
+  });
+
+  app.get("/api/salon-enrichment/batches/:id", isAuthenticated, async (req: any, res) => {
+    const userId = req.user.claims.sub;
+    const batch = await storage.getSalonEnrichmentBatch(req.params.id, req.user.claims.role === "admin" ? null : userId);
+    if (!batch) return res.status(404).json({ message: "Batch not found" });
+    res.json(batch);
+  });
+
+  app.get("/api/salon-enrichment/batches/:id/rows", isAuthenticated, async (req: any, res) => {
+    const userId = req.user.claims.sub;
+    const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 100));
+    const offset = Math.max(0, Number(req.query.offset) || 0);
+    const rows = await storage.getSalonEnrichmentRows(req.params.id, req.user.claims.role === "admin" ? null : userId, {
+      status: typeof req.query.status === "string" ? req.query.status : undefined,
+      reviewStatus: typeof req.query.reviewStatus === "string" ? req.query.reviewStatus : undefined,
+      search: typeof req.query.search === "string" ? req.query.search : undefined,
+      limit,
+      offset,
+    });
+    res.json(rows);
+  });
+
+  app.post("/api/salon-enrichment/batches", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const body = req.body || {};
+      const parsedBatch = insertSalonEnrichmentBatchSchema.parse({
+        name: body.name || body.fileName || "Salon list",
+        fileName: body.fileName,
+        pilotLimit: body.pilotLimit,
+        concurrency: body.concurrency,
+        estimatedSerpCalls: Math.min(body.pilotLimit || 100, Array.isArray(body.rows) ? body.rows.length : 0) * 2,
+      });
+      if (!Array.isArray(body.rows) || !body.rows.length) return res.status(400).json({ message: "At least one normalized row is required" });
+      const rejectedRows: Array<{ rowNumber: number; reason: string; sourceData: unknown }> = [];
+      const rows = body.rows.flatMap((input: any, index: number) => {
+        const sourceData = input?.sourceData || input;
+        const businessName = typeof input?.businessName === "string" ? input.businessName.trim() : "";
+        if (!businessName) {
+          rejectedRows.push({ rowNumber: input?.rowNumber || index + 1, reason: "businessName is required", sourceData });
+          return [];
+        }
+        try {
+          return [insertSalonEnrichmentRowSchema.parse({
+            batchId: "pending", userId, rowNumber: input.rowNumber || index + 1, sourceData,
+            placeId: input.placeId ?? null, businessName,
+            address: input.address ?? null, address1: input.address1 ?? null,
+            city: input.city ?? null, state: input.state ?? null, zipCode: input.zipCode ?? null,
+            latitude: input.latitude ?? null, longitude: input.longitude ?? null,
+            businessStatus: input.businessStatus ?? null,
+          })];
+        } catch (error) {
+          rejectedRows.push({ rowNumber: input?.rowNumber || index + 1, reason: error instanceof Error ? error.message : "Invalid row", sourceData });
+          return [];
+        }
+      });
+      if (!rows.length) return res.status(400).json({ message: "No valid rows to ingest", rejectedRows });
+      const batch = await storage.createSalonEnrichmentBatch(parsedBatch, rows, userId);
+      res.status(201).json({ ...batch, rejectedRowCount: rejectedRows.length, rejectedRows });
+    } catch (error) {
+      res.status(400).json({ message: error instanceof Error ? error.message : "Invalid enrichment batch" });
+    }
+  });
+
+  app.post("/api/salon-enrichment/batches/:id/start", isAuthenticated, async (req: any, res) => {
+    const userId = req.user.claims.sub;
+    const batch = await storage.updateSalonEnrichmentBatch(req.params.id, { status: "running", startedAt: new Date(), errorMessage: null }, userId);
+    if (!batch) return res.status(404).json({ message: "Batch not found" });
+    startSalonEnrichment(batch);
+    res.json(batch);
+  });
+
+  app.post("/api/salon-enrichment/batches/:id/pause", isAuthenticated, async (req: any, res) => {
+    const batch = await storage.updateSalonEnrichmentBatch(req.params.id, { status: "paused", pausedAt: new Date() }, req.user.claims.sub);
+    if (!batch) return res.status(404).json({ message: "Batch not found" });
+    res.json(batch);
+  });
+
+  app.post("/api/salon-enrichment/batches/:id/resume", isAuthenticated, async (req: any, res) => {
+    const current = await storage.getSalonEnrichmentBatch(req.params.id, req.user.claims.sub);
+    if (!current) return res.status(404).json({ message: "Batch not found" });
+    const requestedLimit = Number(req.body?.pilotLimit);
+    const pilotLimit = Number.isInteger(requestedLimit) && requestedLimit > current.pilotLimit
+      ? Math.min(requestedLimit, current.totalRows)
+      : current.pilotLimit;
+    const batch = await storage.updateSalonEnrichmentBatch(req.params.id, {
+      status: "running", pausedAt: null, errorMessage: null, pilotLimit,
+    }, req.user.claims.sub);
+    if (!batch) return res.status(404).json({ message: "Batch not found" });
+    startSalonEnrichment(batch);
+    res.json(batch);
+  });
+
+  app.post("/api/salon-enrichment/batches/:id/rows/review", isAuthenticated, async (req: any, res) => {
+    const decision = req.body?.decision;
+    if (decision !== "approved" && decision !== "rejected") return res.status(400).json({ message: "Decision must be approved or rejected" });
+    const actorScope = req.user.claims.role === "admin" ? null : req.user.claims.sub;
+    const batch = await storage.getSalonEnrichmentBatch(req.params.id, actorScope);
+    const rows = batch ? await storage.getSalonEnrichmentRows(req.params.id, batch.userId) : [];
+    const rowIds = Array.isArray(req.body.rowIds) ? req.body.rowIds : [];
+    if (!batch || rowIds.some((id: unknown) => !rows.some(row => row.id === id))) return res.status(404).json({ message: "Batch or row not found" });
+    const selectedRows = rows.filter(row => rowIds.includes(row.id));
+    if (!rowIds.length) return res.status(400).json({ message: "Select at least one row" });
+    if (decision === "approved" && selectedRows.some(row => row.status !== "enriched")) {
+      return res.status(400).json({ message: "Only successfully enriched rows can be approved" });
+    }
+    const count = await storage.markSalonRowsForReview(rowIds, decision, actorScope);
+    await storage.refreshSalonEnrichmentBatchCounts(batch.id, batch.userId);
+    res.json({ updated: count });
+  });
+
+  app.post("/api/salon-enrichment/batches/:id/rows/retry", isAuthenticated, async (req: any, res) => {
+    const actorScope = req.user.claims.role === "admin" ? null : req.user.claims.sub;
+    const batch = await storage.getSalonEnrichmentBatch(req.params.id, actorScope);
+    const rows = batch ? await storage.getSalonEnrichmentRows(req.params.id, batch.userId) : [];
+    const rowIds = Array.isArray(req.body?.rowIds) ? req.body.rowIds : [];
+    if (!batch || rowIds.some((id: unknown) => !rows.some(row => row.id === id))) return res.status(404).json({ message: "Batch or row not found" });
+    const count = await storage.resetSalonRowsForRetry(rowIds, actorScope);
+    await storage.refreshSalonEnrichmentBatchCounts(batch.id, batch.userId);
+    res.json({ updated: count });
+  });
+
+  app.patch("/api/salon-enrichment/rows/:rowId", isAuthenticated, async (req: any, res) => {
+    const actorScope = req.user.claims.role === "admin" ? null : req.user.claims.sub;
+    const allowed = ["businessName", "address", "address1", "city", "state", "zipCode", "websiteUrl", "email", "phone", "contactRequestFormUrl", "bookingUrl", "currentSoftware", "usesSoftware", "hasWebsite", "audienceTrack"];
+    const updates = Object.keys(req.body || {});
+    if (updates.some(key => !allowed.includes(key))) return res.status(400).json({ message: "One or more fields are not editable" });
+    if (typeof req.body.businessName === "string" && !req.body.businessName.trim()) return res.status(400).json({ message: "businessName cannot be empty" });
+    const row = await storage.getSalonEnrichmentRow(req.params.rowId, actorScope);
+    if (!row) return res.status(404).json({ message: "Row not found" });
+    const updated = await storage.updateSalonEnrichmentRow(row.id, req.body, actorScope);
+    await storage.refreshSalonEnrichmentBatchCounts(row.batchId, row.userId);
+    res.json(updated);
+  });
+
+  app.post("/api/salon-enrichment/batches/:id/cancel", isAuthenticated, async (req: any, res) => {
+    const actorScope = req.user.claims.role === "admin" ? null : req.user.claims.sub;
+    const batch = await storage.updateSalonEnrichmentBatch(req.params.id, { status: "cancelled", completedAt: new Date() }, actorScope);
+    if (!batch) return res.status(404).json({ message: "Batch not found" });
+    res.json(batch);
+  });
+
+  app.post("/api/salon-enrichment/batches/:id/import", isAuthenticated, async (req: any, res) => {
+    try {
+      const result = await storage.importApprovedSalonRows(req.params.id, req.body?.rowIds, req.user.claims.role === "admin" ? null : req.user.claims.sub);
+      res.json(result);
+    } catch (error) {
+      res.status(400).json({ message: error instanceof Error ? error.message : "Import failed" });
+    }
+  });
+
   app.get("/api/lead-discovery/jobs", isAuthenticated, async (req: any, res) => {
     try {
       const userId = getUserIdForQuery(req.user);

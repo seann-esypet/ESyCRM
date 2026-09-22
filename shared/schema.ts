@@ -331,6 +331,11 @@ export const serpCache = pgTable("serp_cache", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const serpCallReservations = pgTable("serp_call_reservations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 // Lead Discovery Config (per-user or global settings)
 export const leadDiscoveryConfig = pgTable("lead_discovery_config", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -416,6 +421,75 @@ export const leadDiscoveryResults = pgTable("lead_discovery_results", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// Uploaded salon-list enrichment batches. Rows remain separate from lead discovery
+// so fixed-list imports can be reviewed and resumed without changing legacy jobs.
+export const salonEnrichmentBatches = pgTable("salon_enrichment_batches", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onUpdate: "cascade" }),
+  name: text("name").notNull(),
+  fileName: text("file_name"),
+  status: text("status").notNull().default("pending"), // pending, running, paused, completed, cancelled, failed
+  totalRows: integer("total_rows").notNull().default(0),
+  processedRows: integer("processed_rows").notNull().default(0),
+  enrichedRows: integer("enriched_rows").notNull().default(0),
+  needsReviewRows: integer("needs_review_rows").notNull().default(0),
+  approvedRows: integer("approved_rows").notNull().default(0),
+  importedRows: integer("imported_rows").notNull().default(0),
+  pilotLimit: integer("pilot_limit").notNull().default(100),
+  concurrency: integer("concurrency").notNull().default(2),
+  estimatedSerpCalls: integer("estimated_serp_calls").notNull().default(0),
+  usedSerpCalls: integer("used_serp_calls").notNull().default(0),
+  errorMessage: text("error_message"),
+  startedAt: timestamp("started_at"),
+  pausedAt: timestamp("paused_at"),
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const salonEnrichmentRows = pgTable("salon_enrichment_rows", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  batchId: varchar("batch_id").notNull().references(() => salonEnrichmentBatches.id, { onDelete: "cascade" }),
+  userId: varchar("user_id").notNull().references(() => users.id, { onUpdate: "cascade" }),
+  rowNumber: integer("row_number").notNull(),
+  sourceData: jsonb("source_data").notNull(),
+  placeId: text("place_id"),
+  businessName: text("business_name").notNull(),
+  address: text("address"),
+  address1: text("address_1"),
+  city: text("city"),
+  state: text("state"),
+  zipCode: text("zip_code"),
+  latitude: text("latitude"),
+  longitude: text("longitude"),
+  businessStatus: text("business_status"),
+  websiteUrl: text("website_url"),
+  email: text("email"),
+  phone: text("phone"),
+  contactRequestFormUrl: text("contact_request_form_url"),
+  bookingUrl: text("booking_url"),
+  currentSoftware: text("current_software"),
+  usesSoftware: text("uses_software").default("Unknown"),
+  hasWebsite: text("has_website").default("Unknown"),
+  audienceTrack: text("audience_track").default("directory_general"),
+  evidence: jsonb("evidence").notNull().default(sql`'{}'::jsonb`),
+  confidence: jsonb("confidence").notNull().default(sql`'{}'::jsonb`),
+  identityMatchStatus: text("identity_match_status").default("pending"), // pending, strong, ambiguous, unmatched
+  status: text("status").notNull().default("pending"), // pending, processing, enriched, failed, rejected, imported
+  reviewStatus: text("review_status").notNull().default("pending"), // pending, needs_review, approved, rejected
+  duplicateMetadata: jsonb("duplicate_metadata").notNull().default(sql`'{}'::jsonb`),
+  importedContactId: varchar("imported_contact_id").references(() => contacts.id),
+  serpCallsUsed: integer("serp_calls_used").notNull().default(0),
+  lastError: text("last_error"),
+  processedAt: timestamp("processed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("salon_enrichment_rows_batch_row_unique").on(table.batchId, table.rowNumber),
+  index("salon_enrichment_rows_batch_status_idx").on(table.batchId, table.status),
+  index("salon_enrichment_rows_batch_review_idx").on(table.batchId, table.reviewStatus),
+]);
+
 export const insertSerpUsageSchema = createInsertSchema(serpUsage).omit({
   id: true,
   createdAt: true,
@@ -456,6 +530,23 @@ export const insertLeadDiscoveryResultSchema = createInsertSchema(leadDiscoveryR
   createdAt: true,
 });
 
+export const insertSalonEnrichmentBatchSchema = createInsertSchema(salonEnrichmentBatches).omit({
+  id: true, userId: true, createdAt: true, updatedAt: true, startedAt: true,
+  pausedAt: true, completedAt: true,
+}).extend({
+  name: z.string().min(1),
+  pilotLimit: z.number().int().min(1).max(50000).optional(),
+  concurrency: z.number().int().min(1).max(10).optional(),
+});
+
+export const insertSalonEnrichmentRowSchema = createInsertSchema(salonEnrichmentRows).omit({
+  id: true, createdAt: true, updatedAt: true,
+}).extend({
+  businessName: z.string().min(1),
+  rowNumber: z.number().int().min(1),
+  sourceData: z.record(z.unknown()),
+});
+
 export type ContactGroup = typeof contactGroups.$inferSelect;
 export type InsertContactGroup = z.infer<typeof insertContactGroupSchema>;
 export type Contact = typeof contacts.$inferSelect;
@@ -478,6 +569,10 @@ export type LeadDiscoveryJob = typeof leadDiscoveryJobs.$inferSelect;
 export type InsertLeadDiscoveryJob = z.infer<typeof insertLeadDiscoveryJobSchema>;
 export type LeadDiscoveryResult = typeof leadDiscoveryResults.$inferSelect;
 export type InsertLeadDiscoveryResult = z.infer<typeof insertLeadDiscoveryResultSchema>;
+export type SalonEnrichmentBatch = typeof salonEnrichmentBatches.$inferSelect;
+export type InsertSalonEnrichmentBatch = z.infer<typeof insertSalonEnrichmentBatchSchema>;
+export type SalonEnrichmentRow = typeof salonEnrichmentRows.$inferSelect;
+export type InsertSalonEnrichmentRow = z.infer<typeof insertSalonEnrichmentRowSchema>;
 export type SerpUsage = typeof serpUsage.$inferSelect;
 export type InsertSerpUsage = z.infer<typeof insertSerpUsageSchema>;
 export type SerpCache = typeof serpCache.$inferSelect;

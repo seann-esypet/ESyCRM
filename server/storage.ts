@@ -30,6 +30,10 @@ import {
   type SerpUsage,
   type SerpCache,
   type LeadDiscoveryConfig,
+  type SalonEnrichmentBatch,
+  type InsertSalonEnrichmentBatch,
+  type SalonEnrichmentRow,
+  type InsertSalonEnrichmentRow,
   type Commission,
   type InsertCommission,
   type CommissionMonthlyPayment,
@@ -53,7 +57,10 @@ import {
   leadDiscoveryResults,
   serpUsage,
   serpCache,
+  serpCallReservations,
   leadDiscoveryConfig,
+  salonEnrichmentBatches,
+  salonEnrichmentRows,
   dealTasks,
   commissions,
   commissionMonthlyPayments,
@@ -62,7 +69,7 @@ import {
 } from "@shared/schema";
 import { normalizePhoneNumber, normalizeName, normalizeEmail } from "@shared/utils";
 import { db } from "./db";
-import { eq, desc, and, sql, gte, lte, or, ne, inArray } from "drizzle-orm";
+import { eq, desc, and, sql, gte, lte, or, ne, inArray, isNull } from "drizzle-orm";
 import { DIRECTORY_FIRST_STRATEGY, DIRECTORY_TRACKS, directoryEmailSequenceTemplates } from "./directoryEmailSequences";
 
 export type PayrollPreviewItem = {
@@ -226,11 +233,26 @@ export interface IStorage {
   bulkCreateLeadDiscoveryResults(results: InsertLeadDiscoveryResult[], userId: string): Promise<LeadDiscoveryResult[]>;
   updateLeadDiscoveryResult(id: string, result: Partial<LeadDiscoveryResult>, userId: string | null): Promise<LeadDiscoveryResult | undefined>;
   markResultsAsImported(resultIds: string[], contactIds: string[], userId: string | null): Promise<void>;
+
+  // Uploaded salon enrichment
+  getSalonEnrichmentBatches(userId: string | null): Promise<SalonEnrichmentBatch[]>;
+  getSalonEnrichmentBatch(id: string, userId: string | null): Promise<SalonEnrichmentBatch | undefined>;
+  createSalonEnrichmentBatch(data: InsertSalonEnrichmentBatch, rows: InsertSalonEnrichmentRow[], userId: string): Promise<SalonEnrichmentBatch>;
+  updateSalonEnrichmentBatch(id: string, data: Partial<SalonEnrichmentBatch>, userId: string | null): Promise<SalonEnrichmentBatch | undefined>;
+  getSalonEnrichmentRows(batchId: string, userId: string | null, filters?: { status?: string; reviewStatus?: string; search?: string; limit?: number; offset?: number }): Promise<SalonEnrichmentRow[]>;
+  getSalonEnrichmentRow(id: string, userId: string | null): Promise<SalonEnrichmentRow | undefined>;
+  updateSalonEnrichmentRow(id: string, data: Partial<SalonEnrichmentRow>, userId: string | null): Promise<SalonEnrichmentRow | undefined>;
+  markSalonRowsForReview(ids: string[], decision: "approved" | "rejected", userId: string | null): Promise<number>;
+  resetSalonRowsForRetry(ids: string[], userId: string | null): Promise<number>;
+  importApprovedSalonRows(batchId: string, rowIds: string[] | undefined, userId: string | null): Promise<{ imported: SalonEnrichmentRow[]; skipped: Array<{ rowId: string; reason: string }> }>;
+  refreshSalonEnrichmentBatchCounts(batchId: string, userId: string | null): Promise<SalonEnrichmentBatch | undefined>;
   
   // SERP Usage Tracking
   getSerpUsage(monthYear: string): Promise<SerpUsage | undefined>;
   getOrCreateSerpUsage(monthYear: string): Promise<SerpUsage>;
   incrementSerpUsage(monthYear: string): Promise<SerpUsage>;
+  reserveSerpCall(monthYear: string, maxCallsPerHour: number): Promise<string | null>;
+  releaseSerpCall(reservationId: string, monthYear: string): Promise<void>;
   updateSerpQuota(monthYear: string, quota: number, hardStopAt: number): Promise<SerpUsage | undefined>;
   
   // SERP Cache
@@ -396,6 +418,10 @@ export class DatabaseStorage implements IStorage {
     // Step 6: lead discovery — references users (results cascade from jobs)
     await db.delete(leadDiscoveryResults).where(eq(leadDiscoveryResults.userId, id));
     await db.delete(leadDiscoveryJobs).where(eq(leadDiscoveryJobs.userId, id));
+
+    // Step 6b: uploaded salon enrichment (rows reference both users and contacts)
+    await db.delete(salonEnrichmentRows).where(eq(salonEnrichmentRows.userId, id));
+    await db.delete(salonEnrichmentBatches).where(eq(salonEnrichmentBatches.userId, id));
 
     // Step 7: activities — references users, contacts, deals, AND tasks
     //         Must be deleted BEFORE tasks (activities.taskId → tasks.id)
@@ -1721,6 +1747,226 @@ export class DatabaseStorage implements IStorage {
     }
   }
 
+  // Uploaded salon enrichment
+  async getSalonEnrichmentBatches(userId: string | null): Promise<SalonEnrichmentBatch[]> {
+    return userId === null
+      ? db.select().from(salonEnrichmentBatches).orderBy(desc(salonEnrichmentBatches.createdAt))
+      : db.select().from(salonEnrichmentBatches).where(eq(salonEnrichmentBatches.userId, userId)).orderBy(desc(salonEnrichmentBatches.createdAt));
+  }
+
+  async getSalonEnrichmentBatch(id: string, userId: string | null): Promise<SalonEnrichmentBatch | undefined> {
+    const where = userId === null
+      ? eq(salonEnrichmentBatches.id, id)
+      : and(eq(salonEnrichmentBatches.id, id), eq(salonEnrichmentBatches.userId, userId));
+    const [batch] = await db.select().from(salonEnrichmentBatches).where(where);
+    return batch;
+  }
+
+  async createSalonEnrichmentBatch(data: InsertSalonEnrichmentBatch, rows: InsertSalonEnrichmentRow[], userId: string): Promise<SalonEnrichmentBatch> {
+    return await db.transaction(async (tx) => {
+      const [batch] = await tx.insert(salonEnrichmentBatches).values({
+        ...data,
+        userId,
+        totalRows: rows.length,
+        pilotLimit: data.pilotLimit ?? 100,
+        concurrency: data.concurrency ?? 2,
+      }).returning();
+      if (rows.length) {
+        await tx.insert(salonEnrichmentRows).values(rows.map(row => ({
+          ...row,
+          batchId: batch.id,
+          userId,
+          sourceData: row.sourceData ?? {},
+        }))).onConflictDoNothing();
+      }
+      return batch;
+    });
+  }
+
+  async updateSalonEnrichmentBatch(id: string, data: Partial<SalonEnrichmentBatch>, userId: string | null): Promise<SalonEnrichmentBatch | undefined> {
+    const where = userId === null
+      ? eq(salonEnrichmentBatches.id, id)
+      : and(eq(salonEnrichmentBatches.id, id), eq(salonEnrichmentBatches.userId, userId));
+    const [updated] = await db.update(salonEnrichmentBatches).set({ ...data, updatedAt: new Date() }).where(where).returning();
+    return updated;
+  }
+
+  async getSalonEnrichmentRows(batchId: string, userId: string | null, filters: { status?: string; reviewStatus?: string; search?: string; limit?: number; offset?: number } = {}): Promise<SalonEnrichmentRow[]> {
+    const clauses = [eq(salonEnrichmentRows.batchId, batchId)];
+    if (userId !== null) clauses.push(eq(salonEnrichmentRows.userId, userId));
+    if (filters.status) clauses.push(eq(salonEnrichmentRows.status, filters.status));
+    if (filters.reviewStatus) clauses.push(eq(salonEnrichmentRows.reviewStatus, filters.reviewStatus));
+    if (filters.search) {
+      const term = `%${filters.search.replace(/[%_]/g, "\\$&").toLowerCase()}%`;
+      clauses.push(sql`(lower(${salonEnrichmentRows.businessName}) like ${term} or lower(coalesce(${salonEnrichmentRows.city}, '')) like ${term} or lower(coalesce(${salonEnrichmentRows.email}, '')) like ${term})`);
+    }
+    const query = db.select().from(salonEnrichmentRows).where(and(...clauses)).orderBy(salonEnrichmentRows.rowNumber);
+    if (filters.limit !== undefined) {
+      return await query.limit(filters.limit).offset(filters.offset ?? 0);
+    }
+    return await query;
+  }
+
+  async getSalonEnrichmentRow(id: string, userId: string | null): Promise<SalonEnrichmentRow | undefined> {
+    const where = userId === null ? eq(salonEnrichmentRows.id, id) : and(eq(salonEnrichmentRows.id, id), eq(salonEnrichmentRows.userId, userId));
+    const [row] = await db.select().from(salonEnrichmentRows).where(where);
+    return row;
+  }
+
+  async updateSalonEnrichmentRow(id: string, data: Partial<SalonEnrichmentRow>, userId: string | null): Promise<SalonEnrichmentRow | undefined> {
+    const where = userId === null ? eq(salonEnrichmentRows.id, id) : and(eq(salonEnrichmentRows.id, id), eq(salonEnrichmentRows.userId, userId));
+    const [updated] = await db.update(salonEnrichmentRows).set({ ...data, updatedAt: new Date() }).where(where).returning();
+    return updated;
+  }
+
+  async markSalonRowsForReview(ids: string[], decision: "approved" | "rejected", userId: string | null): Promise<number> {
+    if (!ids.length) return 0;
+    const owner = userId === null ? undefined : eq(salonEnrichmentRows.userId, userId);
+    const where = owner ? and(inArray(salonEnrichmentRows.id, ids), owner) : inArray(salonEnrichmentRows.id, ids);
+    const result = await db.update(salonEnrichmentRows).set({
+      reviewStatus: decision,
+      updatedAt: new Date(),
+    }).where(where);
+    return result.rowCount ?? 0;
+  }
+
+  async resetSalonRowsForRetry(ids: string[], userId: string | null): Promise<number> {
+    if (!ids.length) return 0;
+    const owner = userId === null ? undefined : eq(salonEnrichmentRows.userId, userId);
+    const where = owner ? and(inArray(salonEnrichmentRows.id, ids), owner) : inArray(salonEnrichmentRows.id, ids);
+    const result = await db.update(salonEnrichmentRows).set({
+      status: "pending", reviewStatus: "pending", lastError: null, processedAt: null, updatedAt: new Date(),
+    }).where(where);
+    return result.rowCount ?? 0;
+  }
+
+  async refreshSalonEnrichmentBatchCounts(batchId: string, userId: string | null): Promise<SalonEnrichmentBatch | undefined> {
+    const batch = await this.getSalonEnrichmentBatch(batchId, userId);
+    if (!batch) return undefined;
+    const ownerClause = userId === null ? undefined : eq(salonEnrichmentRows.userId, userId);
+    const where = ownerClause
+      ? and(eq(salonEnrichmentRows.batchId, batchId), ownerClause)
+      : eq(salonEnrichmentRows.batchId, batchId);
+    const [counts] = await db.select({
+      totalRows: sql<number>`count(*)::int`,
+      processedRows: sql<number>`count(*) filter (where ${salonEnrichmentRows.status} in ('enriched','failed','rejected','imported'))::int`,
+      enrichedRows: sql<number>`count(*) filter (where ${salonEnrichmentRows.status} in ('enriched','imported'))::int`,
+      needsReviewRows: sql<number>`count(*) filter (where ${salonEnrichmentRows.reviewStatus} = 'needs_review')::int`,
+      approvedRows: sql<number>`count(*) filter (where ${salonEnrichmentRows.reviewStatus} = 'approved')::int`,
+      importedRows: sql<number>`count(*) filter (where ${salonEnrichmentRows.status} = 'imported')::int`,
+      usedSerpCalls: sql<number>`coalesce(sum(${salonEnrichmentRows.serpCallsUsed}), 0)::int`,
+    }).from(salonEnrichmentRows).where(where);
+    return await this.updateSalonEnrichmentBatch(batchId, {
+      ...counts,
+    }, userId);
+  }
+
+  async importApprovedSalonRows(batchId: string, rowIds: string[] | undefined, userId: string | null): Promise<{ imported: SalonEnrichmentRow[]; skipped: Array<{ rowId: string; reason: string }> }> {
+    const result = await db.transaction(async (tx) => {
+      // Serialize imports for this batch. The contact insert and source-row
+      // marker then commit together, so retries cannot create orphan duplicates.
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`salon-import:${batchId}`}))`);
+      const batchWhere = userId === null
+        ? eq(salonEnrichmentBatches.id, batchId)
+        : and(eq(salonEnrichmentBatches.id, batchId), eq(salonEnrichmentBatches.userId, userId));
+      const [batch] = await tx.select().from(salonEnrichmentBatches).where(batchWhere);
+      if (!batch) return { imported: [] as SalonEnrichmentRow[], skipped: [{ rowId: batchId, reason: "Batch not found" }], ownerId: null };
+
+      const ownerId = batch.userId;
+      const rows = await tx.select().from(salonEnrichmentRows).where(and(
+        eq(salonEnrichmentRows.batchId, batchId),
+        eq(salonEnrichmentRows.userId, ownerId),
+      ));
+      const selected = rows.filter(row =>
+        (!rowIds || rowIds.includes(row.id)) &&
+        row.reviewStatus === "approved" &&
+        row.status === "enriched",
+      );
+      const existingContacts = await tx.select().from(contacts).where(eq(contacts.userId, ownerId));
+      const imported: SalonEnrichmentRow[] = [];
+      const skipped: Array<{ rowId: string; reason: string }> = [];
+
+      for (const row of selected) {
+        if (row.importedContactId) {
+          skipped.push({ rowId: row.id, reason: "Already imported" });
+          continue;
+        }
+        const emailEvidence = (row.evidence as any)?.email;
+        const verifiedEmail = row.email &&
+          emailEvidence?.source === "website" &&
+          emailEvidence?.confidence === "high" &&
+          normalizeEmail(emailEvidence?.value) === normalizeEmail(row.email)
+          ? row.email
+          : null;
+        const companyKey = normalizeName(row.businessName);
+        const addressKey = normalizeName(row.address1 || row.address);
+        const phoneKey = normalizePhoneNumber(row.phone);
+        const emailKey = normalizeEmail(verifiedEmail);
+        const duplicates = existingContacts.filter(contact =>
+          (phoneKey && normalizePhoneNumber(contact.phone) === phoneKey) ||
+          (emailKey && normalizeEmail(contact.email) === emailKey) ||
+          (companyKey && addressKey &&
+            normalizeName(contact.company) === companyKey &&
+            normalizeName(contact.address) === addressKey &&
+            (!row.zipCode || !contact.zipCode || contact.zipCode === row.zipCode)),
+        );
+        if (duplicates.length) {
+          await tx.update(salonEnrichmentRows).set({
+            duplicateMetadata: { contactIds: duplicates.map(contact => contact.id), reason: "Existing contact match" },
+            reviewStatus: "needs_review",
+            updatedAt: new Date(),
+          }).where(eq(salonEnrichmentRows.id, row.id));
+          skipped.push({ rowId: row.id, reason: "Potential duplicate contact" });
+          continue;
+        }
+
+        const [contact] = await tx.insert(contacts).values({
+          userId: ownerId,
+          firstName: null,
+          lastName: null,
+          company: row.businessName,
+          email: verifiedEmail,
+          phone: row.phone,
+          address: row.address1 || row.address,
+          city: row.city,
+          state: row.state,
+          zipCode: row.zipCode,
+          usesSoftware: row.usesSoftware || "Unknown",
+          currentSoftware: row.currentSoftware,
+          hasWebsite: row.hasWebsite || "Unknown",
+          websiteUrl: row.websiteUrl,
+          contactRequestFormUrl: row.contactRequestFormUrl,
+          bookingSoftwareUrl: row.bookingUrl,
+          leadSource: "Google Search",
+          businessType: "salon",
+          sequenceTrack: row.audienceTrack || "directory_general",
+          notes: JSON.stringify({ enrichmentRowId: row.id, placeId: row.placeId, evidence: row.evidence, confidence: row.confidence }),
+          lastContactDate: new Date(),
+        }).returning();
+        await tx.insert(activities).values({
+          userId: ownerId,
+          type: "contact_added",
+          description: `New contact for ${row.businessName} added from salon enrichment`,
+          contactId: contact.id,
+        });
+        const [updated] = await tx.update(salonEnrichmentRows).set({
+          importedContactId: contact.id,
+          status: "imported",
+          updatedAt: new Date(),
+        }).where(and(
+          eq(salonEnrichmentRows.id, row.id),
+          isNull(salonEnrichmentRows.importedContactId),
+        )).returning();
+        if (!updated) throw new Error(`Row ${row.id} was imported concurrently`);
+        imported.push(updated);
+        existingContacts.push(contact);
+      }
+      return { imported, skipped, ownerId };
+    });
+    if (result.ownerId) await this.refreshSalonEnrichmentBatchCounts(batchId, result.ownerId);
+    return { imported: result.imported, skipped: result.skipped };
+  }
+
   // SERP Usage Tracking
   async getSerpUsage(monthYear: string): Promise<SerpUsage | undefined> {
     const [usage] = await db
@@ -1742,13 +1988,48 @@ export class DatabaseStorage implements IStorage {
   }
 
   async incrementSerpUsage(monthYear: string): Promise<SerpUsage> {
-    const usage = await this.getOrCreateSerpUsage(monthYear);
+    await this.getOrCreateSerpUsage(monthYear);
     const [updated] = await db
       .update(serpUsage)
-      .set({ usedCredits: (usage.usedCredits || 0) + 1 })
+      .set({ usedCredits: sql`${serpUsage.usedCredits} + 1` })
       .where(eq(serpUsage.monthYear, monthYear))
       .returning();
     return updated;
+  }
+
+  async reserveSerpCall(monthYear: string, maxCallsPerHour: number): Promise<string | null> {
+    return db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('serp-call-reservation'))`);
+      let [usage] = await tx.select().from(serpUsage).where(eq(serpUsage.monthYear, monthYear));
+      if (!usage) {
+        [usage] = await tx.insert(serpUsage).values({
+          monthYear, usedCredits: 0, monthlyQuota: 250, hardStopAt: 200,
+        }).returning();
+      }
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+      const [hourly] = await tx.select({ count: sql<number>`count(*)::int` })
+        .from(serpCallReservations)
+        .where(gte(serpCallReservations.createdAt, oneHourAgo));
+      if (usage.usedCredits >= usage.hardStopAt || hourly.count >= maxCallsPerHour) return null;
+      await tx.update(serpUsage)
+        .set({ usedCredits: sql`${serpUsage.usedCredits} + 1` })
+        .where(eq(serpUsage.monthYear, monthYear));
+      const [reservation] = await tx.insert(serpCallReservations).values({}).returning();
+      return reservation.id;
+    });
+  }
+
+  async releaseSerpCall(reservationId: string, monthYear: string): Promise<void> {
+    await db.transaction(async (tx) => {
+      const deleted = await tx.delete(serpCallReservations)
+        .where(eq(serpCallReservations.id, reservationId))
+        .returning();
+      if (deleted.length) {
+        await tx.update(serpUsage)
+          .set({ usedCredits: sql`greatest(${serpUsage.usedCredits} - 1, 0)` })
+          .where(eq(serpUsage.monthYear, monthYear));
+      }
+    });
   }
 
   async updateSerpQuota(monthYear: string, quota: number, hardStopAt: number): Promise<SerpUsage | undefined> {
@@ -2114,12 +2395,10 @@ export class DatabaseStorage implements IStorage {
   async getSerpCallsInLastHour(): Promise<number> {
     const oneHourAgo = new Date();
     oneHourAgo.setHours(oneHourAgo.getHours() - 1);
-    
-    const cached = await db
-      .select()
-      .from(serpCache)
-      .where(gte(serpCache.createdAt, oneHourAgo));
-    return cached.length;
+    const [result] = await db.select({ count: sql<number>`count(*)::int` })
+      .from(serpCallReservations)
+      .where(gte(serpCallReservations.createdAt, oneHourAgo));
+    return result.count;
   }
 }
 

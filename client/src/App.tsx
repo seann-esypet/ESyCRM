@@ -21,6 +21,7 @@ import AdminSequenceTest from "@/pages/admin-sequence-test";
 import LeadDiscovery from "@/pages/lead-discovery";
 import DealWorkspace from "@/pages/deal-workspace";
 import PayrollDetail from "@/pages/payroll-detail";
+import SalonEnrichment from "@/pages/salon-enrichment";
 import Sidebar from "@/components/layout/sidebar";
 
 // Silently ping the server every 10 minutes so the auth token stays refreshed
@@ -66,6 +67,8 @@ function Router() {
         <Switch>
           <Route path="/" component={Dashboard} />
           <Route path="/lead-discovery" component={LeadDiscovery} />
+          <Route path="/salon-enrichment/:id" component={SalonEnrichment} />
+          <Route path="/salon-enrichment" component={SalonEnrichment} />
           <Route path="/contacts" component={Contacts} />
           <Route path="/deal/:id" component={DealWorkspace} />
           <Route path="/deals" component={Deals} />

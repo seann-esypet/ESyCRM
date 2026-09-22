@@ -1,0 +1,175 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { useLocation, useParams } from "wouter";
+import * as XLSX from "xlsx";
+import Papa from "papaparse";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import Header from "@/components/layout/header";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Textarea } from "@/components/ui/textarea";
+import { Upload, ArrowLeft, Play, Pause, Square, Search, RefreshCw, Check, X, RotateCcw, ShieldCheck, FileSpreadsheet, AlertTriangle, ExternalLink } from "lucide-react";
+
+type Batch = { id: string; name: string; fileName: string; status: string; totalRows: number; pilotLimit: number; processedRows: number; enrichedRows: number; needsReviewRows: number; reviewRows?: number; approvedRows: number; importedRows: number; estimatedSerpCalls: number; usedSerpCalls: number; concurrency: number; errorMessage?: string; createdAt: string };
+type Row = { id: string; rowNumber: number; businessName: string; placeId?: string; address?: string; address1?: string; city?: string; state?: string; zipCode?: string; latitude?: number; longitude?: number; businessStatus?: string; status?: string; reviewStatus?: string; websiteUrl?: string; email?: string; phone?: string; contactRequestFormUrl?: string; bookingUrl?: string; currentSoftware?: string; usesSoftware?: string; audienceTrack?: string; emailVerified?: boolean | string; evidence?: unknown; confidence?: unknown; duplicateMetadata?: unknown; lastError?: string; importedContactId?: string; sourceData?: Record<string, unknown> };
+
+const columns = ["businessName", "placeId", "address", "address1", "city", "state", "zipCode", "latitude", "longitude", "businessStatus"];
+const aliases: Record<string, string[]> = {
+  businessName: ["businessName", "company", "varLocationName"], placeId: ["placeId", "googlePlaceId", "GooglePlaceID"],
+  address: ["address", "FormattedAddress"], address1: ["address1", "varLocationAddress1"], city: ["city", "varLocationCity"],
+  state: ["state", "varLocationState"], zipCode: ["zipCode", "zip", "varLocationZip"], latitude: ["latitude", "Latitude"],
+  longitude: ["longitude", "Longitude"], businessStatus: ["businessStatus", "Business Status"],
+};
+const statusTone: Record<string, string> = { running: "bg-emerald-100 text-emerald-800", completed: "bg-blue-100 text-blue-800", paused: "bg-amber-100 text-amber-800", cancelled: "bg-slate-100 text-slate-700", failed: "bg-red-100 text-red-800", pending: "bg-slate-100 text-slate-700" };
+
+function readFile(file: File): Promise<Record<string, unknown>[]> {
+  return new Promise((resolve, reject) => {
+    if (file.name.toLowerCase().endsWith(".csv")) {
+      Papa.parse<Record<string, unknown>>(file, { header: true, skipEmptyLines: true, complete: r => resolve(r.data), error: reject });
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const book = XLSX.read(e.target?.result, { type: "array" });
+        const sheet = book.Sheets[book.SheetNames[0]];
+        resolve(XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" }));
+      } catch (error) { reject(error); }
+    };
+    reader.onerror = () => reject(new Error("Could not read this file"));
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+type NormalizedUploadRow = Record<string, unknown> & {
+  rowNumber: number;
+  sourceData: Record<string, unknown>;
+};
+
+function normalizeRows(rows: Record<string, unknown>[], mapping: Record<string, string>): NormalizedUploadRow[] {
+  return rows.map((row, index) => ({
+    rowNumber: index + 2,
+    sourceData: row,
+    ...Object.fromEntries(columns.map(key => [key, String(row[mapping[key]] ?? "").trim()])),
+  }));
+}
+
+function prettyObject(value: unknown): string {
+  if (!value) return "—";
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(v => prettyObject(v)).join(" · ");
+  if (typeof value === "object") return Object.entries(value as Record<string, unknown>).map(([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : String(v)}`).join(" · ");
+  return String(value);
+}
+
+export default function SalonEnrichment() {
+  const { id } = useParams<{ id?: string }>();
+  const [, setLocation] = useLocation();
+  const { toast } = useToast();
+  const [file, setFile] = useState<File | null>(null);
+  const [rawRows, setRawRows] = useState<Record<string, unknown>[]>([]);
+  const [mapping, setMapping] = useState<Record<string, string>>({});
+  const [name, setName] = useState("");
+  const [pilotLimit, setPilotLimit] = useState("100");
+  const [concurrency, setConcurrency] = useState("2");
+  const [search, setSearch] = useState("");
+  const [rowStatus, setRowStatus] = useState("all");
+  const [reviewStatus, setReviewStatus] = useState("all");
+  const [page, setPage] = useState(0);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [editing, setEditing] = useState<Row | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const isDetail = Boolean(id);
+
+  const batchesQuery = useQuery<Batch[]>({ queryKey: ["/api/salon-enrichment/batches"], enabled: !isDetail, select: data => data.map(item => ({ ...item, reviewRows: item.needsReviewRows })) });
+  const batchQuery = useQuery<Batch>({ queryKey: ["/api/salon-enrichment/batches", id], enabled: isDetail });
+  const rowsQuery = useQuery<Row[]>({
+    queryKey: ["/api/salon-enrichment/batches", id, "rows", rowStatus, reviewStatus, search, page],
+    enabled: isDetail,
+    queryFn: async () => {
+      const qs = new URLSearchParams();
+      if (rowStatus !== "all") qs.set("status", rowStatus);
+      if (reviewStatus !== "all") qs.set("reviewStatus", reviewStatus);
+      if (search) qs.set("search", search);
+      qs.set("limit", "100");
+      qs.set("offset", String(page * 100));
+      const res = await apiRequest("GET", `/api/salon-enrichment/batches/${id}/rows?${qs}`);
+      return res.json();
+    },
+    refetchInterval: batchQuery.data?.status === "running" ? 4000 : false,
+  });
+  const batch = batchQuery.data ? ({ ...batchQuery.data, reviewRows: batchQuery.data.needsReviewRows } as Batch & { reviewRows: number }) : undefined;
+  const rows = rowsQuery.data ?? [];
+  const headers = useMemo(() => Object.keys(rawRows[0] ?? {}), [rawRows]);
+  const rejectedCount = useMemo(() => rawRows.filter(row => !String(row[mapping.businessName] ?? "").trim()).length, [rawRows, mapping.businessName]);
+  useEffect(() => setPage(0), [rowStatus, reviewStatus, search]);
+  useEffect(() => {
+    if (batch?.status !== "running") return;
+    const timer = window.setInterval(() => { batchQuery.refetch(); rowsQuery.refetch(); }, 4000);
+    return () => window.clearInterval(timer);
+  }, [batch?.status, batchQuery.refetch, rowsQuery.refetch]);
+
+  useEffect(() => {
+    if (!file || rawRows.length) return;
+    readFile(file).then(parsed => {
+      setRawRows(parsed);
+      const keys = Object.keys(parsed[0] ?? {});
+      const next: Record<string, string> = {};
+      columns.forEach(column => { next[column] = keys.find(k => aliases[column].some(alias => k.toLowerCase().replace(/[\s_-]/g, "") === alias.toLowerCase().replace(/[\s_-]/g, ""))) ?? ""; });
+      setMapping(next);
+    }).catch(error => toast({ title: "File could not be parsed", description: error.message, variant: "destructive" }));
+  }, [file, rawRows.length, toast]);
+
+  const create = useMutation({
+    mutationFn: async () => (await apiRequest("POST", "/api/salon-enrichment/batches", { name: name.trim() || file?.name || "Salon list", fileName: file?.name, pilotLimit: Number(pilotLimit), concurrency: Math.min(10, Math.max(1, Number(concurrency))), rows: normalizeRows(rawRows, mapping).filter(row => String(row.businessName ?? "").trim()), columnMapping: mapping })).json(),
+    onSuccess: data => { queryClient.invalidateQueries({ queryKey: ["/api/salon-enrichment/batches"] }); setLocation(`/salon-enrichment/${data.id}`); toast({ title: "Batch created", description: "Your pilot is ready to run." }); },
+    onError: (e: Error) => toast({ title: "Batch creation failed", description: e.message, variant: "destructive" }),
+  });
+  const action = useMutation({
+    mutationFn: async ({ action: actionName, body }: { action: string; body?: unknown }) => (await apiRequest("POST", `/api/salon-enrichment/batches/${id}/${actionName}`, body)).json(),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/salon-enrichment/batches", id] }); queryClient.invalidateQueries({ queryKey: ["/api/salon-enrichment/batches", id, "rows"] }); },
+    onError: (e: Error) => toast({ title: "Action failed", description: e.message, variant: "destructive" }),
+  });
+  const patch = useMutation({
+    mutationFn: async (row: Row) => (await apiRequest("PATCH", `/api/salon-enrichment/rows/${row.id}`, Object.fromEntries(["email", "phone", "websiteUrl", "contactRequestFormUrl", "bookingUrl", "currentSoftware", "usesSoftware", "audienceTrack"].map(key => [key, row[key as keyof Row]])))).json(),
+    onSuccess: () => { setEditing(null); queryClient.invalidateQueries({ queryKey: ["/api/salon-enrichment/batches", id, "rows"] }); toast({ title: "Row updated" }); },
+  });
+
+  if (!isDetail) return (
+    <div className="flex-1 overflow-y-auto"><Header title="Salon Enrichment" /><main className="p-6 max-w-[1400px] mx-auto space-y-6">
+      <div className="flex justify-between items-end"><div><p className="text-xs font-semibold tracking-[0.16em] uppercase text-muted-foreground">Data operations</p><h1 className="text-2xl font-semibold mt-1">Enrichment workspace</h1><p className="text-sm text-muted-foreground mt-1">Turn raw salon lists into evidence-backed contacts, one safe pilot at a time.</p></div><Button onClick={() => fileRef.current?.click()}><Upload className="h-4 w-4 mr-2" />Upload list</Button></div>
+      <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls" className="hidden" onChange={e => { const picked = e.target.files?.[0]; if (picked) { setFile(picked); setRawRows([]); } }} />
+       {file && rawRows.length > 0 && <Card className="border-primary/30"><CardHeader><CardTitle className="text-base flex items-center gap-2"><FileSpreadsheet className="h-4 w-4 text-primary" />{file.name} <Badge variant="secondary">{rawRows.length.toLocaleString()} rows</Badge>{rejectedCount > 0 && <Badge variant="destructive">{rejectedCount} rejected: missing business name</Badge>}</CardTitle></CardHeader><CardContent className="space-y-5"><div className="grid grid-cols-1 md:grid-cols-4 gap-4"><div className="md:col-span-2"><Label>Batch name</Label><Input value={name} onChange={e => setName(e.target.value)} placeholder="Austin salons — Q2 pilot" /></div><div><Label>Pilot limit</Label><Input type="number" min="1" value={pilotLimit} onChange={e => setPilotLimit(e.target.value)} /></div><div><Label>Concurrency (1–10)</Label><Input type="number" min="1" max="10" value={concurrency} onChange={e => setConcurrency(e.target.value)} /></div></div><div><div className="flex items-center justify-between mb-2"><div><Label>Column mapping</Label><p className="text-xs text-muted-foreground">Business name is required. Original source rows are preserved.</p></div><Badge variant="outline">{headers.length} source columns detected</Badge></div><div className="grid grid-cols-2 md:grid-cols-4 gap-3">{columns.map(column => <div key={column}><Label className="text-xs capitalize">{column === "zipCode" ? "ZIP code" : column}</Label><Select value={mapping[column] || "none"} onValueChange={v => setMapping(m => ({ ...m, [column]: v === "none" ? "" : v }))}><SelectTrigger className="h-9"><SelectValue placeholder="Not mapped" /></SelectTrigger><SelectContent><SelectItem value="none">Not mapped</SelectItem>{headers.map(header => <SelectItem key={header} value={header}>{header}</SelectItem>)}</SelectContent></Select></div>)}</div></div><div className="rounded-md border bg-muted/30 overflow-auto"><table className="w-full text-xs"><thead><tr>{columns.slice(0, 5).map(c => <th key={c} className="text-left p-2 font-medium">{c}</th>)}</tr></thead><tbody>{normalizeRows(rawRows.slice(0, 4), mapping).map((r, i) => <tr key={i} className="border-t">{columns.slice(0, 5).map(c => <td key={c} className="p-2 max-w-[180px] truncate">{prettyObject(r[c])}</td>)}</tr>)}</tbody></table></div><div className="flex justify-end gap-2"><Button variant="outline" onClick={() => { setFile(null); setRawRows([]); }}>Choose another</Button><Button disabled={!mapping.businessName || rejectedCount === rawRows.length || create.isPending} onClick={() => create.mutate()}>{create.isPending ? "Creating…" : "Create enrichment batch"}</Button></div></CardContent></Card>}
+      {!file && <Card className="border-dashed"><CardContent className="py-14 text-center"><Upload className="h-8 w-8 mx-auto text-muted-foreground mb-3" /><p className="font-medium">Upload CSV or XLSX to begin</p><p className="text-sm text-muted-foreground mt-1">Browser-parsed locally before anything is sent. No auto-enrollment.</p><Button variant="outline" className="mt-4" onClick={() => fileRef.current?.click()}>Select file</Button></CardContent></Card>}
+      <section><div className="flex items-center justify-between mb-3"><h2 className="font-semibold">Recent batches</h2><span className="text-xs text-muted-foreground">{batchesQuery.data?.length ?? 0} batches</span></div>{batchesQuery.isLoading ? <div className="h-20 rounded bg-muted animate-pulse" /> : <div className="space-y-2">{(batchesQuery.data ?? []).map(item => <button key={item.id} onClick={() => setLocation(`/salon-enrichment/${item.id}`)} className="w-full text-left border rounded-lg p-4 bg-card hover:border-primary/50 transition-colors"><div className="flex items-center justify-between"><div><p className="font-medium">{item.name}</p><p className="text-xs text-muted-foreground mt-1">{item.fileName} · {new Date(item.createdAt).toLocaleString()}</p></div><Badge className={statusTone[item.status] ?? ""}>{item.status}</Badge></div><div className="grid grid-cols-4 gap-4 mt-4 text-xs"><span><b>{item.totalRows}</b> rows</span><span><b>{item.enrichedRows}</b> enriched</span><span><b>{item.reviewRows}</b> to review</span><span><b>{item.importedRows}</b> imported</span></div></button>)}{!batchesQuery.data?.length && <p className="text-sm text-muted-foreground border rounded-lg p-8 text-center">No batches yet. Upload your first salon list.</p>}</div>}</section>
+    </main></div>
+  );
+
+  const progress = batch?.totalRows ? ((batch.processedRows ?? 0) / batch.totalRows) * 100 : 0;
+  const run = (actionName: string) => {
+    const body = actionName === "resume" && batch && batch.processedRows >= batch.pilotLimit && batch.pilotLimit < batch.totalRows
+      ? { pilotLimit: Math.min(batch.totalRows, batch.pilotLimit + 100) }
+      : undefined;
+    action.mutate({ action: actionName, body });
+  };
+  const review = (decision: string) => action.mutate({ action: "rows/review", body: { rowIds: selected, decision } });
+  const canSelect = rows.filter(r => !r.importedContactId).map(r => r.id);
+  return <div className="flex-1 overflow-y-auto"><Header title="Salon Enrichment" /><main className="p-6 max-w-[1600px] mx-auto space-y-5">
+    <button className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1" onClick={() => setLocation("/salon-enrichment")}><ArrowLeft className="h-4 w-4" />All batches</button>
+      {batch && <><div className="flex flex-wrap justify-between gap-4"><div><div className="flex items-center gap-3"><h1 className="text-2xl font-semibold">{batch.name}</h1><Badge className={statusTone[batch.status] ?? ""}>{batch.status}</Badge></div><p className="text-sm text-muted-foreground mt-1">{batch.fileName} · pilot cap {batch.pilotLimit} · concurrency {batch.concurrency}</p></div><div className="flex gap-2">{["pending", "paused"].includes(batch.status) && <Button onClick={() => run(batch.status === "paused" ? "resume" : "start")}><Play className="h-4 w-4 mr-1.5" />{batch.status === "paused" && batch.processedRows >= batch.pilotLimit && batch.pilotLimit < batch.totalRows ? "Run next 100" : batch.status === "paused" ? "Resume" : "Start pilot"}</Button>}{batch.status === "running" && <Button variant="outline" onClick={() => run("pause")}><Pause className="h-4 w-4 mr-1.5" />Pause</Button>}{["running", "paused"].includes(batch.status) && <Button variant="outline" onClick={() => run("cancel")}><Square className="h-4 w-4 mr-1.5" />Cancel</Button>}</div></div>
+      <Card><CardContent className="p-4"><div className="flex justify-between text-sm mb-2"><span className="font-medium">Processing progress</span><span>{batch.processedRows ?? 0} / {batch.totalRows} rows</span></div><Progress value={progress} className="h-2" /><div className="grid grid-cols-2 md:grid-cols-5 gap-4 mt-4 text-xs"><span><b className="text-foreground">{batch.enrichedRows ?? 0}</b> enriched</span><span><b className="text-foreground">{batch.reviewRows ?? 0}</b> need review</span><span><b className="text-foreground">{batch.approvedRows ?? 0}</b> approved</span><span><b className="text-foreground">{batch.estimatedSerpCalls ?? 0}</b> SERP est. / <b>{batch.usedSerpCalls ?? 0}</b> used</span><span><b className="text-foreground">{batch.importedRows ?? 0}</b> imported</span></div>{batch.errorMessage && <p className="text-sm text-red-700 mt-3 flex gap-2"><AlertTriangle className="h-4 w-4" />{batch.errorMessage}</p>}</CardContent></Card>
+      <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950 flex gap-2"><ShieldCheck className="h-4 w-4 mt-0.5 shrink-0" /><span><b>Safe import boundary:</b> importing never auto-enrolls contacts in a sequence. Contacts with missing or unverified emails can still be stored, but only verified-email contacts are sequence-ready.</span></div>
+      <div className="flex flex-wrap gap-2 items-center"><div className="relative flex-1 min-w-[220px] max-w-sm"><Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" /><Input className="pl-8" placeholder="Search business, city, email…" value={search} onChange={e => setSearch(e.target.value)} /></div><Select value={rowStatus} onValueChange={setRowStatus}><SelectTrigger className="w-36"><SelectValue /></SelectTrigger><SelectContent>{["all", "pending", "processing", "enriched", "failed"].map(v => <SelectItem key={v} value={v}>{v === "all" ? "All statuses" : v}</SelectItem>)}</SelectContent></Select><Select value={reviewStatus} onValueChange={setReviewStatus}><SelectTrigger className="w-36"><SelectValue /></SelectTrigger><SelectContent>{["all", "pending", "needs_review", "approved", "rejected"].map(v => <SelectItem key={v} value={v}>{v === "all" ? "All review" : v}</SelectItem>)}</SelectContent></Select><Button variant="ghost" size="icon" onClick={() => { batchQuery.refetch(); rowsQuery.refetch(); }}><RefreshCw className="h-4 w-4" /></Button><div className="ml-auto flex items-center gap-2"><Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage(value => value - 1)}>Previous</Button><span className="text-xs text-muted-foreground">Page {page + 1}</span><Button variant="outline" size="sm" disabled={rows.length < 100} onClick={() => setPage(value => value + 1)}>Next</Button></div></div>
+      <div className="flex flex-wrap items-center gap-2 border-y py-3"><Checkbox checked={selected.length > 0 && selected.length === canSelect.length} onCheckedChange={checked => setSelected(checked ? canSelect : [])} /><span className="text-sm text-muted-foreground">{selected.length} selected</span><Button size="sm" variant="outline" disabled={!selected.length} onClick={() => review("approved")}><Check className="h-3.5 w-3.5 mr-1" />Approve</Button><Button size="sm" variant="outline" disabled={!selected.length} onClick={() => review("rejected")}><X className="h-3.5 w-3.5 mr-1" />Reject</Button><Button size="sm" variant="outline" disabled={!selected.length} onClick={() => action.mutate({ action: "rows/retry", body: { rowIds: selected } })}><RotateCcw className="h-3.5 w-3.5 mr-1" />Retry</Button><Button size="sm" className="ml-auto" disabled={!selected.length || selected.some(rowId => !rows.find(r => r.id === rowId)?.reviewStatus || rows.find(r => r.id === rowId)?.reviewStatus !== "approved")} onClick={() => action.mutate({ action: "import", body: { rowIds: selected } })}>Import approved</Button></div>
+       <div className="border rounded-lg overflow-auto"><table className="w-full text-xs min-w-[1100px]"><thead className="bg-muted/60"><tr>{["", "Row / business", "Location", "Contact", "Software", "Evidence", "Confidence", "Review", ""].map((h, i) => <th key={i} className="text-left font-medium p-3 whitespace-nowrap">{h}</th>)}</tr></thead><tbody>{rowsQuery.isLoading ? <tr><td colSpan={9} className="p-10 text-center text-muted-foreground">Loading enrichment rows…</td></tr> : rows.map(row => <tr key={row.id} className="border-t hover:bg-muted/20"><td className="p-3"><Checkbox disabled={!!row.importedContactId} checked={selected.includes(row.id)} onCheckedChange={checked => setSelected(s => checked ? [...s, row.id] : s.filter(x => x !== row.id))} /></td><td className="p-3"><div className="font-medium">{row.businessName || "Unnamed business"}</div><div className="text-muted-foreground">#{row.rowNumber} {Boolean(row.duplicateMetadata && Object.keys(row.duplicateMetadata as object).length) && <span className="text-amber-700 ml-1">Duplicate warning</span>}</div></td><td className="p-3">{[row.city, row.state, row.zipCode].filter(Boolean).join(", ") || "—"}<div className="text-muted-foreground max-w-[180px] truncate">{row.address || row.address1}</div></td><td className="p-3"><div>{row.email || "—"} {String(row.emailVerified) === "true" && <ShieldCheck className="inline h-3 w-3 text-emerald-600" />}</div><div>{row.phone || "—"}</div>{row.websiteUrl && <a className="text-primary inline-flex gap-1" href={row.websiteUrl} target="_blank" rel="noreferrer">Website <ExternalLink className="h-3 w-3" /></a>}</td><td className="p-3">{row.currentSoftware || "Unknown"}<div className="text-muted-foreground">{row.usesSoftware || "Unverified"}</div></td><td className="p-3 max-w-[200px]">{prettyObject(row.evidence)}</td><td className="p-3">{prettyObject(row.confidence)}</td><td className="p-3"><Badge variant="outline">{row.reviewStatus || "pending"}</Badge>{row.importedContactId && <div className="text-emerald-700 mt-1">Imported</div>}</td><td className="p-3"><Button size="sm" variant="ghost" onClick={() => setEditing(row)}>Edit</Button></td></tr>)}{!rows.length && !rowsQuery.isLoading && <tr><td colSpan={9} className="p-10 text-center text-muted-foreground">No rows match these filters.</td></tr>}</tbody></table></div>
+    </>}
+    {editing && <div className="fixed inset-0 bg-slate-950/30 z-50 flex items-center justify-center p-4" onClick={() => setEditing(null)}><Card className="w-full max-w-xl" onClick={e => e.stopPropagation()}><CardHeader><CardTitle>Edit enriched contact</CardTitle></CardHeader><CardContent className="space-y-3">{(["email", "phone", "websiteUrl", "contactRequestFormUrl", "bookingUrl", "currentSoftware", "usesSoftware", "audienceTrack"] as const).map(key => <div key={key}><Label className="capitalize">{key.replace(/([A-Z])/g, " $1")}</Label><Input value={String(editing[key] ?? "")} onChange={e => setEditing({ ...editing, [key]: e.target.value })} /></div>)}<div><Label>Evidence</Label><Textarea value={prettyObject(editing.evidence)} readOnly /></div><div className="flex justify-end gap-2 pt-2"><Button variant="outline" onClick={() => setEditing(null)}>Cancel</Button><Button onClick={() => patch.mutate(editing)} disabled={patch.isPending}>Save changes</Button></div></CardContent></Card></div>}
+  </main></div>;
+}

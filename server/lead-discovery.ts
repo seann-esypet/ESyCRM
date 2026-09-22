@@ -182,6 +182,7 @@ interface SerpApiResult {
   snippet?: string;
   phone?: string;
   address?: string;
+  placeId?: string;
 }
 
 interface BusinessData {
@@ -221,13 +222,12 @@ export async function searchWithSerpApi(
     return { results: cached.resultsJson as SerpApiResult[], fromCache: true };
   }
 
-  // Check hourly rate limit
-  const callsLastHour = await storage.getSerpCallsInLastHour();
   const maxCallsPerHour = status.config.maxSerpCallsPerHour || 5;
-  if (callsLastHour >= maxCallsPerHour) {
-    throw new Error(`Hourly SERP limit reached (${maxCallsPerHour}/hour). Please wait.`);
-  }
+  const monthYear = getCurrentMonthYear();
+  const reservationId = await storage.reserveSerpCall(monthYear, maxCallsPerHour);
+  if (!reservationId) throw new Error(`SERP quota or hourly limit reached (${maxCallsPerHour}/hour). Please wait.`);
 
+  let billableCallMade = false;
   try {
     // Use Google Maps engine for better local business results
     // Include location in query since ll parameter requires lat,long coordinates
@@ -247,6 +247,7 @@ export async function searchWithSerpApi(
       console.error("SerpAPI error:", errorText);
       throw new Error(`SerpAPI returned ${response.status}`);
     }
+    billableCallMade = true;
 
     const data = await response.json();
     
@@ -260,6 +261,7 @@ export async function searchWithSerpApi(
           link: local.website || "",
           phone: local.phone,
           address: local.address,
+          placeId: local.place_id || local.data_id,
           snippet: local.description || "",
         });
       }
@@ -274,21 +276,19 @@ export async function searchWithSerpApi(
           link: place.website || "",
           phone: place.phone,
           address: place.address,
+          placeId: place.place_id || place.data_id,
           snippet: place.description || "",
         });
       }
     }
 
-    // Increment usage ONLY on successful response
-    const monthYear = getCurrentMonthYear();
-    await storage.incrementSerpUsage(monthYear);
-    
     // Cache the results
     await storage.createSerpCache(zipCode, queryTemplate, state, results);
     
     console.log(`Found ${results.length} results for ${query}`);
     return { results, fromCache: false };
   } catch (error) {
+    if (!billableCallMade) await storage.releaseSerpCall(reservationId, monthYear);
     console.error("SerpAPI search failed:", error);
     // NO automatic retries - require manual retry
     throw error;
