@@ -2786,8 +2786,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (!batch || rowIds.some((id: unknown) => !rows.some(row => row.id === id))) return res.status(404).json({ message: "Batch or row not found" });
     const selectedRows = rows.filter(row => rowIds.includes(row.id));
     if (!rowIds.length) return res.status(400).json({ message: "Select at least one row" });
-    if (decision === "approved" && selectedRows.some(row => row.status !== "enriched")) {
-      return res.status(400).json({ message: "Only successfully enriched rows can be approved" });
+    if (decision === "approved" && selectedRows.some(row => row.status !== "enriched" || row.identityMatchStatus !== "strong")) {
+      return res.status(400).json({ message: "Only enriched rows with a strong identity match can be approved" });
     }
     const count = await storage.markSalonRowsForReview(rowIds, decision, actorScope);
     await storage.refreshSalonEnrichmentBatchCounts(batch.id, batch.userId);
@@ -2801,6 +2801,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const rowIds = Array.isArray(req.body?.rowIds) ? req.body.rowIds : [];
     if (!batch || rowIds.some((id: unknown) => !rows.some(row => row.id === id))) return res.status(404).json({ message: "Batch or row not found" });
     const count = await storage.resetSalonRowsForRetry(rowIds, actorScope);
+    if (count && batch.status === "completed") {
+      await storage.updateSalonEnrichmentBatch(batch.id, {
+        status: "paused", pausedAt: new Date(), completedAt: null,
+      }, batch.userId);
+    }
     await storage.refreshSalonEnrichmentBatchCounts(batch.id, batch.userId);
     res.json({ updated: count });
   });

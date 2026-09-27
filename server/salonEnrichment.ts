@@ -28,7 +28,10 @@ function overlap(left: string | null | undefined, right: string | null | undefin
   return Array.from(a).filter(token => b.has(token)).length / Math.max(a.size, b.size);
 }
 
-function strongMatch(row: SalonEnrichmentRow, candidate: { title?: string; address?: string; placeId?: string }): boolean {
+export function strongMatch(
+  row: Pick<SalonEnrichmentRow, "placeId" | "businessName" | "address" | "address1" | "city" | "state" | "zipCode">,
+  candidate: { title?: string; address?: string; placeId?: string },
+): boolean {
   if (row.placeId && candidate.placeId) {
     return normalized(row.placeId) === normalized(candidate.placeId);
   }
@@ -50,9 +53,14 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
   const zip = row.zipCode || "00000";
   const state = row.state || "US";
   const query = `"${row.businessName}" "${row.address || [row.city, row.state].filter(Boolean).join(" ")}"`;
-  const queryTemplate = `salon-enrichment:${normalized(row.businessName)}:${normalized(row.address)}:maps`;
+  const placeId = row.placeId?.trim();
+  const queryTemplate = placeId
+    ? `salon-enrichment:place:${placeId}`
+    : `salon-enrichment:${normalized(row.businessName)}:${normalized(row.address)}:maps`;
+  const identitySource = placeId ? "serp_place_id" : "serp_google_maps";
   let candidate: { title: string; link: string; phone?: string; address?: string; placeId?: string } | undefined;
   let serpResult: { results: any[]; fromCache: boolean } | undefined;
+  let candidateSource = identitySource;
   let fallbackUsed = false;
   const runFallback = async () => {
     fallbackUsed = true;
@@ -67,7 +75,7 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
   };
 
   try {
-    serpResult = await searchWithSerpApi(query, zip, state, queryTemplate);
+    serpResult = await searchWithSerpApi(query, zip, state, queryTemplate, placeId ? { placeId } : undefined);
     if (!serpResult.fromCache) serpCallsUsed++;
     candidate = serpResult.results.find(result => strongMatch(row, result));
   } catch (error) {
@@ -82,11 +90,34 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
     };
   }
 
+  // A provider record with a different Place ID must never be repaired by a
+  // name-only fallback. Keep the row unimportable for manual review instead.
+  if (!candidate && placeId && serpResult?.results.some(
+    result => result.placeId && normalized(result.placeId) !== normalized(placeId)
+  )) {
+    return {
+      status: "enriched",
+      identityMatchStatus: "unmatched",
+      reviewStatus: "needs_review",
+      usesSoftware: "Unknown",
+      hasWebsite: "Unknown",
+      audienceTrack: "directory_general",
+      confidence: { identity: "low" },
+      evidence: { identity: evidence(null, identitySource, "low", undefined, "Place ID did not match the uploaded record") },
+      serpCallsUsed,
+      processedAt: new Date(),
+    };
+  }
+
   // One fallback query is allowed when Maps did not produce a strong match or
   // its matched listing has no website/contact data.
   if (!candidate || !candidate.link) {
     try {
-      candidate = await runFallback() || candidate;
+      const fallbackCandidate = await runFallback();
+      if (fallbackCandidate) {
+        candidate = fallbackCandidate;
+        candidateSource = "serp_fallback";
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
       if (/quota|hourly serp limit|rate limit/i.test(message)) throw error;
@@ -103,12 +134,21 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
       hasWebsite: "Unknown",
       audienceTrack: "directory_general",
       confidence: { identity: "low" },
-      evidence: { identity: evidence(null, "serp_google_maps", "low", undefined, "No strong name/address match") },
+      evidence: { identity: evidence(null, identitySource, "low", undefined, "No strong Place ID or name/address match") },
       serpCallsUsed,
       processedAt: new Date(),
     };
   }
 
+  const exactPlaceIdMatch = Boolean(
+    placeId && candidate.placeId && normalized(placeId) === normalized(candidate.placeId),
+  );
+  const identityConfidence = placeId && !exactPlaceIdMatch ? "medium" : "high";
+  const identityRationale = exactPlaceIdMatch
+    ? "Returned Google Place ID matched the uploaded ID"
+    : placeId
+      ? "Business name and address matched; listing did not confirm the uploaded Place ID"
+      : "Business name and address matched";
   const next: Partial<SalonEnrichmentRow> = {
     status: "enriched",
     identityMatchStatus: "strong",
@@ -120,9 +160,9 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
     serpCallsUsed,
     processedAt: new Date(),
   };
-  evidenceMap.identity = evidence(row.businessName, "serp_google_maps", "high", candidate.link, "Quoted business name and address matched");
-  if (candidate.link) evidenceMap.website = evidence(candidate.link, "serp_google_maps", "high", candidate.link);
-  if (candidate.phone) evidenceMap.phone = evidence(candidate.phone, "serp_google_maps", "high", candidate.link);
+   evidenceMap.identity = evidence(row.businessName, candidateSource, identityConfidence, candidate.link, identityRationale);
+   if (candidate.link) evidenceMap.website = evidence(candidate.link, candidateSource, "high", candidate.link);
+   if (candidate.phone) evidenceMap.phone = evidence(candidate.phone, candidateSource, "high", candidate.link);
 
   if (candidate.link) {
     try {
@@ -153,7 +193,7 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
       }
       // Only after the canonical site has been crawled may one targeted SERP
       // fallback look for missing contact/booking data.
-      if (!fallbackUsed && (!crawled.email || !crawled.bookingUrl)) {
+      if (!fallbackUsed && !next.email && !next.phone) {
         try {
           const fallbackCandidate = await runFallback();
           if (fallbackCandidate?.link && fallbackCandidate.link !== candidate.link) {
@@ -175,7 +215,7 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
           if (/quota|hourly serp limit|rate limit/i.test(message)) throw error;
         }
       }
-      const confidence: Record<string, string> = { identity: "high", website: "high" };
+       const confidence: Record<string, string> = { identity: identityConfidence, website: "high" };
       for (const [key, value] of Object.entries(evidenceMap)) confidence[key] = value.confidence;
       next.confidence = confidence;
       next.reviewStatus = next.email ? "needs_review" : "needs_review";
@@ -186,8 +226,8 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
       next.usesSoftware = "Unknown";
       next.audienceTrack = "directory_general";
       next.lastError = message;
-      evidenceMap.website = evidence(candidate.link, "serp_google_maps", "medium", candidate.link, "Website found but could not be crawled");
-      next.confidence = { identity: "high", website: "low" };
+       evidenceMap.website = evidence(candidate.link, candidateSource, "medium", candidate.link, "Website found but could not be crawled");
+       next.confidence = { identity: identityConfidence, website: "low" };
     }
   } else {
     next.reviewStatus = "needs_review";

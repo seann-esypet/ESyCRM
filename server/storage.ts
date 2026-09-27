@@ -1772,12 +1772,16 @@ export class DatabaseStorage implements IStorage {
         concurrency: data.concurrency ?? 2,
       }).returning();
       if (rows.length) {
-        await tx.insert(salonEnrichmentRows).values(rows.map(row => ({
-          ...row,
-          batchId: batch.id,
-          userId,
-          sourceData: row.sourceData ?? {},
-        }))).onConflictDoNothing();
+        // Keep the upload atomic, but stay well below PostgreSQL's bind
+        // parameter limit for a 13,000+ row spreadsheet.
+        for (let offset = 0; offset < rows.length; offset += 500) {
+          await tx.insert(salonEnrichmentRows).values(rows.slice(offset, offset + 500).map(row => ({
+            ...row,
+            batchId: batch.id,
+            userId,
+            sourceData: row.sourceData ?? {},
+          })));
+        }
       }
       return batch;
     });
@@ -1880,15 +1884,36 @@ export class DatabaseStorage implements IStorage {
       const selected = rows.filter(row =>
         (!rowIds || rowIds.includes(row.id)) &&
         row.reviewStatus === "approved" &&
-        row.status === "enriched",
+        row.status === "enriched" &&
+        row.identityMatchStatus === "strong",
       );
       const existingContacts = await tx.select().from(contacts).where(eq(contacts.userId, ownerId));
+      const importedPlaceIds = new Set<string>();
+      for (const contact of existingContacts) {
+        if (!contact.notes) continue;
+        try {
+          const placeId = JSON.parse(contact.notes)?.placeId;
+          if (typeof placeId === "string" && placeId.trim()) importedPlaceIds.add(placeId.trim().toLowerCase());
+        } catch {
+          // Existing free-form notes are not necessarily JSON.
+        }
+      }
       const imported: SalonEnrichmentRow[] = [];
       const skipped: Array<{ rowId: string; reason: string }> = [];
 
       for (const row of selected) {
         if (row.importedContactId) {
           skipped.push({ rowId: row.id, reason: "Already imported" });
+          continue;
+        }
+        const placeKey = row.placeId?.trim().toLowerCase();
+        if (placeKey && importedPlaceIds.has(placeKey)) {
+          await tx.update(salonEnrichmentRows).set({
+            duplicateMetadata: { reason: "Place ID is already present in contacts", placeId: row.placeId },
+            reviewStatus: "needs_review",
+            updatedAt: new Date(),
+          }).where(eq(salonEnrichmentRows.id, row.id));
+          skipped.push({ rowId: row.id, reason: "Place ID already imported" });
           continue;
         }
         const emailEvidence = (row.evidence as any)?.email;
@@ -1960,6 +1985,7 @@ export class DatabaseStorage implements IStorage {
         if (!updated) throw new Error(`Row ${row.id} was imported concurrently`);
         imported.push(updated);
         existingContacts.push(contact);
+        if (placeKey) importedPlaceIds.add(placeKey);
       }
       return { imported, skipped, ownerId };
     });

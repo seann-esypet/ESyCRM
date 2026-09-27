@@ -197,22 +197,59 @@ interface BusinessData {
   address?: string;
 }
 
+export function buildGoogleMapsParams(apiKey: string, query: string, zipCode: string, placeId?: string): URLSearchParams {
+  const params = new URLSearchParams({
+    api_key: apiKey,
+    engine: "google_maps",
+    type: placeId ? "place" : "search",
+  });
+  if (placeId) params.set("place_id", placeId);
+  else params.set("q", `${query.replace(", Zip code " + zipCode, "")} ${zipCode}`);
+  return params;
+}
+
+export function parseGoogleMapsResults(data: {
+  local_results?: Array<Record<string, any>>;
+  place_results?: Record<string, any>;
+}): SerpApiResult[] {
+  const results: SerpApiResult[] = [];
+  for (const local of data.local_results || []) {
+    results.push({
+      title: local.title || "",
+      link: local.website || "",
+      phone: local.phone,
+      address: local.address,
+      placeId: local.place_id,
+      snippet: local.description || "",
+    });
+  }
+  if (data.place_results) {
+    const place = data.place_results;
+    if (!results.some(result => result.title === place.title)) {
+      results.push({
+        title: place.title || "",
+        link: place.website || "",
+        phone: place.phone,
+        address: place.address,
+        placeId: place.place_id,
+        snippet: place.description || "",
+      });
+    }
+  }
+  return results;
+}
+
 // Search using Google Maps engine with caching and usage tracking
 export async function searchWithSerpApi(
   query: string, 
   zipCode: string,
   state: string,
-  queryTemplate: string
+  queryTemplate: string,
+  options?: { placeId?: string },
 ): Promise<{ results: SerpApiResult[]; fromCache: boolean }> {
   const apiKey = process.env.SERPAPI_API_KEY;
   if (!apiKey) {
     throw new Error("SERPAPI_API_KEY not configured");
-  }
-
-  // Check quota before making request
-  const status = await getSerpUsageStatus();
-  if (status.isQuotaReached) {
-    throw new Error("SERP quota reached – upgrade required");
   }
 
   // Check cache first (30-day caching)
@@ -220,6 +257,11 @@ export async function searchWithSerpApi(
   if (cached) {
     console.log(`Using cached results for ${zipCode} - ${queryTemplate}`);
     return { results: cached.resultsJson as SerpApiResult[], fromCache: true };
+  }
+
+  const status = await getSerpUsageStatus();
+  if (status.isQuotaReached) {
+    throw new Error("SERP quota reached – upgrade required");
   }
 
   const maxCallsPerHour = status.config.maxSerpCallsPerHour || 5;
@@ -231,59 +273,31 @@ export async function searchWithSerpApi(
   try {
     // Use Google Maps engine for better local business results
     // Include location in query since ll parameter requires lat,long coordinates
+    const params = buildGoogleMapsParams(apiKey, query, zipCode, options?.placeId);
     const searchQuery = `${query.replace(", Zip code " + zipCode, "")} ${zipCode}`;
-    const params = new URLSearchParams({
-      api_key: apiKey,
-      engine: "google_maps",
-      q: searchQuery,
-      type: "search",
-    });
 
-    console.log(`Searching Google Maps: ${searchQuery}`);
+    console.log(options?.placeId ? "Looking up Google Maps Place ID" : `Searching Google Maps: ${searchQuery}`);
     const response = await fetch(`https://serpapi.com/search?${params}`);
+    // A completed provider response may consume credit even if the response
+    // cannot be parsed or cached; never refund it as a network failure.
+    billableCallMade = true;
     
     if (!response.ok) {
       const errorText = await response.text();
       console.error("SerpAPI error:", errorText);
-      throw new Error(`SerpAPI returned ${response.status}`);
+      throw new Error(response.status === 429 ? "SerpAPI rate limit reached" : `SerpAPI returned ${response.status}`);
     }
-    billableCallMade = true;
-
     const data = await response.json();
+    if (data.error) throw new Error(`SerpAPI lookup failed: ${String(data.error)}`);
     
-    const results: SerpApiResult[] = [];
-    
-    // Google Maps returns local_results
-    if (data.local_results) {
-      for (const local of data.local_results) {
-        results.push({
-          title: local.title || "",
-          link: local.website || "",
-          phone: local.phone,
-          address: local.address,
-          placeId: local.place_id || local.data_id,
-          snippet: local.description || "",
-        });
-      }
-    }
-    
-    // Also check place_results for single place searches
-    if (data.place_results) {
-      const place = data.place_results;
-      if (!results.some(r => r.title === place.title)) {
-        results.push({
-          title: place.title || "",
-          link: place.website || "",
-          phone: place.phone,
-          address: place.address,
-          placeId: place.place_id || place.data_id,
-          snippet: place.description || "",
-        });
-      }
-    }
+    const results = parseGoogleMapsResults(data);
 
     // Cache the results
-    await storage.createSerpCache(zipCode, queryTemplate, state, results);
+    try {
+      await storage.createSerpCache(zipCode, queryTemplate, state, results);
+    } catch (cacheError) {
+      console.error("SERP result cache failed; provider call remains counted:", cacheError);
+    }
     
     console.log(`Found ${results.length} results for ${query}`);
     return { results, fromCache: false };
