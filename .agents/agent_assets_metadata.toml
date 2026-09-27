@@ -28,3 +28,17 @@ mtime_ms = 1790478523723
 storage_uri = "gcs://replit-rams-assets-picard/rams/assets/repl:1910afef-1072-4e99-9487-9737d06762ee/de28ab0d-a84b-456b-a4e2-a0b7e631819d/0c88a87d-e73c-40bb-be8b-e6d1ed88d8d5"
 storage_version_token = "1790478542964678"
 content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+[[outputs]]
+id = "B6eEKnmUY2-YXLVMsLio9"
+uri = "file://reports/salon-directory-with-facebook-review.xlsx"
+type = "table"
+title = "Salon workbook with Facebook email search tab"
+description = "Seven prior no-email salons checked against public Facebook search results. One review-only email candidate; all original records and prior review evidence retained."
+logical_id = "3541e733-784c-45c4-a343-c8c3b15aab10"
+content_hash = "sha256:101bfc59bb981177e95e91b54f54bc4f9bc16e3db83e12b13d3903fb76f99c92"
+size = 3481877
+mtime_ms = 1790478751263
+storage_uri = "gcs://replit-rams-assets-picard/rams/assets/repl:1910afef-1072-4e99-9487-9737d06762ee/3541e733-784c-45c4-a343-c8c3b15aab10/0ff9e404-95e3-4789-869b-ec7fa4ff2d41"
+storage_version_token = "1790478763766660"
+content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
