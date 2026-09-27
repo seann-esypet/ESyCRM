@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { buildGoogleMapsParams, parseGoogleMapsResults } from "./lead-discovery";
+import { buildGoogleMapsParams, crawlWebsite, parseGoogleMapsResults } from "./lead-discovery";
 import { strongMatch } from "./salonEnrichment";
 import { bookingPlatformForUrl, extractSalonEmailFromBookingHtml, findSalonEmailOnBookingPage, importableSalonEmail } from "./bookingPageEmail";
 
@@ -143,6 +143,39 @@ test("booking email lookup requests only the exact page and never follows a redi
     };
     assert.equal(await findSalonEmailOnBookingPage(bookingUrl, "Doggy Style Salon"), null);
     assert.deepEqual(visited, [bookingUrl, bookingUrl]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a site-builder image beside grooming copy is not a booking link", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => new Response(`<body><h1>Felix's Pet Grooming</h1>
+      <p>Book your grooming appointment by calling 323-585-2670.</p>
+      <img src="https://sites.google.com/sitesv-images-rt/image-id">
+      <p>felixdoggrooming@gmail.com</p></body>`, {
+      headers: { "content-type": "text/html" },
+    });
+    const result = await crawlWebsite("https://sites.google.com/view/felixspetgrooming/home");
+    assert.equal(result.email, "felixdoggrooming@gmail.com");
+    assert.equal(result.bookingUrl, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a Google Sites redirect to a salon booking page keeps the destination", async () => {
+  const originalFetch = globalThis.fetch;
+  const destination = "https://book.cuddlesapp.com/felix-s-pet-grooming";
+  try {
+    globalThis.fetch = async () => new Response(`<body><h1>Felix's Pet Grooming</h1>
+      <a href="https://www.google.com/url?q=https%3A%2F%2Fbook.cuddlesapp.com%2Ffelix-s-pet-grooming&amp;sa=D">Book now</a>
+      <p>felixdoggrooming@gmail.com — 323-585-2670</p></body>`);
+    const result = await crawlWebsite("https://sites.google.com/view/felixspetgrooming/home");
+    assert.equal(result.bookingUrl, destination);
+    assert.equal(result.softwareName, "CuddlesApp");
+    assert.equal(bookingPlatformForUrl(destination), "CuddlesApp");
   } finally {
     globalThis.fetch = originalFetch;
   }

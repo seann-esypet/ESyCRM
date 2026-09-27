@@ -97,6 +97,7 @@ export async function getActiveQueries(): Promise<string[]> {
 }
 
 const BOOKING_SOFTWARE_PATTERNS: Record<string, string> = {
+  "book.cuddlesapp.com": "CuddlesApp",
   "booking.moego.pet": "MoeGo",
   "moego.pet": "MoeGo",
   "petgroomerfinder.com": "PetGroomerFinder",
@@ -390,6 +391,22 @@ export async function crawlWebsite(url: string): Promise<{
   }
 }
 
+function bookingDestination(url: string): string {
+  try {
+    const parsed = new URL(url.replace(/&amp;/gi, "&"));
+    if (["google.com", "www.google.com"].includes(parsed.hostname.toLowerCase()) &&
+        parsed.pathname === "/url") {
+      const destination = new URL(parsed.searchParams.get("q") || "");
+      if (destination.protocol === "https:" && !destination.username && !destination.password) {
+        return destination.href;
+      }
+    }
+  } catch {
+    // Leave malformed or non-HTTPS redirects untouched for manual review.
+  }
+  return url;
+}
+
 function detectBookingSoftware(html: string, baseUrl: string): { url: string; software: string } | null {
   const lowerHtml = html.toLowerCase();
 
@@ -399,7 +416,7 @@ function detectBookingSoftware(html: string, baseUrl: string): { url: string; so
     if (lowerHtml.includes(pattern)) {
       const urlMatch = html.match(new RegExp(`https?://[^"'\\s<>]*${pattern.replace(/\./g, "\\.")}[^"'\\s<>]*`, "i"));
       return {
-        url: urlMatch ? urlMatch[0] : `https://${pattern}`,
+        url: urlMatch ? bookingDestination(urlMatch[0]) : `https://${pattern}`,
         software,
       };
     }
@@ -410,16 +427,19 @@ function detectBookingSoftware(html: string, baseUrl: string): { url: string; so
   // The booking-keyword check scans a wider window around the attribute so nested
   // tags (e.g. <a href="..."><span>Salon Booking</span></a>) still match.
   const attrPattern = /(?:href|src)=["']([^"']+)["']/gi;
-  const bookingKeywords = /book|schedule|appointment|groom|salon|reserve/i;
+  const bookingKeywords = /book|schedule|appointment|reserve/i;
 
   let match;
   while ((match = attrPattern.exec(html)) !== null) {
     const url = match[1];
+    // Image assets can sit beside "book now" copy on hosted site builders.
+    // They are not booking destinations even when the nearby text matches.
+    if (/\/sitesv-images-rt\/|\.(?:png|jpe?g|gif|webp|svg)(?:[?#]|$)/i.test(url)) continue;
 
     // Check if the URL itself is a known software domain
     for (const [pattern, software] of Object.entries(BOOKING_SOFTWARE_PATTERNS)) {
       if (url.toLowerCase().includes(pattern)) {
-        return { url, software };
+        return { url: bookingDestination(url), software };
       }
     }
 

@@ -1,6 +1,7 @@
 import type { SalonEnrichmentRow } from "@shared/schema";
 
 const bookingProviders: Record<string, string> = {
+  "book.cuddlesapp.com": "CuddlesApp",
   "booksy.com": "Booksy",
   "vagaro.com": "Vagaro",
   "schedulicity.com": "Schedulicity",
