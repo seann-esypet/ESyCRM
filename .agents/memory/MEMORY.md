@@ -1,2 +1,2 @@
 - [Directory-first sequence isolation](directory-first-sequence-isolation.md) — directory audiences are selected at enrollment and must stay independent of legacy contact classification.
-- [Place detail website provenance](place-detail-website-provenance.md) — a matched Place ID can return a hosted booking page rather than a salon site; keep their contact evidence separate.
+- [Place detail website provenance](place-detail-website-provenance.md) — booking links are not salon sites; inspect only salon-matched pages for public email and keep source evidence distinct.

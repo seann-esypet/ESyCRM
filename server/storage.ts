@@ -71,6 +71,7 @@ import { normalizePhoneNumber, normalizeName, normalizeEmail } from "@shared/uti
 import { db } from "./db";
 import { eq, desc, and, sql, gte, lte, or, ne, inArray, isNull } from "drizzle-orm";
 import { DIRECTORY_FIRST_STRATEGY, DIRECTORY_TRACKS, directoryEmailSequenceTemplates } from "./directoryEmailSequences";
+import { importableSalonEmail } from "./bookingPageEmail";
 
 export type PayrollPreviewItem = {
   tempId: string;
@@ -1916,13 +1917,7 @@ export class DatabaseStorage implements IStorage {
           skipped.push({ rowId: row.id, reason: "Place ID already imported" });
           continue;
         }
-        const emailEvidence = (row.evidence as any)?.email;
-        const verifiedEmail = row.email &&
-          emailEvidence?.source === "website" &&
-          emailEvidence?.confidence === "high" &&
-          normalizeEmail(emailEvidence?.value) === normalizeEmail(row.email)
-          ? row.email
-          : null;
+        const verifiedEmail = importableSalonEmail(row);
         const companyKey = normalizeName(row.businessName);
         const addressKey = normalizeName(row.address1 || row.address);
         const phoneKey = normalizePhoneNumber(row.phone);

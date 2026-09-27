@@ -1,7 +1,8 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { buildGoogleMapsParams, parseGoogleMapsResults } from "./lead-discovery";
-import { bookingPlatformForUrl, strongMatch } from "./salonEnrichment";
+import { strongMatch } from "./salonEnrichment";
+import { bookingPlatformForUrl, extractSalonEmailFromBookingHtml, findSalonEmailOnBookingPage, importableSalonEmail } from "./bookingPageEmail";
 
 const row = {
   businessName: "Paws Grooming",
@@ -89,4 +90,60 @@ test("a hosted booking link is not mistaken for the salon's website", () => {
   assert.equal(bookingPlatformForUrl("https://www.booksy.com/en-us/123"), "Booksy");
   assert.equal(bookingPlatformForUrl("https://www.my-grooming-salon.example/contact"), null);
   assert.equal(bookingPlatformForUrl("https://notbooksy.com/contact"), null);
+});
+
+const bookingUrl = "https://groomer.io/request/4furm";
+
+test("salon email on a matching booking page can be reviewed for import", () => {
+  const html = `<body><h1>DoggyStyle Salon</h1><main>
+    <a href="mailto:hello@doggystylesalon.com">Email the salon</a>
+    </main><footer>support@groomer.io</footer></body>`;
+  const email = extractSalonEmailFromBookingHtml(html, "Doggy Style Salon", bookingUrl);
+  assert.equal(email, "hello@doggystylesalon.com");
+  const row = {
+    email, bookingUrl, websiteUrl: null, identityMatchStatus: "strong", reviewStatus: "approved",
+    evidence: { email: { value: email, source: "booking_page", confidence: "medium", sourceUrl: bookingUrl } },
+  } as Parameters<typeof importableSalonEmail>[0];
+  assert.equal(importableSalonEmail(row), email);
+  assert.equal(importableSalonEmail({ ...row, reviewStatus: "needs_review" }), null);
+  assert.equal(importableSalonEmail({ ...row, bookingUrl: "https://booksy.com/another-salon" }), null);
+  assert.equal(importableSalonEmail({ ...row, email: "different@doggystylesalon.com" }), null);
+});
+
+test("booking providers and unrelated salons cannot supply a sequence email", () => {
+  const boilerplate = `<body><h1>DoggyStyle Salon</h1><main>Book now</main>
+    <script>const email="owner@doggystylesalon.com"</script>
+    <footer><a href="mailto:support@groomer.io">Help</a></footer></body>`;
+  assert.equal(extractSalonEmailFromBookingHtml(boilerplate, "Doggy Style Salon", bookingUrl), null);
+  assert.equal(extractSalonEmailFromBookingHtml(
+    `<body><h1>Another Salon</h1><p>owner@doggystylesalon.com</p></body>`,
+    "Doggy Style Salon", bookingUrl,
+  ), null);
+  assert.equal(extractSalonEmailFromBookingHtml(
+    `<body><h1>DoggyStyle Salon</h1><p>support@groomer.io</p></body>`,
+    "Doggy Style Salon", bookingUrl,
+  ), null);
+});
+
+test("booking email lookup requests only the exact page and never follows a redirect", async () => {
+  const originalFetch = globalThis.fetch;
+  const visited: string[] = [];
+  try {
+    globalThis.fetch = async (input) => {
+      visited.push(String(input));
+      return new Response(`<body><h1>DoggyStyle Salon</h1><p>salon@doggystylesalon.com</p></body>`, {
+        headers: { "content-type": "text/html" },
+      });
+    };
+    assert.equal(await findSalonEmailOnBookingPage(bookingUrl, "Doggy Style Salon"), "salon@doggystylesalon.com");
+    assert.deepEqual(visited, [bookingUrl]);
+    globalThis.fetch = async (input) => {
+      visited.push(String(input));
+      return new Response(null, { status: 302, headers: { location: "https://groomer.io/contact" } });
+    };
+    assert.equal(await findSalonEmailOnBookingPage(bookingUrl, "Doggy Style Salon"), null);
+    assert.deepEqual(visited, [bookingUrl, bookingUrl]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

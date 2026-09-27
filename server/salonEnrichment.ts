@@ -1,5 +1,6 @@
 import { storage } from "./storage";
 import { crawlWebsite, searchWithSerpApi } from "./lead-discovery";
+import { bookingPlatformForUrl, findSalonEmailOnBookingPage } from "./bookingPageEmail";
 import type { SalonEnrichmentBatch, SalonEnrichmentRow } from "@shared/schema";
 
 type Evidence = Record<string, {
@@ -12,32 +13,6 @@ type Evidence = Record<string, {
 }>;
 
 const activeProcessors = new Set<string>();
-
-export function bookingPlatformForUrl(value: string): string | null {
-  try {
-    const url = new URL(value.startsWith("http") ? value : `https://${value}`);
-    const host = url.hostname.toLowerCase().replace(/^www\./, "");
-    const providers: Record<string, string> = {
-      "booksy.com": "Booksy",
-      "vagaro.com": "Vagaro",
-      "schedulicity.com": "Schedulicity",
-      "acuityscheduling.com": "Acuity Scheduling",
-      "calendly.com": "Calendly",
-      "pocketsuite.io": "PocketSuite",
-      "setmore.com": "Setmore",
-      "pawfinity.com": "Pawfinity",
-      "booking.moego.pet": "MoeGo",
-    };
-    if ((host === "groomer.io" || host.endsWith(".groomer.io")) &&
-        /^\/(?:request|book|booking)(?:\/|$)/i.test(url.pathname)) return "Groomer.io";
-    for (const [domain, software] of Object.entries(providers)) {
-      if (host === domain || host.endsWith(`.${domain}`)) return software;
-    }
-  } catch {
-    // An invalid URL cannot be classified as a trusted business website.
-  }
-  return null;
-}
 
 function tokens(value: string | null | undefined): string[] {
   return (value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().split(/\s+/).filter(Boolean);
@@ -87,6 +62,11 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
   let candidate: { title: string; link: string; phone?: string; address?: string; placeId?: string } | undefined;
   let serpResult: { results: any[]; fromCache: boolean } | undefined;
   let candidateSource = identitySource;
+  let phoneSource = identitySource;
+  let phoneSourceUrl: string | undefined;
+  let bookingEmail: string | null = null;
+  let bookingEmailUrl: string | null = null;
+  let initialPlaceIdMatch = false;
   let fallbackUsed = false;
   const runFallback = async () => {
     fallbackUsed = true;
@@ -104,6 +84,8 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
     serpResult = await searchWithSerpApi(query, zip, state, queryTemplate, placeId ? { placeId } : undefined);
     if (!serpResult.fromCache) serpCallsUsed++;
     candidate = serpResult.results.find(result => strongMatch(row, result));
+    phoneSourceUrl = candidate?.link || undefined;
+    initialPlaceIdMatch = Boolean(placeId && candidate?.placeId && normalized(placeId) === normalized(candidate.placeId));
   } catch (error) {
     const message = error instanceof Error ? error.message : "SERP lookup failed";
     if (/quota|hourly serp limit|rate limit/i.test(message)) throw error;
@@ -137,13 +119,21 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
 
   // One fallback query is allowed when Maps did not produce a strong match or
   // its matched listing has no website/contact data.
-  if (!candidate || !candidate.link || bookingPlatformForUrl(candidate.link)) {
+  if (candidate?.link && bookingPlatformForUrl(candidate.link)) {
+    bookingEmailUrl = candidate.link;
+    bookingEmail = await findSalonEmailOnBookingPage(candidate.link, row.businessName);
+  }
+  if (!candidate || !candidate.link || (bookingPlatformForUrl(candidate.link) && !bookingEmail)) {
     try {
       const fallbackCandidate = await runFallback();
       if (fallbackCandidate && (!candidate || (
         fallbackCandidate.link && !bookingPlatformForUrl(fallbackCandidate.link)
       ))) {
-        candidate = fallbackCandidate;
+        if (fallbackCandidate.phone) {
+          phoneSource = "serp_fallback";
+          phoneSourceUrl = fallbackCandidate.link || undefined;
+        }
+        candidate = { ...fallbackCandidate, phone: fallbackCandidate.phone || candidate?.phone };
         candidateSource = "serp_fallback";
       }
     } catch (error) {
@@ -169,7 +159,7 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
   }
 
   const exactPlaceIdMatch = Boolean(
-    placeId && candidate.placeId && normalized(placeId) === normalized(candidate.placeId),
+    initialPlaceIdMatch || (placeId && candidate.placeId && normalized(placeId) === normalized(candidate.placeId)),
   );
   const identityConfidence = placeId && !exactPlaceIdMatch ? "medium" : "high";
   const identityRationale = exactPlaceIdMatch
@@ -178,6 +168,10 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
       ? "Business name and address matched; listing did not confirm the uploaded Place ID"
       : "Business name and address matched";
   const bookingPlatform = candidate.link ? bookingPlatformForUrl(candidate.link) : null;
+  if (bookingPlatform && candidate.link !== bookingEmailUrl) {
+    bookingEmailUrl = candidate.link;
+    bookingEmail = await findSalonEmailOnBookingPage(candidate.link, row.businessName);
+  }
   const next: Partial<SalonEnrichmentRow> = {
     status: "enriched",
     identityMatchStatus: "strong",
@@ -189,9 +183,15 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
     serpCallsUsed,
     processedAt: new Date(),
   };
-   evidenceMap.identity = evidence(row.businessName, candidateSource, identityConfidence, candidate.link, identityRationale);
+   evidenceMap.identity = evidence(row.businessName, initialPlaceIdMatch ? identitySource : candidateSource, identityConfidence, candidate.link, identityRationale);
   if (candidate.link && !bookingPlatform) evidenceMap.website = evidence(candidate.link, candidateSource, "high", candidate.link);
-  if (candidate.phone) evidenceMap.phone = evidence(candidate.phone, candidateSource, "high", candidate.link);
+  if (candidate.phone) evidenceMap.phone = evidence(candidate.phone, phoneSource, "high", phoneSourceUrl);
+  if (bookingEmail && bookingEmailUrl) {
+    next.email = bookingEmail;
+    evidenceMap.email = evidence(bookingEmail, "booking_page", "medium", bookingEmailUrl, "Public email on a booking page with a matching salon heading; review before using in sequences");
+  } else if (bookingEmailUrl) {
+    evidenceMap.email = evidence(null, "booking_page", "low", bookingEmailUrl, "No salon-specific email confirmed from this booking page");
+  }
 
   if (bookingPlatform) {
     next.bookingUrl = candidate.link;
