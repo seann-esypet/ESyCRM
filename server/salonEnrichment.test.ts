@@ -110,6 +110,23 @@ test("salon email on a matching booking page can be reviewed for import", () => 
   assert.equal(importableSalonEmail({ ...row, email: "different@doggystylesalon.com" }), null);
 });
 
+test("an approved email from a matched alternate salon website can be imported", () => {
+  const email = "hello@pawssalon.example";
+  const sourceUrl = "https://pawssalon.example/contact";
+  const emailEvidence = { value: email, source: "serp_fallback_website", confidence: "medium", sourceUrl };
+  const row = {
+    email, websiteUrl: "https://pawssalon.example/", bookingUrl: null,
+    identityMatchStatus: "strong", reviewStatus: "approved",
+    evidence: { email: emailEvidence },
+  } as Parameters<typeof importableSalonEmail>[0];
+  assert.equal(importableSalonEmail(row), email);
+  assert.equal(importableSalonEmail({ ...row, reviewStatus: "needs_review" }), null);
+  assert.equal(importableSalonEmail({ ...row, identityMatchStatus: "unmatched" }), null);
+  assert.equal(importableSalonEmail({ ...row, email: "another@pawssalon.example" }), null);
+  assert.equal(importableSalonEmail({ ...row, evidence: { email: { ...emailEvidence, sourceUrl: "https://book.cuddlesapp.com/salon" } } }), null);
+  assert.equal(importableSalonEmail({ ...row, evidence: { email: { ...emailEvidence, sourceUrl: "http://pawssalon.example" } } }), null);
+});
+
 test("booking providers and unrelated salons cannot supply a sequence email", () => {
   const boilerplate = `<body><h1>DoggyStyle Salon</h1><main>Book now</main>
     <script>const email="owner@doggystylesalon.com"</script>

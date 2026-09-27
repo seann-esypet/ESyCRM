@@ -87,6 +87,15 @@ export function importableSalonEmail(
   if (row.identityMatchStatus !== "strong" || row.reviewStatus !== "approved") return null;
   if (evidence.source === "website" && evidence.confidence === "high" &&
       evidence.sourceUrl === row.websiteUrl && row.websiteUrl && !bookingPlatformForUrl(row.websiteUrl)) return email;
+  if (evidence.source === "serp_fallback_website" && evidence.confidence === "medium" && evidence.sourceUrl) {
+    try {
+      const source = new URL(evidence.sourceUrl);
+      if (source.protocol === "https:" && !source.username && !source.password &&
+          !bookingPlatformForUrl(source.href)) return email;
+    } catch {
+      // An invalid source URL is not evidence of a salon website.
+    }
+  }
   if (evidence.source === "booking_page" && evidence.confidence === "medium" &&
       evidence.sourceUrl === row.bookingUrl && row.bookingUrl && bookingPlatformForUrl(row.bookingUrl)) return email;
   return null;

@@ -207,6 +207,7 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
   }
 
   if (candidate.link) {
+    let websiteConfidence: "high" | "low" = "high";
     try {
       const crawled = await crawlWebsite(candidate.link);
       if (crawled.email) {
@@ -233,34 +234,7 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
         next.audienceTrack = "directory_no_software";
         evidenceMap.usesSoftware = evidence("No", "website", "medium", candidate.link, "Canonical website crawled with no booking signal");
       }
-      // Only after the canonical site has been crawled may one targeted SERP
-      // fallback look for missing contact/booking data.
-      if (!fallbackUsed && !next.email && !next.phone) {
-        try {
-          const fallbackCandidate = await runFallback();
-           if (fallbackCandidate?.link && fallbackCandidate.link !== candidate.link && !bookingPlatformForUrl(fallbackCandidate.link)) {
-            const fallbackCrawl = await crawlWebsite(fallbackCandidate.link);
-            if (!next.email && fallbackCrawl.email) {
-              next.email = fallbackCrawl.email;
-              evidenceMap.email = evidence(fallbackCrawl.email, "serp_fallback_website", "medium", fallbackCandidate.link);
-            }
-            if (!next.bookingUrl && fallbackCrawl.bookingUrl) {
-              next.bookingUrl = fallbackCrawl.bookingUrl;
-              next.currentSoftware = fallbackCrawl.softwareName || "Unknown";
-              next.usesSoftware = "Yes";
-              next.audienceTrack = "directory_has_software";
-              evidenceMap.bookingUrl = evidence(fallbackCrawl.bookingUrl, "serp_fallback_website", "medium", fallbackCandidate.link);
-            }
-          }
-        } catch (error) {
-          const message = error instanceof Error ? error.message : "";
-          if (/quota|hourly serp limit|rate limit/i.test(message)) throw error;
-        }
-      }
-       const confidence: Record<string, string> = { identity: identityConfidence, website: "high" };
-      for (const [key, value] of Object.entries(evidenceMap)) confidence[key] = value.confidence;
-      next.confidence = confidence;
-      next.reviewStatus = next.email ? "needs_review" : "needs_review";
+      next.reviewStatus = "needs_review";
     } catch (error) {
       const message = error instanceof Error ? error.message : "Website crawl failed";
       if (/quota|hourly serp limit|rate limit/i.test(message)) throw error;
@@ -268,9 +242,40 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
       next.usesSoftware = "Unknown";
       next.audienceTrack = "directory_general";
       next.lastError = message;
-       evidenceMap.website = evidence(candidate.link, candidateSource, "medium", candidate.link, "Website found but could not be crawled");
-       next.confidence = { identity: identityConfidence, website: "low" };
+      evidenceMap.website = evidence(candidate.link, candidateSource, "medium", candidate.link, "Website found but could not be crawled");
+      websiteConfidence = "low";
     }
+    // Email is the goal: a listing phone or booking link does not end the
+    // search. Try one bounded fallback if the salon site yielded no email,
+    // including when that site could not be crawled.
+    if (!fallbackUsed && !next.email) {
+      try {
+        const fallbackCandidate = await runFallback();
+        if (fallbackCandidate?.link && fallbackCandidate.link !== candidate.link &&
+            !bookingPlatformForUrl(fallbackCandidate.link)) {
+          const fallbackCrawl = await crawlWebsite(fallbackCandidate.link);
+          if (fallbackCrawl.email) {
+            next.email = fallbackCrawl.email;
+            evidenceMap.email = evidence(fallbackCrawl.email, "serp_fallback_website", "medium", fallbackCandidate.link,
+              "Matched alternate salon website; review the email and source before import");
+          }
+          if (!next.bookingUrl && fallbackCrawl.bookingUrl) {
+            next.bookingUrl = fallbackCrawl.bookingUrl;
+            next.currentSoftware = fallbackCrawl.softwareName || "Unknown";
+            next.usesSoftware = "Yes";
+            next.audienceTrack = "directory_has_software";
+            evidenceMap.bookingUrl = evidence(fallbackCrawl.bookingUrl, "serp_fallback_website", "medium", fallbackCandidate.link);
+          }
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        if (/quota|hourly serp limit|rate limit/i.test(message)) throw error;
+      }
+    }
+    const confidence: Record<string, string> = { identity: identityConfidence };
+    for (const [key, item] of Object.entries(evidenceMap)) confidence[key] = item.confidence;
+    confidence.website = websiteConfidence;
+    next.confidence = confidence;
   } else {
     next.reviewStatus = "needs_review";
     next.usesSoftware = "Unknown";
