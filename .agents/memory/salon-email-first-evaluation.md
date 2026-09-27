@@ -8,3 +8,9 @@ The primary outcome of salon enrichment is an email attributable to the salon th
 **Why:** The user explicitly prioritized email outreach. Optimizing for booking-link coverage can consume provider credits without producing contacts who can be emailed, while loosely attributed emails create false positives.
 
 **How to apply:** Measure verified-by-review email yield and false attribution, not merely sites or booking links found. Improve rules from small, manually checked samples before scaling. Budget live pilots by provider calls rather than row count: a row without an email may need a second search, subject to hourly and monthly stops. Never auto-import, enroll, or send during a rules pilot.
+
+An email extracted from a salon-associated page is not necessarily a usable salon contact: site-builder support addresses and mailboxes explicitly designated for client paperwork should not count as general outreach leads. Indexed snippets that are not confirmed on a current matching page remain review-only.
+
+**Why:** A capped pilot surfaced both a website builder's support address and a salon-hosted client form's vaccination-record mailbox. Counting either as a verified general contact would overstate email yield.
+
+**How to apply:** Read the email's immediate context and confirm the live source identifies the same salon/location. Put vendor and purpose-restricted addresses in review evidence, not the workbook's main email field or verified-yield numerator.

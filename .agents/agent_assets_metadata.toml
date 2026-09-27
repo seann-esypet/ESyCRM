@@ -42,3 +42,17 @@ mtime_ms = 1790478751263
 storage_uri = "gcs://replit-rams-assets-picard/rams/assets/repl:1910afef-1072-4e99-9487-9737d06762ee/3541e733-784c-45c4-a343-c8c3b15aab10/0ff9e404-95e3-4789-869b-ec7fa4ff2d41"
 storage_version_token = "1790478763766660"
 content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+[[outputs]]
+id = "DmX0sRCkRHWY50IF3SyeO"
+uri = "file://reports/salon-directory-with-second-pilot.xlsx"
+type = "table"
+title = "Salon workbook — second capped email pilot"
+description = "Ten-row evidence tab, 16 tracked SerpApi calls, two verified salon emails added to the main sheet; rejected and review-only addresses kept separate."
+logical_id = "0bdfd1bd-cd52-4883-90fb-74ed3f21a309"
+content_hash = "sha256:71fb04b06212c233a88aaeade70e4ed1d56188d5fc27aa403238e869d15fdef1"
+size = 3485672
+mtime_ms = 1790480260786
+storage_uri = "gcs://replit-rams-assets-picard/rams/assets/repl:1910afef-1072-4e99-9487-9737d06762ee/0bdfd1bd-cd52-4883-90fb-74ed3f21a309/ca9f94a3-2d65-41c9-a784-43736051fcec"
+storage_version_token = "1790480303981150"
+content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
