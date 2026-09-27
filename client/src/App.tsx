@@ -22,6 +22,7 @@ import LeadDiscovery from "@/pages/lead-discovery";
 import DealWorkspace from "@/pages/deal-workspace";
 import PayrollDetail from "@/pages/payroll-detail";
 import SalonEnrichment from "@/pages/salon-enrichment";
+import FormOutreach from "@/pages/form-outreach";
 import Sidebar from "@/components/layout/sidebar";
 
 // Silently ping the server every 10 minutes so the auth token stays refreshed
@@ -69,6 +70,7 @@ function Router() {
           <Route path="/lead-discovery" component={LeadDiscovery} />
           <Route path="/salon-enrichment/:id" component={SalonEnrichment} />
           <Route path="/salon-enrichment" component={SalonEnrichment} />
+          <Route path="/form-outreach" component={FormOutreach} />
           <Route path="/contacts" component={Contacts} />
           <Route path="/deal/:id" component={DealWorkspace} />
           <Route path="/deals" component={Deals} />

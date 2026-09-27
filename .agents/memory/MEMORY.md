@@ -3,3 +3,4 @@
 - [Salon email-first evaluation](salon-email-first-evaluation.md) — judge enrichment by attributable, reviewable emails; booking links are secondary and provider calls are budgeted per search.
 - [Salon site fetch mismatch](salon-site-fetch-mismatch.md) — a failed scripted crawl may be a request-profile mismatch, not evidence that the salon has no public email.
 - [Salon website discovery](salon-website-discovery.md) — organic search can surface directory-listed domains absent from Maps, but discovery does not verify a live salon-owned site.
+- [Manual salon form outreach](manual-salon-form-outreach.md) — a verified general-contact form is a separate reviewed contact path, never an automatic send or an email success.

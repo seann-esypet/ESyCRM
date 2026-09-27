@@ -467,6 +467,7 @@ export const salonEnrichmentRows = pgTable("salon_enrichment_rows", {
   email: text("email"),
   phone: text("phone"),
   contactRequestFormUrl: text("contact_request_form_url"),
+  contactFormStatus: text("contact_form_status").notNull().default("unknown"), // unknown, candidate, verified, unusable
   bookingUrl: text("booking_url"),
   currentSoftware: text("current_software"),
   usesSoftware: text("uses_software").default("Unknown"),
@@ -494,6 +495,30 @@ export const insertSerpUsageSchema = createInsertSchema(serpUsage).omit({
   id: true,
   createdAt: true,
 });
+
+// Separate from email sequence logs: these are copyable drafts for manually
+// submitted third-party forms, never an instruction to the email scheduler.
+export const salonFormOutreach = pgTable("salon_form_outreach", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onUpdate: "cascade" }),
+  salonRowId: varchar("salon_row_id").notNull().references(() => salonEnrichmentRows.id, { onDelete: "cascade" }).unique(),
+  strategy: text("strategy").notNull(),
+  sequenceTrack: text("sequence_track").notNull(),
+  sequenceId: varchar("sequence_id").notNull().references(() => emailSequences.id),
+  sequenceNumber: integer("sequence_number").notNull().default(1),
+  formUrl: text("form_url").notNull(),
+  subject: text("subject").notNull(),
+  body: text("body").notNull(),
+  status: text("status").notNull().default("due"), // due, scheduled, blocked, skipped, replied, opted_out, completed
+  dueAt: timestamp("due_at").notNull().defaultNow(),
+  actedAt: timestamp("acted_at"),
+  actedBy: varchar("acted_by").references(() => users.id, { onUpdate: "cascade" }),
+  note: text("note"),
+  submittedCount: integer("submitted_count").notNull().default(0),
+  history: jsonb("history").notNull().default(sql`'[]'::jsonb`),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, table => [index("salon_form_outreach_user_due_idx").on(table.userId, table.dueAt)]);
 
 export const insertSerpCacheSchema = createInsertSchema(serpCache).omit({
   id: true,
@@ -573,6 +598,7 @@ export type SalonEnrichmentBatch = typeof salonEnrichmentBatches.$inferSelect;
 export type InsertSalonEnrichmentBatch = z.infer<typeof insertSalonEnrichmentBatchSchema>;
 export type SalonEnrichmentRow = typeof salonEnrichmentRows.$inferSelect;
 export type InsertSalonEnrichmentRow = z.infer<typeof insertSalonEnrichmentRowSchema>;
+export type SalonFormOutreach = typeof salonFormOutreach.$inferSelect;
 export type SerpUsage = typeof serpUsage.$inferSelect;
 export type InsertSerpUsage = z.infer<typeof insertSerpUsageSchema>;
 export type SerpCache = typeof serpCache.$inferSelect;

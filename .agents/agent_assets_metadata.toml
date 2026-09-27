@@ -70,3 +70,17 @@ mtime_ms = 1790551143130
 storage_uri = "gcs://replit-rams-assets-picard/rams/assets/repl:1910afef-1072-4e99-9487-9737d06762ee/a2abfaf4-4f8b-4f9c-84de-0414eecb7e6a/ffffd662-da2e-4ac2-a265-44ed1a75e44c"
 storage_version_token = "1790551187658500"
 content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+[[outputs]]
+id = "iKeMUJdaDb3hjYusfd1jQ"
+uri = "file://reports/salon-directory-contact-form-audit.xlsx"
+type = "table"
+title = "20-salon contact-form audit"
+description = "Workbook copy with five verified form hyperlinks, 20-row evidence, and separate email, form, and combined coverage counts."
+logical_id = "b1b8f56e-b3cf-4351-92d6-f3a80f7306c5"
+content_hash = "sha256:e33399fbb9720abab2c1035a1c36da7258e01aaa53e8ec8ff9501513a68ed166"
+size = 1620742
+mtime_ms = 1790552481833
+storage_uri = "gcs://replit-rams-assets-picard/rams/assets/repl:1910afef-1072-4e99-9487-9737d06762ee/b1b8f56e-b3cf-4351-92d6-f3a80f7306c5/519f0bf1-618d-4d3b-b05c-da3f50d7959f"
+storage_version_token = "1790553068509944"
+content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"

@@ -175,6 +175,8 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
   const next: Partial<SalonEnrichmentRow> = {
     status: "enriched",
     identityMatchStatus: "strong",
+    contactRequestFormUrl: null,
+    contactFormStatus: "unknown",
     websiteUrl: bookingPlatform ? null : candidate.link || null,
     phone: candidate.phone || null,
     hasWebsite: bookingPlatform ? "Unknown" : candidate.link ? "Yes" : "No",
@@ -220,7 +222,14 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
       }
       if (crawled.contactFormUrl) {
         next.contactRequestFormUrl = crawled.contactFormUrl;
-        evidenceMap.contactFormUrl = evidence(crawled.contactFormUrl, "website", "medium", candidate.link);
+        next.contactFormStatus = "candidate";
+        evidenceMap.contactFormUrl = evidence(
+          crawled.contactFormUrl,
+          "website",
+          "medium",
+          candidate.link,
+          "Candidate public inquiry form found; manual review required before use. Not verified.",
+        );
       }
       if (crawled.bookingUrl) {
         next.bookingUrl = crawled.bookingUrl;

@@ -360,7 +360,7 @@ export async function crawlWebsite(url: string): Promise<{
     // Scan homepage first
     result.email = extractEmail(html) ?? undefined;
     result.phone = extractPhone(html) ?? undefined;
-    result.contactFormUrl = detectContactForm(html, url) ?? undefined;
+    result.contactFormUrl = await detectContactForm(html, base) ?? undefined;
 
     // If email or phone still missing, scan common sub-pages in parallel
     const subPaths = ["/contact", "/contact-us", "/about", "/about-us", "/reach-us", "/get-in-touch"];
@@ -518,32 +518,88 @@ function extractPhone(html: string): string | null {
   return formatted ?? matches[0];
 }
 
-function detectContactForm(html: string, baseUrl: string): string | null {
-  const contactPatterns = ["/contact", "/contact-us", "/get-in-touch", "/reach-us"];
-  
-  for (const pattern of contactPatterns) {
-    if (html.toLowerCase().includes(`href="${pattern}"`)) {
-      try {
-        const base = new URL(baseUrl);
-        return `${base.origin}${pattern}`;
-      } catch {}
+async function detectContactForm(html: string, base: URL): Promise<string | null> {
+  if (hasPublicGeneralInquiryForm(html)) return base.href;
+  const links: string[] = [];
+  const decodeAttribute = (value: string) => value
+    .replace(/&amp;/gi, "&")
+    .replace(/&#(?:39|x27);/gi, "'")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#(\d+);/g, (_, code: string) => String.fromCharCode(Number(code)));
+
+  for (const match of Array.from(html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi))) {
+    const attributes = match[1];
+    const hrefMatch = attributes.match(/\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+    if (!hrefMatch) continue;
+    const href = decodeAttribute(hrefMatch[1] ?? hrefMatch[2] ?? hrefMatch[3] ?? "").trim();
+    const linkText = `${match[2].replace(/<[^>]*>/g, " ")} ${attributes}`.toLowerCase();
+    if (!/\b(contact|contact-us|get-in-touch|reach-us|inquir(?:y|ies)|message-us)\b/i.test(`${href} ${linkText}`) ||
+        /\b(book(?:ing)?|appointment|schedule|reservation)\b/i.test(`${href} ${linkText}`)) continue;
+
+    try {
+      const target = new URL(href, base);
+      if ((target.protocol !== "http:" && target.protocol !== "https:") ||
+          target.origin !== base.origin) continue;
+      target.hash = "";
+      const normalizedUrl = target.href;
+      if (!links.includes(normalizedUrl)) links.push(normalizedUrl);
+    } catch {
+      // Ignore malformed and unsupported contact links.
     }
   }
-  
-  if (/<form[^>]*>/i.test(html)) {
-    const formMatch = html.match(/<form[^>]*action=["']([^"']+)["']/i);
-    if (formMatch && formMatch[1].toLowerCase().includes("contact")) {
-      try {
-        const base = new URL(baseUrl);
-        if (formMatch[1].startsWith("http")) {
-          return formMatch[1];
-        }
-        return `${base.origin}${formMatch[1]}`;
-      } catch {}
-    }
+
+  // Avoid unbounded crawling on homepages with many contact-related links.
+  for (const contactUrl of links.slice(0, 8)) {
+    const page = await fetchPage(contactUrl);
+    if (page && hasPublicGeneralInquiryForm(page)) return contactUrl;
   }
-  
   return null;
+}
+
+function hasPublicGeneralInquiryForm(html: string): boolean {
+  const pageContext = Array.from(html.matchAll(/<(?:title|h1|h2)\b[^>]*>([\s\S]*?)<\/(?:title|h1|h2)\s*>/gi))
+    .map(match => match[1].replace(/<[^>]*>/g, " "))
+    .join(" ")
+    .toLowerCase();
+  const forms = Array.from(html.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form\s*>/gi));
+  for (const match of forms) {
+    const attributes = match[1];
+    const body = match[2];
+    if (/\bhidden\b/i.test(attributes) || /display\s*:\s*none|visibility\s*:\s*hidden/i.test(attributes)) continue;
+
+    const hasSubmitInput = Array.from(body.matchAll(/<input\b([^>]*)>/gi)).some(input =>
+      /\btype\s*=\s*["']?submit\b/i.test(input[1]));
+    const hasSubmitButton = Array.from(body.matchAll(/<button\b([^>]*)>/gi)).some(button => {
+      const type = button[1].match(/\btype\s*=\s*["']?([^"'\s>]+)/i)?.[1]?.toLowerCase();
+      return !type || type === "submit";
+    });
+    const hasSubmit = hasSubmitInput || hasSubmitButton;
+    if (!hasSubmit) continue;
+
+    const hasMessageField = /<textarea\b[^>]*>/i.test(body) ||
+      Array.from(body.matchAll(/<input\b([^>]*)>/gi)).some(input => {
+        const attrs = input[1];
+        const type = attrs.match(/\btype\s*=\s*["']?([^"'\s>]+)/i)?.[1]?.toLowerCase() || "text";
+        if (type !== "text") return false;
+        const fieldDescription = [
+          attrs.match(/\bname\s*=\s*["']([^"']*)/i)?.[1],
+          attrs.match(/\bid\s*=\s*["']([^"']*)/i)?.[1],
+          attrs.match(/\bplaceholder\s*=\s*["']([^"']*)/i)?.[1],
+          attrs.match(/\baria-label\s*=\s*["']([^"']*)/i)?.[1],
+        ].filter(Boolean).join(" ").toLowerCase();
+        return /\b(message|inquir(?:y|ies)|comment)\b/i.test(fieldDescription);
+      });
+    if (!hasMessageField) continue;
+
+    const formText = `${attributes} ${body.replace(/<[^>]*>/g, " ")}`.replace(/&nbsp;|&#160;/gi, " ").toLowerCase();
+    const hasBookingContext = /\b(book(?:ing)?|appointment|schedule|reservation)\b/i.test(`${pageContext} ${formText}`);
+    const hasGeneralContext = /\b(general\s+inquir(?:y|ies)|contact\s+(?:us|form)|general\s+questions)\b/i.test(`${pageContext} ${formText}`);
+    // Appointment and booking forms often include a notes/message field too;
+    // treat those as unsupported unless the form explicitly offers general inquiries.
+    const bookingOnly = hasBookingContext && !hasGeneralContext;
+    if (!bookingOnly) return true;
+  }
+  return false;
 }
 
 function normalizeWebsiteUrl(url: string): string {

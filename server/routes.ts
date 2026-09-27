@@ -9,6 +9,8 @@ import { z } from "zod";
 import Papa from "papaparse";
 import { runLeadDiscoveryJob, importResultsToCRM, runNationalSearchJob } from "./lead-discovery";
 import { startSalonEnrichment } from "./salonEnrichment";
+import { enrollFormOutreach, listFormOutreach, recordFormAction } from "./formOutreach";
+import { validFormUrl } from "./formOutreachPolicy";
 import * as XLSX from "xlsx";
 import { sendDailyReport } from "./dailyReportScheduler";
 import { sendReplyNotificationEmail, sendEmail, replaceTemplateVariables } from "./sendgrid";
@@ -2812,15 +2814,65 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.patch("/api/salon-enrichment/rows/:rowId", isAuthenticated, async (req: any, res) => {
     const actorScope = req.user.claims.role === "admin" ? null : req.user.claims.sub;
-    const allowed = ["businessName", "address", "address1", "city", "state", "zipCode", "websiteUrl", "email", "phone", "contactRequestFormUrl", "bookingUrl", "currentSoftware", "usesSoftware", "hasWebsite", "audienceTrack"];
+    const allowed = ["businessName", "address", "address1", "city", "state", "zipCode", "websiteUrl", "email", "phone", "contactRequestFormUrl", "contactFormStatus", "bookingUrl", "currentSoftware", "usesSoftware", "hasWebsite", "audienceTrack"];
     const updates = Object.keys(req.body || {});
     if (updates.some(key => !allowed.includes(key))) return res.status(400).json({ message: "One or more fields are not editable" });
     if (typeof req.body.businessName === "string" && !req.body.businessName.trim()) return res.status(400).json({ message: "businessName cannot be empty" });
     const row = await storage.getSalonEnrichmentRow(req.params.rowId, actorScope);
     if (!row) return res.status(404).json({ message: "Row not found" });
-    const updated = await storage.updateSalonEnrichmentRow(row.id, req.body, actorScope);
+    const formUrl = req.body.contactRequestFormUrl ?? row.contactRequestFormUrl;
+    const websiteUrl = req.body.websiteUrl ?? row.websiteUrl;
+    if (req.body.contactFormStatus && !["unknown", "candidate", "verified", "unusable"].includes(req.body.contactFormStatus)) {
+      return res.status(400).json({ message: "Invalid contact-form status" });
+    }
+    if (req.body.contactFormStatus === "verified" &&
+      (row.identityMatchStatus !== "strong" || !validFormUrl(formUrl, websiteUrl) ||
+       (formUrl !== row.contactRequestFormUrl && row.contactFormStatus === "verified"))) {
+      return res.status(400).json({ message: "Verify a message-capable form on the matched salon website first" });
+    }
+    const changes = { ...req.body };
+    if (formUrl !== row.contactRequestFormUrl || websiteUrl !== row.websiteUrl) {
+      if (changes.contactFormStatus !== "verified") changes.contactFormStatus = "candidate";
+    }
+    if (!formUrl && changes.contactFormStatus === "candidate") changes.contactFormStatus = "unknown";
+    const updated = await storage.updateSalonEnrichmentRow(row.id, changes, actorScope);
     await storage.refreshSalonEnrichmentBatchCounts(row.batchId, row.userId);
     res.json(updated);
+  });
+
+  // Form outreach is a manual copy/open/record workflow. These endpoints never
+  // POST to the salon website and never enqueue an email sequence log.
+  app.get("/api/salon-form-outreach", isAuthenticated, async (req: any, res) => {
+    try {
+      const batchId = req.query.batchId === undefined ? undefined : z.string().min(1).parse(req.query.batchId);
+      const actorId = req.user.claims.sub;
+      if (batchId && !await storage.getSalonEnrichmentBatch(batchId, actorId)) {
+        return res.status(404).json({ message: "Batch not found or not owned by you" });
+      }
+      res.json(await listFormOutreach(actorId, batchId));
+    } catch (error) {
+      res.status(error instanceof z.ZodError ? 400 : 500).json({ message: error instanceof Error ? error.message : "Failed to load form drafts" });
+    }
+  });
+  app.post("/api/salon-form-outreach", isAuthenticated, async (req: any, res) => {
+    try {
+      const input = z.object({ salonRowId: z.string().min(1), sequenceId: z.string().min(1) }).parse(req.body);
+      const result = await enrollFormOutreach(req.user.claims.sub, input.salonRowId, input.sequenceId);
+      res.status(201).json(result);
+    } catch (error) {
+      res.status(400).json({ message: error instanceof Error ? error.message : "Could not enroll form draft" });
+    }
+  });
+  app.post("/api/salon-form-outreach/:id/action", isAuthenticated, async (req: any, res) => {
+    try {
+      const input = z.object({
+        action: z.enum(["submitted", "blocked", "resume", "skipped", "replied", "opted_out"]),
+        note: z.string().max(1000).optional(),
+      }).parse(req.body);
+      res.json(await recordFormAction(req.user.claims.sub, req.params.id, input.action, input.note));
+    } catch (error) {
+      res.status(400).json({ message: error instanceof Error ? error.message : "Could not record form action" });
+    }
   });
 
   app.post("/api/salon-enrichment/batches/:id/cancel", isAuthenticated, async (req: any, res) => {

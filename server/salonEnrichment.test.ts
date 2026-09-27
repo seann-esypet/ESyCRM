@@ -197,3 +197,73 @@ test("a Google Sites redirect to a salon booking page keeps the destination", as
     globalThis.fetch = originalFetch;
   }
 });
+
+test("a contact link without a message form is not a contact-form candidate", async () => {
+  const originalFetch = globalThis.fetch;
+  const visited: string[] = [];
+  try {
+    globalThis.fetch = async input => {
+      const url = String(input);
+      visited.push(url);
+      if (url === "https://paws.example/") {
+        return new Response(`<a href="/contact">Contact us</a>
+          <a href="https://other.example/contact">Contact elsewhere</a>
+          <p>hello@paws.example</p><p>(512) 555-0134</p>`);
+      }
+      return new Response(`<h1>Contact us</h1><p>Call us at (512) 555-0134</p>`);
+    };
+    const result = await crawlWebsite("https://paws.example/");
+    assert.equal(result.contactFormUrl, undefined);
+    assert.deepEqual(visited, ["https://paws.example/", "https://paws.example/contact"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a same-origin contact page with a message field and submit is a candidate", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async input => String(input) === "https://paws.example/"
+      ? new Response(`<a href="/contact-us">Contact</a>
+          <p>hello@paws.example</p><p>(512) 555-0134</p>`)
+      : new Response(`<h1>Contact us</h1><form action="/send">
+          <label for="message">Message</label><textarea id="message" name="message"></textarea>
+          <button type="submit">Send message</button>
+        </form>`);
+    const result = await crawlWebsite("https://paws.example/");
+    assert.equal(result.contactFormUrl, "https://paws.example/contact-us");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a general inquiry form on the salon homepage is a candidate", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => new Response(`<h1>Welcome to Paws Grooming</h1>
+      <form><label>Your message <textarea name="message"></textarea></label>
+      <button type="submit">Send</button></form>`);
+    const result = await crawlWebsite("https://paws.example/");
+    assert.equal(result.contactFormUrl, "https://paws.example/");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("an appointment request form with a message field is not a general inquiry candidate", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async input => String(input) === "https://paws.example/"
+      ? new Response(`<a href="/contact">Contact</a>
+          <p>hello@paws.example</p><p>(512) 555-0134</p>`)
+      : new Response(`<h1>Book an appointment</h1><form>
+          <label>Appointment date <input type="date" name="date"></label>
+          <textarea name="message" placeholder="Notes for your appointment"></textarea>
+          <button type="submit">Request appointment</button>
+        </form>`);
+    const result = await crawlWebsite("https://paws.example/");
+    assert.equal(result.contactFormUrl, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
