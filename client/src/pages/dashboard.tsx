@@ -5,10 +5,12 @@ import DealPipeline from "@/components/deals/deal-pipeline";
 import RecentActivity from "@/components/dashboard/recent-activity";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { CheckSquare, Users, Calendar } from "lucide-react";
+import { CheckSquare, Users, Calendar, Upload, ShieldCheck } from "lucide-react";
 import type { Task, Contact } from "@shared/schema";
+import { useLocation } from "wouter";
 
 export default function Dashboard() {
+  const [, setLocation] = useLocation();
   const { data: upcomingTasks, isLoading: tasksLoading } = useQuery<Task[]>({
     queryKey: ["/api/tasks"],
     queryFn: async () => {
@@ -74,6 +76,30 @@ export default function Dashboard() {
       
       <main className="flex-1 overflow-y-auto p-6 bg-muted/30" data-testid="dashboard-content">
         <MetricsGrid />
+
+        <Card className="mt-6 border-primary/30 bg-primary/[0.03]" data-testid="salon-enrichment-entry">
+          <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <div className="rounded-lg bg-primary/10 p-2 text-primary">
+                <Upload className="h-5 w-5" />
+              </div>
+              <div>
+                <h2 className="font-semibold">Enrich a salon list</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Upload a CSV or Excel file to find website contact details. Start with a 100-salon pilot, review the evidence, then continue in batches.
+                </p>
+                <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  Contacts are not added to email sequences automatically.
+                </p>
+              </div>
+            </div>
+            <Button className="shrink-0" onClick={() => setLocation("/salon-enrichment")}>
+              <Upload className="mr-2 h-4 w-4" />
+              Upload salon list
+            </Button>
+          </CardContent>
+        </Card>
         
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
           <DealPipeline />
