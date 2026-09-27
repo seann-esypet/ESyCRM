@@ -65,6 +65,7 @@ Preferred communication style: Simple, everyday language.
 - **Analytics Dashboard**: Real-time sales performance insights for salespeople and administrators.
 - **Admin Tools**: User management (create, edit, roles), CSV data export, salesperson rankings with total deal values.
 - **Lead Discovery Module**: Automated business discovery (pet grooming) by ZIP code using SerpAPI (Google/Bing), website crawling, software detection, contact extraction, and direct CRM import/export.
+- **Additional Salon Leads**: New salons may be added regardless of state; the CA/NY/TX workbook's original coverage is not a geographic restriction. Require a public email attributable to the salon, deduplicate against existing records, preserve source evidence, and keep manual review before CRM import or outreach.
 - **Secure Authentication**: Replit Auth with various providers, secure session management, protected API routes.
 
 ## External Dependencies
