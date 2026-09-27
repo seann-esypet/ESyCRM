@@ -281,6 +281,7 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
     next.usesSoftware = "Unknown";
     next.audienceTrack = "directory_general";
   }
+  next.serpCallsUsed = serpCallsUsed;
   next.evidence = evidenceMap;
   return next;
 }

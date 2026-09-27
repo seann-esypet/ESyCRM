@@ -1,0 +1,16 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "PU__Rip1jZ9rNjoZ3b-dn"
+uri = "file://reports/salon-email-pilot-10.csv"
+type = "table"
+title = "10-salon email pilot results"
+description = "Per-salon email findings, public source links, verification status, and reasons for misses across CA, NY, and TX."
+logical_id = "05b30d2b-4b8d-4329-9ab1-4688fad00333"
+content_hash = "sha256:48b03645d5f3345c3ef71275a66dbfcb3ea24408b2e1f04cea2ab34a41e25e66"
+size = 1865
+mtime_ms = 1790476508078
+storage_uri = "gcs://replit-rams-assets-picard/rams/assets/repl:1910afef-1072-4e99-9487-9737d06762ee/05b30d2b-4b8d-4329-9ab1-4688fad00333/3a9dd79d-e0c5-4ed0-a03c-404b2d15970d"
+storage_version_token = "1790476567127153"
+content_type = "text/csv"
