@@ -13,6 +13,32 @@ type Evidence = Record<string, {
 
 const activeProcessors = new Set<string>();
 
+export function bookingPlatformForUrl(value: string): string | null {
+  try {
+    const url = new URL(value.startsWith("http") ? value : `https://${value}`);
+    const host = url.hostname.toLowerCase().replace(/^www\./, "");
+    const providers: Record<string, string> = {
+      "booksy.com": "Booksy",
+      "vagaro.com": "Vagaro",
+      "schedulicity.com": "Schedulicity",
+      "acuityscheduling.com": "Acuity Scheduling",
+      "calendly.com": "Calendly",
+      "pocketsuite.io": "PocketSuite",
+      "setmore.com": "Setmore",
+      "pawfinity.com": "Pawfinity",
+      "booking.moego.pet": "MoeGo",
+    };
+    if ((host === "groomer.io" || host.endsWith(".groomer.io")) &&
+        /^\/(?:request|book|booking)(?:\/|$)/i.test(url.pathname)) return "Groomer.io";
+    for (const [domain, software] of Object.entries(providers)) {
+      if (host === domain || host.endsWith(`.${domain}`)) return software;
+    }
+  } catch {
+    // An invalid URL cannot be classified as a trusted business website.
+  }
+  return null;
+}
+
 function tokens(value: string | null | undefined): string[] {
   return (value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().split(/\s+/).filter(Boolean);
 }
@@ -111,10 +137,12 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
 
   // One fallback query is allowed when Maps did not produce a strong match or
   // its matched listing has no website/contact data.
-  if (!candidate || !candidate.link) {
+  if (!candidate || !candidate.link || bookingPlatformForUrl(candidate.link)) {
     try {
       const fallbackCandidate = await runFallback();
-      if (fallbackCandidate) {
+      if (fallbackCandidate && (!candidate || (
+        fallbackCandidate.link && !bookingPlatformForUrl(fallbackCandidate.link)
+      ))) {
         candidate = fallbackCandidate;
         candidateSource = "serp_fallback";
       }
@@ -149,20 +177,34 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
     : placeId
       ? "Business name and address matched; listing did not confirm the uploaded Place ID"
       : "Business name and address matched";
+  const bookingPlatform = candidate.link ? bookingPlatformForUrl(candidate.link) : null;
   const next: Partial<SalonEnrichmentRow> = {
     status: "enriched",
     identityMatchStatus: "strong",
-    websiteUrl: candidate.link || null,
+    websiteUrl: bookingPlatform ? null : candidate.link || null,
     phone: candidate.phone || null,
-    hasWebsite: candidate.link ? "Yes" : "No",
+    hasWebsite: bookingPlatform ? "Unknown" : candidate.link ? "Yes" : "No",
     confidence: {},
     evidence: evidenceMap,
     serpCallsUsed,
     processedAt: new Date(),
   };
    evidenceMap.identity = evidence(row.businessName, candidateSource, identityConfidence, candidate.link, identityRationale);
-   if (candidate.link) evidenceMap.website = evidence(candidate.link, candidateSource, "high", candidate.link);
-   if (candidate.phone) evidenceMap.phone = evidence(candidate.phone, candidateSource, "high", candidate.link);
+  if (candidate.link && !bookingPlatform) evidenceMap.website = evidence(candidate.link, candidateSource, "high", candidate.link);
+  if (candidate.phone) evidenceMap.phone = evidence(candidate.phone, candidateSource, "high", candidate.link);
+
+  if (bookingPlatform) {
+    next.bookingUrl = candidate.link;
+    next.currentSoftware = bookingPlatform;
+    next.usesSoftware = "Yes";
+    next.audienceTrack = "directory_has_software";
+    next.reviewStatus = "needs_review";
+    evidenceMap.bookingUrl = evidence(candidate.link, candidateSource, "high", candidate.link, "The listing links to a booking provider, not a verified salon website");
+    evidenceMap.website = evidence(null, candidateSource, "low", candidate.link, "No standalone salon website confirmed");
+    next.confidence = Object.fromEntries(Object.entries(evidenceMap).map(([key, item]) => [key, item.confidence]));
+    next.evidence = evidenceMap;
+    return next;
+  }
 
   if (candidate.link) {
     try {
@@ -196,7 +238,7 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
       if (!fallbackUsed && !next.email && !next.phone) {
         try {
           const fallbackCandidate = await runFallback();
-          if (fallbackCandidate?.link && fallbackCandidate.link !== candidate.link) {
+           if (fallbackCandidate?.link && fallbackCandidate.link !== candidate.link && !bookingPlatformForUrl(fallbackCandidate.link)) {
             const fallbackCrawl = await crawlWebsite(fallbackCandidate.link);
             if (!next.email && fallbackCrawl.email) {
               next.email = fallbackCrawl.email;

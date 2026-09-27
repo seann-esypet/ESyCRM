@@ -283,12 +283,14 @@ export async function searchWithSerpApi(
     billableCallMade = true;
     
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error("SerpAPI error:", errorText);
+      console.error("SerpAPI request failed with status", response.status);
       throw new Error(response.status === 429 ? "SerpAPI rate limit reached" : `SerpAPI returned ${response.status}`);
     }
     const data = await response.json();
-    if (data.error) throw new Error(`SerpAPI lookup failed: ${String(data.error)}`);
+    if (data.error) {
+      const isQuotaError = /quota|rate limit|credits|searches left|exhausted/i.test(String(data.error));
+      throw new Error(isQuotaError ? "SERP quota reached" : "SerpAPI lookup failed");
+    }
     
     const results = parseGoogleMapsResults(data);
 

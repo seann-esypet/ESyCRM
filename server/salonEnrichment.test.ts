@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { buildGoogleMapsParams, parseGoogleMapsResults } from "./lead-discovery";
-import { strongMatch } from "./salonEnrichment";
+import { bookingPlatformForUrl, strongMatch } from "./salonEnrichment";
 
 const row = {
   businessName: "Paws Grooming",
@@ -82,4 +82,11 @@ test("a listing without a Place ID needs a strong name and address match", () =>
     title: "Another Pet Store",
     address: "12 Main Street Austin TX 78701",
   }), false);
+});
+
+test("a hosted booking link is not mistaken for the salon's website", () => {
+  assert.equal(bookingPlatformForUrl("https://groomer.io/request/4furm"), "Groomer.io");
+  assert.equal(bookingPlatformForUrl("https://www.booksy.com/en-us/123"), "Booksy");
+  assert.equal(bookingPlatformForUrl("https://www.my-grooming-salon.example/contact"), null);
+  assert.equal(bookingPlatformForUrl("https://notbooksy.com/contact"), null);
 });
