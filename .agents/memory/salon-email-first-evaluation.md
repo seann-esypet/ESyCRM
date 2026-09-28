@@ -14,3 +14,9 @@ An email extracted from a salon-associated page is not necessarily a usable salo
 **Why:** A capped pilot surfaced both a website builder's support address and a salon-hosted client form's vaccination-record mailbox. Counting either as a verified general contact would overstate email yield.
 
 **How to apply:** Read the email's immediate context and confirm the live source identifies the same salon/location. Put vendor and purpose-restricted addresses in review evidence, not the workbook's main email field or verified-yield numerator.
+
+An exact Place ID match confirms the lookup returned the intended listing, not that the listing is a grooming salon. Treat provider business categories as screening evidence rather than proof of eligibility.
+
+**Why:** A state-balanced lookup pilot returned exact Place ID matches for every tested row, but several listings were plainly unrelated businesses, including a restaurant and general retail stores. A returned website could also be a booking or ordering page.
+
+**How to apply:** Flag clearly unrelated categories for review before outreach, check ambiguous pet-business categories for an actual grooming service, and independently classify any website or contact link before counting it as a usable contact path.

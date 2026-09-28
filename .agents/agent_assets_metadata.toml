@@ -98,3 +98,17 @@ mtime_ms = 1790555445245
 storage_uri = "gcs://replit-rams-assets-picard/rams/assets/repl:1910afef-1072-4e99-9487-9737d06762ee/230e3977-595c-44af-ba7a-515704b1d28a/99f8d70e-b6dc-41a5-b730-e97cf03be396"
 storage_version_token = "1790555490734455"
 content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+[[outputs]]
+id = "BEBTMfIcSf-aeYmOuCjof"
+uri = "file://reports/salon-dataforseo-120-pilot.xlsx"
+type = "table"
+title = "DataForSEO 120-listing lookup pilot"
+description = "All 120 Place ID matches, returned websites and categories, actual $0.18 lookup cost, and columns for human email/form review. URLs are not counted as verified contacts."
+logical_id = "7aae531d-fd49-4ba1-a693-14a99409d4bb"
+content_hash = "sha256:1c5f419f5b6266414b8a49ff104dd192a55af670ed35d477f553f3bcc85eef98"
+size = 240044
+mtime_ms = 1790557338174
+storage_uri = "gcs://replit-rams-assets-picard/rams/assets/repl:1910afef-1072-4e99-9487-9737d06762ee/7aae531d-fd49-4ba1-a693-14a99409d4bb/70affdac-60c8-46cb-aedb-715ada0b2dd0"
+storage_version_token = "1790557379981830"
+content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
