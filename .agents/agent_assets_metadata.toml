@@ -126,3 +126,17 @@ mtime_ms = 1790558233170
 storage_uri = "gcs://replit-rams-assets-picard/rams/assets/repl:1910afef-1072-4e99-9487-9737d06762ee/e80d59f5-7919-411b-87d9-02ae748496de/ccbe52d0-cac7-4d09-b289-2da23a7a9807"
 storage_version_token = "1790558289392623"
 content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+[[outputs]]
+id = "uIanUnGYjsttDYec0TaxJ"
+uri = "file://reports/salon-directory-with-alternative-source-leads.xlsx"
+type = "table"
+title = "Updated salon directory and email review"
+description = "Review copy: three existing listings now have source-verified emails, four verified off-list groomers were appended, and separate sheets show evidence and outcomes for all 20 searched listings. No CRM contacts were imported."
+logical_id = "c920047e-8c0c-4441-ba25-3a2ec71027eb"
+content_hash = "sha256:a9e5360f0b6a5cbd5c3f8e3bee3b79f49f9cfcc77386726f2a11a6010ddbda9e"
+size = 8915828
+mtime_ms = 1790559602209
+storage_uri = "gcs://replit-rams-assets-picard/rams/assets/repl:1910afef-1072-4e99-9487-9737d06762ee/c920047e-8c0c-4441-ba25-3a2ec71027eb/64171804-06fe-456e-9b9d-d3cf7711001f"
+storage_version_token = "1790559610677365"
+content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
