@@ -84,3 +84,17 @@ mtime_ms = 1790552481833
 storage_uri = "gcs://replit-rams-assets-picard/rams/assets/repl:1910afef-1072-4e99-9487-9737d06762ee/b1b8f56e-b3cf-4351-92d6-f3a80f7306c5/519f0bf1-618d-4d3b-b05c-da3f50d7959f"
 storage_version_token = "1790553068509944"
 content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+[[outputs]]
+id = "QAliZxYz8-UUwNSo9zbPR"
+uri = "file://reports/salon-provider-comparison-sample.xlsx"
+type = "table"
+title = "Salon lookup comparison sample"
+description = "120 unique Place IDs sampled across CA, TX, and NY, with a review template for comparing the same salons across providers. No lookups have been run."
+logical_id = "230e3977-595c-44af-ba7a-515704b1d28a"
+content_hash = "sha256:1908ba6dbd6c28fb45a85e8643d5c6cf1c478cf8d144efab50b71fd53da669cb"
+size = 128614
+mtime_ms = 1790555445245
+storage_uri = "gcs://replit-rams-assets-picard/rams/assets/repl:1910afef-1072-4e99-9487-9737d06762ee/230e3977-595c-44af-ba7a-515704b1d28a/99f8d70e-b6dc-41a5-b730-e97cf03be396"
+storage_version_token = "1790555490734455"
+content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
