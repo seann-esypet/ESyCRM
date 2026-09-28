@@ -20,3 +20,9 @@ An exact Place ID match confirms the lookup returned the intended listing, not t
 **Why:** A state-balanced lookup pilot returned exact Place ID matches for every tested row, but several listings were plainly unrelated businesses, including a restaurant and general retail stores. A returned website could also be a booking or ordering page.
 
 **How to apply:** Flag clearly unrelated categories for review before outreach, check ambiguous pet-business categories for an actual grooming service, and independently classify any website or contact link before counting it as a usable contact path.
+
+A matching-domain email or a page with Name/Email/Message fields can still be a false positive when a site has been repurposed, contains unrelated template content, or the domain is parked for sale. Conversely, a location-specific mailbox may be present in rendered page text but absent from a basic HTML regex extraction.
+
+**Why:** In a read-only website subset review, a dog-spa contact page included a tree-service footer and unrelated address, a parked domain offered a form for contacting its owner, and a multi-location pet-care contact page exposed the correct branch email only in an alternate text extraction.
+
+**How to apply:** Review the *surrounding page identity and purpose*, not just domain equality or field names. Exclude parked or mixed-identity pages, match branch email to the exact location when possible, and keep extraction misses separate from confirmed absence of contact information.

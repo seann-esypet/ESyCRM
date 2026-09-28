@@ -112,3 +112,17 @@ mtime_ms = 1790557338174
 storage_uri = "gcs://replit-rams-assets-picard/rams/assets/repl:1910afef-1072-4e99-9487-9737d06762ee/7aae531d-fd49-4ba1-a693-14a99409d4bb/70affdac-60c8-46cb-aedb-715ada0b2dd0"
 storage_version_token = "1790557379981830"
 content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+[[outputs]]
+id = "iOomPDsIJ2Inqq8jgM5Jn"
+uri = "file://reports/salon-site-audit-review.xlsx"
+type = "table"
+title = "Reviewed DataForSEO website subset"
+description = "32 selected Place IDs with exact email/form source URLs, exclusions, fetch failures, and review notes."
+logical_id = "e80d59f5-7919-411b-87d9-02ae748496de"
+content_hash = "sha256:60c31e5224a22985afc015cee97fc5903e9ac185c5a4523724e14226ced4e9f2"
+size = 49184
+mtime_ms = 1790558233170
+storage_uri = "gcs://replit-rams-assets-picard/rams/assets/repl:1910afef-1072-4e99-9487-9737d06762ee/e80d59f5-7919-411b-87d9-02ae748496de/ccbe52d0-cac7-4d09-b289-2da23a7a9807"
+storage_version_token = "1790558289392623"
+content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
