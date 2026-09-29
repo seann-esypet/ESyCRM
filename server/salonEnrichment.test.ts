@@ -1,8 +1,10 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
+import salonSearchPilot from "../reports/salon-next-100-summary.json" with { type: "json" };
 import { buildGoogleMapsParams, crawlWebsite, parseGoogleMapsResults } from "./lead-discovery";
 import { strongMatch } from "./salonEnrichment";
-import { bookingPlatformForUrl, extractSalonEmailFromBookingHtml, findSalonEmailOnBookingPage, importableSalonEmail } from "./bookingPageEmail";
+import { bookingPlatformForUrl, extractSalonEmailFromBookingHtml, findSalonEmailOnBookingPage, importableSalonEmail, importableSalonEmailCandidate } from "./bookingPageEmail";
+import { allReportPlaceIdsExist, canApproveSalonReportRow, convertSalonSearchReportEntry, duplicateReportPlaceIds, reportPlaceIdsAreDistinct, salonReportScheduleRejection, salonReportSendRejection, salonSearchReportBatchSchema } from "./salonSearchReport";
 
 const row = {
   businessName: "Paws Grooming",
@@ -125,6 +127,234 @@ test("an approved email from a matched alternate salon website can be imported",
   assert.equal(importableSalonEmail({ ...row, email: "another@pawssalon.example" }), null);
   assert.equal(importableSalonEmail({ ...row, evidence: { email: { ...emailEvidence, sourceUrl: "https://book.cuddlesapp.com/salon" } } }), null);
   assert.equal(importableSalonEmail({ ...row, evidence: { email: { ...emailEvidence, sourceUrl: "http://pawssalon.example" } } }), null);
+  assert.equal(importableSalonEmail({ ...row, evidence: { email: { ...emailEvidence, purpose: "booking_only" } } }), null);
+});
+
+test("salon public-web report entries convert to reviewed but not yet approved import candidates", () => {
+  const [entry] = salonSearchReportBatchSchema.parse({
+    name: "Reviewed list",
+    reviewed: [{
+      State: "TX",
+      Business: "Paws Grooming",
+      "Source address": "12 Main Street, Austin, TX 78701",
+      "Google Place ID": "place-report-1",
+      Outcome: "verified_first_party_email",
+      "Public email (review-only when marked)": "hello@pawsgrooming.example",
+      "Email evidence URL": "https://pawsgrooming.example/contact",
+      "Email use": "Public business contact — manual review before any import/outreach",
+      "Evidence and exceptions": "Current salon page shows the address, grooming service and public inbox.",
+    }],
+  }).reviewed;
+  const row = convertSalonSearchReportEntry(entry, 1) as any;
+  assert.equal(row.businessName, "Paws Grooming");
+  assert.equal(row.address, entry["Source address"]);
+  assert.equal(row.state, "TX");
+  assert.equal(row.sourceData.category, "verified_public_email");
+  assert.equal(row.email, "hello@pawsgrooming.example");
+  assert.equal(row.identityMatchStatus, "strong");
+  assert.equal(row.status, "enriched");
+  assert.equal(row.reviewStatus, "needs_review");
+  assert.equal(row.evidence.note, entry["Evidence and exceptions"]);
+  assert.equal(row.evidence.sourceUrl, entry["Email evidence URL"]);
+  assert.equal(importableSalonEmailCandidate(row), row.email);
+  assert.equal(importableSalonEmail(row), null);
+  assert.equal(canApproveSalonReportRow(row), true);
+  assert.equal(importableSalonEmail({ ...row, reviewStatus: "approved" }), row.email);
+
+  const reviewOnly = convertSalonSearchReportEntry({
+    ...entry,
+    Outcome: "review_only_candidate",
+  }, 2) as any;
+  assert.equal(reviewOnly.email, null);
+  assert.equal(reviewOnly.sourceData.category, "review_only");
+  assert.equal(reviewOnly.status, "rejected");
+  assert.equal(reviewOnly.reviewStatus, "needs_review");
+  assert.equal(canApproveSalonReportRow(reviewOnly), false);
+});
+
+test("report conversion rejects booking-only, non-grooming, and incomplete public email evidence", () => {
+  const entry = {
+    State: "NY",
+    Business: "Example Grooming",
+    "Source address": "1 Main St, New York, NY",
+    "Google Place ID": "place-report-2",
+    Outcome: "verified_first_party_email" as const,
+    "Public email (review-only when marked)": "book@example.com",
+    "Email evidence URL": "https://example.com/contact",
+    "Email use": "Booking-only appointment requests",
+    "Evidence and exceptions": "Email is only for appointment booking.",
+  };
+  const booking = convertSalonSearchReportEntry(entry, 1) as any;
+  assert.equal(booking.email, null);
+  assert.equal(booking.reviewStatus, "rejected");
+  assert.equal(booking.identityMatchStatus, "unmatched");
+  assert.equal(importableSalonEmailCandidate(booking), null);
+  const restrictedUse = convertSalonSearchReportEntry({
+    ...entry,
+    "Email use": "Bookings/customer appointments only — not general outreach",
+  }, 4) as any;
+  assert.equal(restrictedUse.sourceData.category, "booking_only");
+  assert.equal(restrictedUse.email, null);
+  const nonGrooming = convertSalonSearchReportEntry({
+    ...entry,
+    Outcome: "excluded_non_grooming",
+  }, 2) as any;
+  assert.equal(nonGrooming.email, null);
+  assert.equal(nonGrooming.sourceData.category, "non_grooming");
+  assert.equal(nonGrooming.reviewStatus, "rejected");
+  const httpEvidence = convertSalonSearchReportEntry({
+    ...entry,
+    "Email use": "Public business contact — manual review before any import/outreach",
+    "Email evidence URL": "http://example.com/contact",
+  }, 3) as any;
+  assert.equal(httpEvidence.email, null);
+});
+
+test("salon search report rejects Place ID overlap within and across batches", () => {
+  assert.deepEqual(
+    duplicateReportPlaceIds(["Place-A", "place-b", "Place-C"], ["PLACE-A", "place-c"]),
+    ["Place-A", "Place-C"],
+  );
+  const repeated = salonSearchReportBatchSchema.safeParse({
+    name: "duplicate IDs",
+    reviewed: [{
+      State: "CA", Business: "One", "Source address": "1 Main St", "Google Place ID": "same",
+      Outcome: "no_verified_email", "Evidence and exceptions": "No email found.",
+    }, {
+      State: "CA", Business: "Two", "Source address": "2 Main St", "Google Place ID": "SAME",
+      Outcome: "no_verified_email", "Evidence and exceptions": "No email found.",
+    }],
+  });
+  assert.equal(repeated.success, true); // Row validation is separate from the route's distinct-ID check.
+  assert.equal(reportPlaceIdsAreDistinct(["same", "SAME"]), false);
+  assert.equal(reportPlaceIdsAreDistinct(["same", "other"]), true);
+  assert.equal(allReportPlaceIdsExist(["a", "b"], ["A", "b", "c"]), true);
+  assert.equal(allReportPlaceIdsExist(["a", "missing"], ["a"]), false);
+});
+
+test("bundled salon pilot JSON validates and contains a distinct 100-row reviewed list", () => {
+  const parsed = salonSearchReportBatchSchema.parse({
+    name: "Salon public web review pilot",
+    reviewed: salonSearchPilot.reviewed,
+  });
+  const placeIds = parsed.reviewed.map(entry => entry["Google Place ID"]);
+  assert.equal(parsed.reviewed.length, 100);
+  assert.equal(reportPlaceIdsAreDistinct(placeIds), true);
+});
+
+test("public-web email policy requires exact email, strong identity, general use, and HTTPS evidence", () => {
+  const email = "hello@paws.example";
+  const row = {
+    email,
+    websiteUrl: null,
+    bookingUrl: null,
+    identityMatchStatus: "strong",
+    reviewStatus: "approved",
+    sourceData: { Outcome: "verified_independent_directory_email" },
+    evidence: {
+      email: {
+        value: email,
+        source: "public_web_review",
+        confidence: "high",
+        sourceUrl: "https://paws.example/contact",
+        purpose: "general",
+      },
+    },
+  } as any;
+  assert.equal(importableSalonEmail(row), email);
+  assert.equal(importableSalonEmail({ ...row, reviewStatus: "needs_review" }), null);
+  assert.equal(importableSalonEmail({ ...row, evidence: { email: { ...row.evidence.email, purpose: "booking_only" } } }), null);
+  assert.equal(importableSalonEmail({ ...row, evidence: { email: { ...row.evidence.email, sourceUrl: "http://paws.example/contact" } } }), null);
+  assert.equal(importableSalonEmail({ ...row, email: "different@paws.example" }), null);
+  assert.equal(importableSalonEmail({ ...row, identityMatchStatus: "ambiguous" }), null);
+});
+
+test("salon report scheduling guard requires owned email contact, deal, directory step 1, matching track, and future time", () => {
+  const now = new Date("2030-01-01T00:00:00.000Z");
+  const valid = {
+    row: {
+      status: "imported",
+      importedContactId: "contact-1",
+      audienceTrack: "directory_general",
+      email: "salon@example.com",
+      identityMatchStatus: "strong",
+      reviewStatus: "approved",
+      websiteUrl: null,
+      bookingUrl: null,
+      sourceData: {
+        category: "verified_public_email",
+        Outcome: "verified_first_party_email",
+        "Public email (review-only when marked)": "salon@example.com",
+      },
+      evidence: {
+        email: {
+          value: "salon@example.com",
+          source: "public_web_review",
+          confidence: "high",
+          sourceUrl: "https://salon.example/contact",
+          purpose: "general",
+        },
+      },
+    },
+    contact: { userId: "owner-1", email: "salon@example.com", sequenceTrack: "directory_general" },
+    sequence: { userId: "owner-1", sequenceTrack: "directory_general", sequenceNumber: 1, isActive: "true" },
+    userId: "owner-1",
+    hasOwnedDeal: true,
+    scheduledSendAt: new Date("2030-01-02T00:00:00.000Z"),
+    now,
+  };
+  assert.equal(salonReportScheduleRejection(valid), null);
+  assert.match(salonReportScheduleRejection({ ...valid, hasOwnedDeal: false }) || "", /pipeline deal/);
+  assert.match(salonReportScheduleRejection({
+    ...valid, contact: { ...valid.contact, userId: "other-user" },
+  }) || "", /owned contact/);
+  assert.match(salonReportScheduleRejection({
+    ...valid, sequence: { ...valid.sequence, sequenceNumber: 2 },
+  }) || "", /step 1/);
+  assert.match(salonReportScheduleRejection({
+    ...valid, contact: { ...valid.contact, email: null },
+  }) || "", /email address/);
+  assert.match(salonReportScheduleRejection({
+    ...valid, scheduledSendAt: new Date("2030-01-01T00:00:00.000Z"),
+  }) || "", /future date/);
+  assert.match(salonReportScheduleRejection({
+    ...valid,
+    row: { ...valid.row, reviewStatus: "needs_review" },
+  }) || "", /remain approved/);
+  assert.match(salonReportScheduleRejection({
+    ...valid,
+    contact: { ...valid.contact, email: "edited@example.com" },
+  }) || "", /matching the contact/);
+});
+
+test("scheduler send guard blocks edited emails and revoked report approvals", () => {
+  const row = {
+    userId: "owner-1",
+    status: "imported",
+    reviewStatus: "approved",
+    identityMatchStatus: "strong",
+    email: "salon@example.com",
+    websiteUrl: null,
+    bookingUrl: null,
+    sourceData: {
+      category: "verified_public_email",
+      Outcome: "verified_first_party_email",
+      "Public email (review-only when marked)": "salon@example.com",
+    },
+    evidence: {
+      email: {
+        value: "salon@example.com",
+        source: "public_web_review",
+        confidence: "high",
+        sourceUrl: "https://salon.example/contact",
+        purpose: "general",
+      },
+    },
+  } as any;
+  const contact = { userId: "owner-1", email: "salon@example.com" };
+  assert.equal(salonReportSendRejection(row, contact, "owner-1"), null);
+  assert.match(salonReportSendRejection(row, { ...contact, email: "edited@example.com" }, "owner-1") || "", /no longer matches/);
+  assert.match(salonReportSendRejection({ ...row, reviewStatus: "rejected" }, contact, "owner-1") || "", /approval was revoked/);
 });
 
 test("booking providers and unrelated salons cannot supply a sequence email", () => {

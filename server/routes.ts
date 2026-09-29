@@ -15,6 +15,8 @@ import * as XLSX from "xlsx";
 import { sendDailyReport } from "./dailyReportScheduler";
 import { sendReplyNotificationEmail, sendEmail, replaceTemplateVariables } from "./sendgrid";
 import { format as fmtDate } from "date-fns";
+import { canApproveSalonReportRow, convertSalonSearchReportEntry, reportPlaceIdsAreDistinct, salonReportScheduleRejection, salonSearchReportBatchSchema } from "./salonSearchReport";
+import salonSearchPilot from "../reports/salon-next-100-summary.json" with { type: "json" };
 
 // ─── Sequence Test Runner (in-memory) ────────────────────────────────────────
 interface TestStepResult {
@@ -2676,6 +2678,215 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Lead Discovery Routes
   // Fixed-list salon enrichment is intentionally separate from legacy discovery.
+  const saveSalonSearchReport = async (
+    userId: string,
+    payload: unknown,
+    returnWhenAllPlaceIdsExist = false,
+  ): Promise<{ status: number; body: any }> => {
+    const input = salonSearchReportBatchSchema.parse(payload);
+    const placeIds = input.reviewed.map(entry => entry["Google Place ID"].trim());
+    if (!reportPlaceIdsAreDistinct(placeIds)) {
+      return { status: 400, body: { message: "Place IDs must be distinct within a report batch" } };
+    }
+    const rows = input.reviewed.map((entry, index) => convertSalonSearchReportEntry(entry, index + 1, "pending", userId));
+    const batchData = insertSalonEnrichmentBatchSchema.parse({
+      name: input.name,
+      fileName: "salon-public-web-review",
+      status: "completed",
+      pilotLimit: rows.length,
+      concurrency: 1,
+      estimatedSerpCalls: 0,
+      usedSerpCalls: 0,
+      processedRows: rows.length,
+      enrichedRows: rows.filter(row => row.status === "enriched").length,
+      needsReviewRows: rows.filter(row => row.reviewStatus === "needs_review").length,
+      approvedRows: 0,
+      importedRows: 0,
+    });
+    const result = await storage.createSalonSearchReportBatch(batchData, rows, userId, returnWhenAllPlaceIdsExist);
+    if (result.duplicatePlaceIds.length) {
+      return {
+        status: 409,
+        body: { message: "Place IDs already exist in a previous salon search report batch", duplicatePlaceIds: result.duplicatePlaceIds },
+      };
+    }
+    if (result.existing) {
+      return {
+        status: 200,
+        body: {
+          batch: result.batch,
+          existingBatches: result.existingBatches,
+          existing: true,
+          rowCount: rows.length,
+          externalSearches: 0,
+          estimatedSerpCalls: 0,
+          usedSerpCalls: 0,
+        },
+      };
+    }
+    return {
+      status: 201,
+      body: { batch: result.batch, rowCount: rows.length, externalSearches: 0, estimatedSerpCalls: 0, usedSerpCalls: 0, existing: false },
+    };
+  };
+
+  app.post("/api/salon-search-report/batches", isAuthenticated, async (req: any, res) => {
+    try {
+      const result = await saveSalonSearchReport(req.user.claims.sub as string, req.body);
+      res.status(result.status).json(result.body);
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ message: "Invalid salon search report", errors: error.errors });
+      console.error("Failed to ingest salon search report:", error);
+      res.status(500).json({ message: error instanceof Error ? error.message : "Failed to ingest salon search report" });
+    }
+  });
+
+  app.post("/api/salon-search-report/load-pilot", isAuthenticated, async (req: any, res) => {
+    try {
+      const result = await saveSalonSearchReport(req.user.claims.sub as string, {
+        name: "Salon public web review pilot",
+        reviewed: salonSearchPilot.reviewed,
+      }, true);
+      res.status(result.status).json(result.body);
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(500).json({ message: "The bundled salon search pilot is invalid", errors: error.errors });
+      console.error("Failed to load bundled salon search pilot:", error);
+      res.status(500).json({ message: error instanceof Error ? error.message : "Failed to load bundled salon search pilot" });
+    }
+  });
+
+  app.get("/api/salon-search-report", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub as string;
+      const allBatches = (await storage.getSalonEnrichmentBatches(userId))
+        .filter(batch => batch.fileName === "salon-public-web-review");
+      const batchId = typeof req.query.batchId === "string" ? req.query.batchId : undefined;
+      if (batchId && !allBatches.some(batch => batch.id === batchId)) {
+        return res.status(404).json({ message: "Report batch not found" });
+      }
+      const allReportRows = (await Promise.all(allBatches.map(batch => storage.getSalonEnrichmentRows(batch.id, userId)))).flat();
+      const selectedBatchRows = batchId
+        ? allReportRows.filter(row => row.batchId === batchId)
+        : allReportRows;
+      const reportCategoryForRow = (row: typeof allReportRows[number]) => {
+        return (row.sourceData as { category?: string } | null)?.category || "uncategorized";
+      };
+      const byCategory: Record<string, number> = {};
+      for (const row of allReportRows) {
+        const category = reportCategoryForRow(row);
+        byCategory[category] = (byCategory[category] || 0) + 1;
+      }
+      const category = typeof req.query.category === "string" ? req.query.category : undefined;
+      const search = typeof req.query.search === "string" ? req.query.search.trim().toLowerCase() : "";
+      const filteredRows = selectedBatchRows.filter(row => {
+        const source = row.sourceData as Record<string, unknown>;
+        if (category && source.category !== category && reportCategoryForRow(row) !== category) return false;
+        if (!search) return true;
+        return [row.businessName, row.address, row.state, row.email, source["Evidence and exceptions"]]
+          .some(value => typeof value === "string" && value.toLowerCase().includes(search));
+      });
+      const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 100));
+      const offset = Math.max(0, Number(req.query.offset) || 0);
+      const pageRows = filteredRows.slice(offset, offset + limit);
+      const linkedContacts = pageRows.map(row => row.importedContactId).filter((id): id is string => !!id);
+      const links = await storage.getSalonSearchReportLinks(linkedContacts, userId);
+      const rows = pageRows.map(row => {
+        const evidence = row.evidence as { sourceUrl?: string | null; note?: string | null } | null;
+        const sourceData = row.sourceData as Record<string, unknown>;
+        const contactLinks = row.importedContactId ? links[row.importedContactId] : undefined;
+        return {
+          id: row.id,
+          batchId: row.batchId,
+          businessName: row.businessName,
+          address: row.address,
+          state: row.state,
+          placeId: row.placeId,
+          email: row.email,
+          candidateEmail: typeof sourceData["Public email (review-only when marked)"] === "string"
+            ? sourceData["Public email (review-only when marked)"] as string
+            : null,
+          sourceUrl: evidence?.sourceUrl || (typeof sourceData["Email evidence URL"] === "string" ? sourceData["Email evidence URL"] as string : null),
+          evidenceNote: evidence?.note || (typeof sourceData["Evidence and exceptions"] === "string" ? sourceData["Evidence and exceptions"] as string : null),
+          category: reportCategoryForRow(row),
+          reviewStatus: row.reviewStatus,
+          importedContactId: row.importedContactId,
+          dealId: contactLinks?.dealId || null,
+          dealStage: contactLinks?.dealStage || null,
+          sequenceStatus: contactLinks?.sequenceStatus || null,
+          audienceTrack: row.audienceTrack,
+        };
+      });
+      res.json({
+        batches: allBatches,
+        totals: {
+          batches: allBatches.length,
+          rows: allReportRows.length,
+          totalRows: allReportRows.length,
+          imported: allReportRows.filter(row => row.status === "imported").length,
+          byCategory,
+          ...byCategory,
+        },
+        rows,
+        totalRows: filteredRows.length,
+        pagination: { total: filteredRows.length, limit, offset },
+      });
+    } catch (error) {
+      console.error("Failed to load salon search report:", error);
+      res.status(500).json({ message: "Failed to load salon search report" });
+    }
+  });
+
+  app.post("/api/salon-search-report/rows/:id/schedule", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub as string;
+      const input = z.object({
+        sequenceId: z.string().min(1),
+        scheduledSendAt: z.string().datetime({ offset: true }),
+      }).parse(req.body);
+      const row = await storage.getSalonEnrichmentRow(req.params.id, userId);
+      if (!row) return res.status(404).json({ message: "Salon search report row not found" });
+      const batch = await storage.getSalonEnrichmentBatch(row.batchId, userId);
+      if (!batch || batch.fileName !== "salon-public-web-review") {
+        return res.status(404).json({ message: "Salon search report row not found" });
+      }
+      if (!row.importedContactId || row.status !== "imported") {
+        return res.status(400).json({ message: "Import this report row as a contact before scheduling" });
+      }
+      const contact = await storage.getContact(row.importedContactId, userId);
+      if (!contact) return res.status(404).json({ message: "Imported contact not found or not owned by you" });
+      const sequence = await storage.getEmailSequence(input.sequenceId, userId);
+      if (!sequence) return res.status(404).json({ message: "Email sequence not found or not owned by you" });
+      const ownedDeals = await storage.getDeals(userId);
+      const rejection = salonReportScheduleRejection({
+        row,
+        contact,
+        sequence,
+        userId,
+        hasOwnedDeal: ownedDeals.some(deal => deal.contactId === contact.id),
+        scheduledSendAt: new Date(input.scheduledSendAt),
+      });
+      if (rejection) return res.status(400).json({ message: rejection });
+
+      const result = await storage.bulkCreateEmailSequenceLogs(
+        sequence.id,
+        [contact.id],
+        userId,
+        new Date(input.scheduledSendAt),
+      );
+      if (result.failed.length || result.successful.length !== 1) {
+        return res.status(409).json({
+          successful: result.successful,
+          failed: result.failed.length ? result.failed : [{ contactId: contact.id, error: "No sequence log was queued" }],
+        });
+      }
+      return res.status(201).json(result);
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ message: "Invalid sequence scheduling request", errors: error.errors });
+      console.error("Failed to schedule salon report row:", error);
+      return res.status(500).json({ message: error instanceof Error ? error.message : "Failed to schedule sequence" });
+    }
+  });
+
   app.get("/api/salon-enrichment/batches", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
@@ -2788,7 +2999,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (!batch || rowIds.some((id: unknown) => !rows.some(row => row.id === id))) return res.status(404).json({ message: "Batch or row not found" });
     const selectedRows = rows.filter(row => rowIds.includes(row.id));
     if (!rowIds.length) return res.status(400).json({ message: "Select at least one row" });
-    if (decision === "approved" && selectedRows.some(row => row.status !== "enriched" || row.identityMatchStatus !== "strong")) {
+    if (decision === "approved" && selectedRows.some(row =>
+      batch.fileName === "salon-public-web-review"
+        ? !canApproveSalonReportRow(row)
+        : row.status !== "enriched" || row.identityMatchStatus !== "strong"
+    )) {
       return res.status(400).json({ message: "Only enriched rows with a strong identity match can be approved" });
     }
     const count = await storage.markSalonRowsForReview(rowIds, decision, actorScope);

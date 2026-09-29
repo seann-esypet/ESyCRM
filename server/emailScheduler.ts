@@ -266,8 +266,29 @@ export async function processEmailSequences(): Promise<{
 
       try {
         const contact = await storage.getContact(log.contactId, null);
-        if (!contact || !contact.email) {
-          stats.errors.push(`Contact ${log.contactId} not found or has no email`);
+        if (!contact) {
+          stats.errors.push(`Contact ${log.contactId} not found`);
+          await storage.updateEmailSequenceLog(log.id, { status: "failed" }, null);
+          stats.failed++;
+          continue;
+        }
+        const reportSendRejection = await storage.getSalonReportSendRejection(
+          contact.id,
+          log.userId,
+          contact.userId,
+          contact.email,
+        );
+        if (reportSendRejection) {
+          stats.errors.push(`Blocked salon report sequence for ${contact.email || contact.id}: ${reportSendRejection}`);
+          await storage.updateEmailSequenceLog(log.id, {
+            status: "failed",
+            errorMessage: reportSendRejection,
+          }, null);
+          stats.failed++;
+          continue;
+        }
+        if (!contact.email) {
+          stats.errors.push(`Contact ${log.contactId} has no email`);
           await storage.updateEmailSequenceLog(log.id, { status: "failed" }, null);
           stats.failed++;
           continue;

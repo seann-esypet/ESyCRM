@@ -72,6 +72,7 @@ import { db } from "./db";
 import { eq, desc, and, sql, gte, lte, or, ne, inArray, isNull } from "drizzle-orm";
 import { DIRECTORY_FIRST_STRATEGY, DIRECTORY_TRACKS, directoryEmailSequenceTemplates } from "./directoryEmailSequences";
 import { importableSalonEmail } from "./bookingPageEmail";
+import { salonReportSendRejection } from "./salonSearchReport";
 
 export type PayrollPreviewItem = {
   tempId: string;
@@ -239,9 +240,17 @@ export interface IStorage {
   getSalonEnrichmentBatches(userId: string | null): Promise<SalonEnrichmentBatch[]>;
   getSalonEnrichmentBatch(id: string, userId: string | null): Promise<SalonEnrichmentBatch | undefined>;
   createSalonEnrichmentBatch(data: InsertSalonEnrichmentBatch, rows: InsertSalonEnrichmentRow[], userId: string): Promise<SalonEnrichmentBatch>;
+  createSalonSearchReportBatch(data: InsertSalonEnrichmentBatch, rows: InsertSalonEnrichmentRow[], userId: string, allowExisting: boolean): Promise<{
+    batch: SalonEnrichmentBatch | null;
+    existingBatches: SalonEnrichmentBatch[];
+    duplicatePlaceIds: string[];
+    existing: boolean;
+  }>;
   updateSalonEnrichmentBatch(id: string, data: Partial<SalonEnrichmentBatch>, userId: string | null): Promise<SalonEnrichmentBatch | undefined>;
   getSalonEnrichmentRows(batchId: string, userId: string | null, filters?: { status?: string; reviewStatus?: string; search?: string; limit?: number; offset?: number }): Promise<SalonEnrichmentRow[]>;
   getSalonEnrichmentRow(id: string, userId: string | null): Promise<SalonEnrichmentRow | undefined>;
+  getSalonSearchReportLinks(contactIds: string[], userId: string): Promise<Record<string, { dealId: string | null; dealStage: string | null; sequenceStatus: string | null }>>;
+  getSalonReportSendRejection(contactId: string, ownerId: string, contactOwnerId: string, contactEmail: string | null): Promise<string | null>;
   updateSalonEnrichmentRow(id: string, data: Partial<SalonEnrichmentRow>, userId: string | null): Promise<SalonEnrichmentRow | undefined>;
   markSalonRowsForReview(ids: string[], decision: "approved" | "rejected", userId: string | null): Promise<number>;
   resetSalonRowsForRetry(ids: string[], userId: string | null): Promise<number>;
@@ -1788,6 +1797,76 @@ export class DatabaseStorage implements IStorage {
     });
   }
 
+  async createSalonSearchReportBatch(
+    data: InsertSalonEnrichmentBatch,
+    rows: InsertSalonEnrichmentRow[],
+    userId: string,
+    allowExisting: boolean,
+  ): Promise<{
+    batch: SalonEnrichmentBatch | null;
+    existingBatches: SalonEnrichmentBatch[];
+    duplicatePlaceIds: string[];
+    existing: boolean;
+  }> {
+    return await db.transaction(async tx => {
+      // Serialize owner-scoped report uploads from duplicate detection through
+      // batch+row insertion so concurrent requests cannot both pass the check.
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`salon-search-report:${userId}`}))`);
+      const priorBatches = await tx.select().from(salonEnrichmentBatches).where(and(
+        eq(salonEnrichmentBatches.userId, userId),
+        eq(salonEnrichmentBatches.fileName, "salon-public-web-review"),
+      ));
+      const priorIds = priorBatches.map(batch => batch.id);
+      const priorRows = priorIds.length
+        ? await tx.select().from(salonEnrichmentRows).where(and(
+          eq(salonEnrichmentRows.userId, userId),
+          inArray(salonEnrichmentRows.batchId, priorIds),
+        ))
+        : [];
+      const existingPlaceIds = priorRows.map(row => row.placeId?.trim().toLowerCase()).filter((id): id is string => !!id);
+      const existingSet = new Set(existingPlaceIds);
+      const incomingPlaceIds = rows.map(row => row.placeId?.trim().toLowerCase()).filter((id): id is string => !!id);
+      const duplicatePlaceIds = Array.from(new Set(incomingPlaceIds.filter(id => existingSet.has(id))));
+      if (duplicatePlaceIds.length) {
+        const allExist = incomingPlaceIds.length > 0 && incomingPlaceIds.every(id => existingSet.has(id));
+        if (allowExisting && allExist) {
+          const incomingSet = new Set(incomingPlaceIds);
+          const existingBatches = priorBatches.filter(batch =>
+            priorRows.some(row => row.batchId === batch.id && row.placeId && incomingSet.has(row.placeId.trim().toLowerCase()))
+          );
+          const exactBatch = existingBatches.find(batch => {
+            const ids = priorRows.filter(row => row.batchId === batch.id && row.placeId)
+              .map(row => row.placeId!.trim().toLowerCase());
+            const uniqueIds = new Set(ids);
+            return uniqueIds.size === incomingSet.size && Array.from(incomingSet).every(id => uniqueIds.has(id));
+          }) || null;
+          return { batch: exactBatch, existingBatches, duplicatePlaceIds: [], existing: true };
+        }
+        return { batch: null, existingBatches: [], duplicatePlaceIds, existing: false };
+      }
+
+      const [batch] = await tx.insert(salonEnrichmentBatches).values({
+        ...data,
+        userId,
+        totalRows: rows.length,
+        completedAt: new Date(),
+        pilotLimit: data.pilotLimit ?? 100,
+        concurrency: data.concurrency ?? 1,
+      }).returning();
+      if (rows.length) {
+        for (let offset = 0; offset < rows.length; offset += 500) {
+          await tx.insert(salonEnrichmentRows).values(rows.slice(offset, offset + 500).map(row => ({
+            ...row,
+            batchId: batch.id,
+            userId,
+            sourceData: row.sourceData ?? {},
+          })));
+        }
+      }
+      return { batch, existingBatches: [], duplicatePlaceIds: [], existing: false };
+    });
+  }
+
   async updateSalonEnrichmentBatch(id: string, data: Partial<SalonEnrichmentBatch>, userId: string | null): Promise<SalonEnrichmentBatch | undefined> {
     const where = userId === null
       ? eq(salonEnrichmentBatches.id, id)
@@ -1816,6 +1895,79 @@ export class DatabaseStorage implements IStorage {
     const where = userId === null ? eq(salonEnrichmentRows.id, id) : and(eq(salonEnrichmentRows.id, id), eq(salonEnrichmentRows.userId, userId));
     const [row] = await db.select().from(salonEnrichmentRows).where(where);
     return row;
+  }
+
+  async getSalonSearchReportLinks(
+    contactIds: string[],
+    userId: string,
+  ): Promise<Record<string, { dealId: string | null; dealStage: string | null; sequenceStatus: string | null }>> {
+    const ids = Array.from(new Set(contactIds.filter(Boolean)));
+    const result: Record<string, { dealId: string | null; dealStage: string | null; sequenceStatus: string | null }> = {};
+    for (const id of ids) result[id] = { dealId: null, dealStage: null, sequenceStatus: null };
+    if (!ids.length) return result;
+
+    const linkedDeals = await db.select({
+      contactId: deals.contactId,
+      dealId: deals.id,
+      dealStage: deals.stage,
+    }).from(deals)
+      .innerJoin(contacts, eq(deals.contactId, contacts.id))
+      .where(and(
+        eq(deals.userId, userId),
+        eq(contacts.userId, userId),
+        inArray(deals.contactId, ids),
+      ))
+      .orderBy(desc(deals.createdAt));
+    for (const deal of linkedDeals) {
+      if (!deal.contactId || !result[deal.contactId] || result[deal.contactId].dealId) continue;
+      result[deal.contactId].dealId = deal.dealId;
+      result[deal.contactId].dealStage = deal.dealStage;
+    }
+
+    const sequenceLogs = await db.select({
+      contactId: emailSequenceLogs.contactId,
+      status: emailSequenceLogs.status,
+    }).from(emailSequenceLogs)
+      .innerJoin(contacts, eq(emailSequenceLogs.contactId, contacts.id))
+      .where(and(
+        eq(emailSequenceLogs.userId, userId),
+        eq(contacts.userId, userId),
+        inArray(emailSequenceLogs.contactId, ids),
+      ))
+      .orderBy(desc(emailSequenceLogs.createdAt));
+    for (const log of sequenceLogs) {
+      if (!result[log.contactId] || result[log.contactId].sequenceStatus) continue;
+      result[log.contactId].sequenceStatus = log.status;
+    }
+    return result;
+  }
+
+  async getSalonReportSendRejection(
+    contactId: string,
+    ownerId: string,
+    contactOwnerId: string,
+    contactEmail: string | null,
+  ): Promise<string | null> {
+    const reportRows = await db.select({
+      row: salonEnrichmentRows,
+      batchUserId: salonEnrichmentBatches.userId,
+    }).from(salonEnrichmentRows)
+      .innerJoin(salonEnrichmentBatches, eq(salonEnrichmentRows.batchId, salonEnrichmentBatches.id))
+      .where(and(
+        eq(salonEnrichmentRows.importedContactId, contactId),
+        eq(salonEnrichmentBatches.fileName, "salon-public-web-review"),
+      ));
+    if (!reportRows.length) return null;
+    for (const result of reportRows) {
+      if (result.batchUserId !== ownerId) return "Salon report batch is no longer owned by the sequence owner";
+      const rejection = salonReportSendRejection(
+        result.row,
+        { userId: contactOwnerId, email: contactEmail },
+        ownerId,
+      );
+      if (rejection) return rejection;
+    }
+    return null;
   }
 
   async updateSalonEnrichmentRow(id: string, data: Partial<SalonEnrichmentRow>, userId: string | null): Promise<SalonEnrichmentRow | undefined> {
@@ -1907,6 +2059,11 @@ export class DatabaseStorage implements IStorage {
           skipped.push({ rowId: row.id, reason: "Already imported" });
           continue;
         }
+        const verifiedEmail = importableSalonEmail(row);
+        if (!verifiedEmail) {
+          skipped.push({ rowId: row.id, reason: "No approved, importable email with complete evidence" });
+          continue;
+        }
         const placeKey = row.placeId?.trim().toLowerCase();
         if (placeKey && importedPlaceIds.has(placeKey)) {
           await tx.update(salonEnrichmentRows).set({
@@ -1917,7 +2074,6 @@ export class DatabaseStorage implements IStorage {
           skipped.push({ rowId: row.id, reason: "Place ID already imported" });
           continue;
         }
-        const verifiedEmail = importableSalonEmail(row);
         const companyKey = normalizeName(row.businessName);
         const addressKey = normalizeName(row.address1 || row.address);
         const phoneKey = normalizePhoneNumber(row.phone);

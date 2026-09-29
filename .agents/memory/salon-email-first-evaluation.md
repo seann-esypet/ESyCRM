@@ -26,3 +26,9 @@ A matching-domain email or a page with Name/Email/Message fields can still be a 
 **Why:** In a read-only website subset review, a dog-spa contact page included a tree-service footer and unrelated address, a parked domain offered a form for contacting its owner, and a multi-location pet-care contact page exposed the correct branch email only in an alternate text extraction.
 
 **How to apply:** Review the *surrounding page identity and purpose*, not just domain equality or field names. Exclude parked or mixed-identity pages, match branch email to the exact location when possible, and keep extraction misses separate from confirmed absence of contact information.
+
+For a source-reviewed salon contact, approval and email attribution must still be valid when a scheduled sequence actually sends, not only when the contact is imported or enrolled.
+
+**Why:** CRM contact emails and review decisions can change after a send is queued. Otherwise a queued message or later follow-up can go to an address that was never verified for that salon.
+
+**How to apply:** Before each scheduled send, compare the contact's current address with the approved source-backed address and block delivery when attribution or approval has changed. Keep this check on chained follow-ups as well as the first message.

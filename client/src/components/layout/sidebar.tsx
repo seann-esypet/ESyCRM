@@ -21,6 +21,7 @@ import {
   LogOut,
   UserCog,
   Search,
+  FileSearch,
   DatabaseZap,
   ClipboardList,
   FlaskConical,
@@ -40,6 +41,7 @@ const navigation = [
   { name: "Inbox",           href: "/inbox",              icon: InboxIcon },
   { name: "Commissions",     href: "/commissions",        icon: DollarSign },
   { name: "Reports",         href: "/reports",            icon: TrendingUp },
+  { name: "Salon Search Report", href: "/salon-search-report", icon: FileSearch },
   { name: "Settings",        href: "/settings",           icon: SettingsIcon },
 ];
 

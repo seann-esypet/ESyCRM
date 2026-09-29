@@ -77,14 +77,40 @@ export function extractSalonEmailFromBookingHtml(
 }
 
 export function importableSalonEmail(
-  row: Pick<SalonEnrichmentRow, "email" | "evidence" | "bookingUrl" | "websiteUrl" | "identityMatchStatus" | "reviewStatus">,
+  row: Pick<SalonEnrichmentRow, "email" | "evidence" | "bookingUrl" | "websiteUrl" | "identityMatchStatus" | "reviewStatus" | "sourceData">,
+): string | null {
+  const email = importableSalonEmailCandidate(row);
+  if (!email || row.reviewStatus !== "approved") return null;
+  return email;
+}
+
+/**
+ * Validate the email/evidence/identity without requiring the human review
+ * decision to have already been recorded. Approval routes use this before
+ * changing reviewStatus; imports use importableSalonEmail above.
+ */
+export function importableSalonEmailCandidate(
+  row: Pick<SalonEnrichmentRow, "email" | "evidence" | "bookingUrl" | "websiteUrl" | "identityMatchStatus" | "sourceData">,
 ): string | null {
   const email = row.email?.trim();
   const evidence = (row.evidence as { email?: {
-    value?: string; source?: string; confidence?: string; sourceUrl?: string;
+    value?: string; source?: string; confidence?: string; sourceUrl?: string; purpose?: string;
   } } | null)?.email;
   if (!email || !evidence || evidence.value?.trim().toLowerCase() !== email.toLowerCase()) return null;
-  if (row.identityMatchStatus !== "strong" || row.reviewStatus !== "approved") return null;
+  if (row.identityMatchStatus !== "strong") return null;
+  if (evidence.purpose && evidence.purpose !== "general") return null;
+  if (evidence.source === "public_web_review" && evidence.confidence === "high" &&
+      evidence.purpose === "general") {
+    const sourceData = row.sourceData as { Outcome?: string } | null;
+    if (sourceData?.Outcome !== "verified_first_party_email" &&
+        sourceData?.Outcome !== "verified_independent_directory_email") return null;
+    try {
+      const source = new URL(evidence.sourceUrl || "");
+      if (source.protocol === "https:" && !source.username && !source.password) return email;
+    } catch {
+      // An invalid source URL is not usable email evidence.
+    }
+  }
   if (evidence.source === "website" && evidence.confidence === "high" &&
       evidence.sourceUrl === row.websiteUrl && row.websiteUrl && !bookingPlatformForUrl(row.websiteUrl)) return email;
   if (evidence.source === "serp_fallback_website" && evidence.confidence === "medium" && evidence.sourceUrl) {

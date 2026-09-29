@@ -22,6 +22,7 @@ import LeadDiscovery from "@/pages/lead-discovery";
 import DealWorkspace from "@/pages/deal-workspace";
 import PayrollDetail from "@/pages/payroll-detail";
 import SalonEnrichment from "@/pages/salon-enrichment";
+import SalonSearchReport from "@/pages/salon-search-report";
 import FormOutreach from "@/pages/form-outreach";
 import Sidebar from "@/components/layout/sidebar";
 
@@ -70,6 +71,7 @@ function Router() {
           <Route path="/lead-discovery" component={LeadDiscovery} />
           <Route path="/salon-enrichment/:id" component={SalonEnrichment} />
           <Route path="/salon-enrichment" component={SalonEnrichment} />
+          <Route path="/salon-search-report" component={SalonSearchReport} />
           <Route path="/form-outreach" component={FormOutreach} />
           <Route path="/contacts" component={Contacts} />
           <Route path="/deal/:id" component={DealWorkspace} />
