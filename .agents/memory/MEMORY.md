@@ -4,3 +4,4 @@
 - [Salon site fetch mismatch](salon-site-fetch-mismatch.md) — a failed scripted crawl may be a request-profile mismatch, not evidence that the salon has no public email.
 - [Salon website discovery](salon-website-discovery.md) — organic search can surface directory-listed domains absent from Maps, but discovery does not verify a live salon-owned site.
 - [Manual salon form outreach](manual-salon-form-outreach.md) — a verified general-contact form is a separate reviewed contact path, never an automatic send or an email success.
+- [Salon name evidence boundary](salon-name-evidence-boundary.md) — owner identity does not prove a mailbox's addressee; name approval and personal-name salutations are separate decisions.

@@ -11,6 +11,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { OwnerNameReview, OwnerSearchEstimate, OwnerPreview } from "@/components/owner-name-review";
+import type { OwnerNameResult } from "@shared/salonOwnerName";
 import {
   AlertCircle, ArrowLeft, ArrowRight, BriefcaseBusiness, CalendarClock,
   Check, CircleHelp, ExternalLink, FileJson2, Mail, MapPin, RefreshCw,
@@ -36,6 +38,8 @@ type SearchRow = {
   dealStage?: string | null;
   sequenceStatus?: string | null;
   audienceTrack?: string | null;
+  ownerName?: OwnerNameResult | null;
+  contactName?: { firstName?: string | null; lastName?: string | null; useBusinessNameForEmail?: "Yes" | "No" | null } | null;
   [key: string]: unknown;
 };
 type ReportData = {
@@ -138,6 +142,9 @@ export default function SalonSearchReport() {
   const [scheduledAt, setScheduledAt] = useState("");
   const [scheduleConfirmed, setScheduleConfirmed] = useState(false);
   const [minimumEasternTime] = useState(() => easternLocalInputValue(new Date(Date.now() + 60_000)));
+  const [ownerSelectedIds, setOwnerSelectedIds] = useState<string[]>([]);
+  const [ownerEstimate, setOwnerEstimate] = useState<OwnerSearchEstimate | null>(null);
+  const [confirmOwnerBatch, setConfirmOwnerBatch] = useState(false);
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams();
@@ -166,6 +173,11 @@ export default function SalonSearchReport() {
   const seqStepOne = (sequenceQuery.data ?? []).filter(item =>
     Number(item.sequenceNumber) === 1 && item.sequenceTrack === "directory_general"
   );
+  const schedulePreview = useQuery<OwnerPreview>({
+    queryKey: ["/api/salon-owner-names/rows", scheduleRow?.id, "preview", sequenceId],
+    queryFn: () => getJson(`/api/salon-owner-names/rows/${scheduleRow!.id}/preview?sequenceId=${encodeURIComponent(sequenceId)}`),
+    enabled: Boolean(scheduleRow && sequenceId),
+  });
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["/api/salon-search-report"] });
   const review = useMutation({
@@ -288,6 +300,27 @@ export default function SalonSearchReport() {
     },
     onError: (error: Error) => toast({ title: "Could not schedule sequence", description: error.message, variant: "destructive" }),
   });
+  const estimateOwnerBatch = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", "/api/salon-owner-names/estimate", { rowIds: ownerSelectedIds });
+      return response.json() as Promise<OwnerSearchEstimate>;
+    },
+    onSuccess: data => { setOwnerEstimate(data); setConfirmOwnerBatch(true); },
+    onError: (error: Error) => toast({ title: "Could not estimate owner search", description: error.message, variant: "destructive" }),
+  });
+  const searchOwnerBatch = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", "/api/salon-owner-names/search", {
+        rowIds: ownerSelectedIds, maxProviderCalls: Math.min(ownerSelectedIds.length, ownerEstimate?.maxProviderCalls ?? ownerSelectedIds.length), confirmed: true,
+      });
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Owner searches complete", description: "Review source-backed candidates in each row." });
+      setOwnerSelectedIds([]); setOwnerEstimate(null); setConfirmOwnerBatch(false); refresh();
+    },
+    onError: (error: Error) => toast({ title: "Owner search failed", description: error.message, variant: "destructive" }),
+  });
 
   const startSchedule = (row: SearchRow) => {
     setScheduleRow(row);
@@ -401,6 +434,21 @@ export default function SalonSearchReport() {
             </Select>
             <Button variant="outline" onClick={() => reportQuery.refetch()} disabled={reportQuery.isFetching}><RefreshCw className={`mr-2 h-4 w-4 ${reportQuery.isFetching ? "animate-spin" : ""}`} />Refresh</Button>
           </div>
+          <div className="flex flex-col gap-3 rounded-lg border border-primary/15 bg-primary/[0.025] p-3 sm:flex-row sm:items-center sm:justify-between">
+            <div><p className="text-sm font-medium">Owner-name lookup</p><p className="text-xs text-muted-foreground">Select up to five eligible salons below. Each search is budget-estimated and requires confirmation.</p></div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-muted-foreground">{ownerSelectedIds.length}/5 selected</span>
+              <Button size="sm" variant="outline" onClick={() => estimateOwnerBatch.mutate()} disabled={!ownerSelectedIds.length || estimateOwnerBatch.isPending || searchOwnerBatch.isPending}>
+                {estimateOwnerBatch.isPending ? "Estimating…" : "Estimate & search selected"}
+              </Button>
+              {ownerSelectedIds.length > 0 && <Button size="sm" variant="ghost" onClick={() => setOwnerSelectedIds([])}>Clear selection</Button>}
+            </div>
+          </div>
+          {confirmOwnerBatch && ownerEstimate && <div className="rounded-lg border border-amber-300/70 bg-amber-50 p-4 text-sm text-amber-950">
+            <p className="font-semibold">Confirm paid owner search for {ownerSelectedIds.length} salon{ownerSelectedIds.length === 1 ? "" : "s"}</p>
+            <p className="mt-1 text-xs leading-5">Up to {ownerEstimate.maxProviderCalls} provider calls and {ownerEstimate.maxPages} page fetches. {ownerEstimate.remainingCredits} credits remain{ownerEstimate.reason ? ` · ${ownerEstimate.reason}` : ""}. This is capped at one provider call per selected row.</p>
+            <div className="mt-3 flex gap-2"><Button size="sm" disabled={!ownerEstimate.allowed || searchOwnerBatch.isPending} onClick={() => searchOwnerBatch.mutate()}>{searchOwnerBatch.isPending ? "Searching…" : "Confirm searches"}</Button><Button size="sm" variant="outline" onClick={() => { setConfirmOwnerBatch(false); setOwnerEstimate(null); }}>Cancel</Button></div>
+          </div>}
 
           {reportQuery.isLoading ? (
             <div className="space-y-3" aria-label="Loading search results">
@@ -452,6 +500,23 @@ export default function SalonSearchReport() {
                         {row.sequenceStatus && <Badge variant="secondary" className="gap-1"><CalendarClock className="h-3 w-3" />Sequence · {labelize(row.sequenceStatus)}</Badge>}
                         {row.audienceTrack && <Badge variant="outline">Track · {labelize(row.audienceTrack)}</Badge>}
                       </div>
+                      <OwnerNameReview
+                        rowId={row.id}
+                        businessName={row.businessName}
+                        ownerName={row.ownerName}
+                        contactName={row.contactName}
+                        sequences={seqStepOne.map(sequence => ({ id: sequence.id, subject: sequence.subject }))}
+                        canSearch={categoryKey(row.category) !== "non_grooming"}
+                        selectedForBatch={ownerSelectedIds.includes(row.id)}
+                        onSelectedForBatchChange={checked => {
+                          setOwnerSelectedIds(current => {
+                            if (!checked) return current.filter(id => id !== row.id);
+                            if (current.includes(row.id)) return current;
+                            if (current.length >= 5) { toast({ title: "Batch limit reached", description: "Select up to five salons per owner-search batch.", variant: "destructive" }); return current; }
+                            return [...current, row.id];
+                          });
+                        }}
+                      />
                     </div>
                     <div className="flex flex-wrap gap-2 lg:w-[265px] lg:justify-end">
                       {isSuccess && !categoryIsRestricted && !isApproved && !isImported && <Button size="sm" variant="outline" onClick={() => review.mutate(row)} disabled={review.isPending}><ShieldCheck className="mr-1.5 h-3.5 w-3.5" />Approve</Button>}
@@ -492,6 +557,12 @@ export default function SalonSearchReport() {
                 </Select>
                 {!sequenceQuery.isLoading && seqStepOne.length === 0 && <p className="text-xs text-destructive">No step 1 sequence is configured for directory_general.</p>}
               </div>
+              {sequenceId && <div className="rounded-lg border bg-muted/20 p-3">
+                <p className="text-xs font-semibold">Rendered email preview</p>
+                {schedulePreview.isLoading ? <p className="mt-2 text-xs text-muted-foreground">Rendering the selected template…</p> :
+                  schedulePreview.isError ? <div className="mt-2 text-xs text-destructive">{(schedulePreview.error as Error).message}<Button size="sm" variant="ghost" className="ml-1 h-7" onClick={() => schedulePreview.refetch()}>Retry</Button></div> :
+                    schedulePreview.data && <><p className="mt-2 text-sm font-medium">{schedulePreview.data.subject}</p><p className="mt-1 text-xs text-muted-foreground">{schedulePreview.data.salutation} · {schedulePreview.data.mode}</p><pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap font-sans text-xs leading-5">{schedulePreview.data.body}</pre></>}
+              </div>}
               <div className="space-y-2">
                 <Label htmlFor="scheduled-at">Scheduled send time (Eastern Time)</Label>
                 <Input id="scheduled-at" type="datetime-local" value={scheduledAt} min={minimumEasternTime} onChange={event => setScheduledAt(event.target.value)} />

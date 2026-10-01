@@ -5,8 +5,20 @@ const selection = JSON.parse(fs.readFileSync("reports/salon-public-web-next-100-
 const stateReviews = ["ca", "ny", "tx"].map(state =>
   JSON.parse(fs.readFileSync(`reports/salon-next-100-${state}-review.json`, "utf8")));
 const rawById = new Map(stateReviews.flatMap(review => review.rows).map(row => [row.placeId, row]));
+const ownerValidationPath = "reports/salon-owner-name-validation.json";
+const ownerValidation = JSON.parse(fs.readFileSync(ownerValidationPath, "utf8"));
 if (rawById.size !== 100 || stateReviews.reduce((total, review) => total + review.rows.length, 0) !== 100) {
   throw new Error("Expected exactly 100 distinct reviewed Place IDs");
+}
+if (ownerValidation.sampleSize !== 3 || ownerValidation.rows?.length !== 3 ||
+    ownerValidation.budget?.actualProviderCalls !== 0 || ownerValidation.budget?.managedSearchCalls !== 0) {
+  throw new Error("Owner-name validation report must contain the reviewed three-row, zero-provider-call sample");
+}
+for (const row of ownerValidation.rows) {
+  const raw = rawById.get(row.placeId);
+  if (!raw?.ownerName || JSON.stringify(raw.ownerName) !== JSON.stringify(row.ownerName)) {
+    throw new Error(`Missing or inconsistent bundled owner-name seed: ${row.business}`);
+  }
 }
 
 const override = {
@@ -40,6 +52,7 @@ const normalized = selection.selected.map(selected => {
       status.startsWith("review_only") ? "Do not import or use until confirmed" : "",
     "Evidence and exceptions": [raw.evidenceNote || "", change.note || ""].filter(Boolean).join(" | "),
     "Search result pages retained": Array.isArray(sourcePages) ? sourcePages.length : "",
+    ...(raw.ownerName ? { ownerName: raw.ownerName } : {}),
   };
 });
 const allStatuses = new Set([
@@ -78,6 +91,54 @@ const byState = Object.fromEntries(["CA", "NY", "TX"].map(state => {
 const offList = stateReviews.flatMap(review => review.offListBusinesses || []);
 if (offList.length !== 1) throw new Error("Expected one independently reviewed off-list candidate");
 const additional = offList[0];
+const ownerNameEvidenceRows = normalized.flatMap(row => {
+  const ownerName = row.ownerName || {};
+  const candidates = Array.isArray(ownerName.candidates) ? ownerName.candidates : [];
+  const base = {
+    "State": row.State,
+    "Business": row.Business,
+    "Google Place ID": row["Google Place ID"],
+    "Lookup status": ownerName.status || "not_searched",
+    "Selected candidate ID": ownerName.selectedCandidateId || "",
+    "Approved at": ownerName.approvedAt || "",
+    "Use personal name": ownerName.usePersonalName ? "Yes" : "No",
+    "Provider calls": ownerName.providerCalls ?? 0,
+    "Pages fetched": ownerName.pagesFetched ?? 0,
+    "Lookup error": ownerName.error || "",
+  };
+  if (!candidates.length) return [{ ...base, "First name": "", "Last name": "", "Role": "", "Role confirmed": "", "Business matched": "", "Confidence": "", "Source URL": "", "Source kind": "", "Source excerpt": "" }];
+  return candidates.flatMap(candidate => {
+    const sources = Array.isArray(candidate.sources) && candidate.sources.length
+      ? candidate.sources
+      : [{ url: "", kind: "", excerpt: "" }];
+    return sources.map(source => ({
+      ...base,
+      "Candidate ID": candidate.id || "",
+      "First name": candidate.firstName || "",
+      "Last name": candidate.lastName || "",
+      "Role": candidate.role || "",
+      "Role confirmed": candidate.roleConfirmed ? "Yes" : "No",
+      "Business matched": candidate.businessMatched ? "Yes" : "No",
+      "Confidence": candidate.confidence || "",
+      "Source URL": source.url || "",
+      "Source kind": source.kind || "",
+      "Source excerpt": source.excerpt || "",
+    }));
+  });
+});
+const workbookReviewed = normalized.map(row => {
+  const { ownerName, ...emailReview } = row;
+  const candidates = Array.isArray(ownerName?.candidates) ? ownerName.candidates : [];
+  return {
+    ...emailReview,
+    "Owner lookup status": ownerName?.status || "not_searched",
+    "Owner candidate names": candidates.map(candidate =>
+      [candidate.firstName, candidate.lastName].filter(Boolean).join(" "),
+    ).join("; "),
+    "Owner approved at": ownerName?.approvedAt || "",
+    "Owner uses personal name": ownerName?.usePersonalName ? "Yes" : "No",
+  };
+});
 const offListEvidence = [{
   Business: additional.name,
   "Service area": additional.serviceArea,
@@ -135,11 +196,16 @@ const summary = [
   ["Clearly not professional grooming", excluded.length],
   ["Inaccessible/identity unresolved", inaccessible.length],
   ["Off-list mobile business held in evidence sheet only (email restricted to existing clients)", offList.length],
+  ["Owner-name sample checked", `${ownerValidation.sampleSize} rows; ${ownerValidation.budget.actualPublicPages} public pages; ${ownerValidation.budget.actualProviderCalls} paid provider calls`],
+  ["Owner-name sample source", ownerValidationPath],
+  ["Owner-name lookups outside the sample", "97 of these 100 email-review rows are unsearched; no owner-name yield extrapolated"],
   ["Method", "One managed public-web search per listing with two query angles; targeted public GET/webFetch page checks. Extra bounded checks on review-only candidates. No paid DataForSEO/SerpAPI calls in this phase; managed search usage not costed here."],
   ["Limit", "Not representative of all 13,847 IDs: equal state quotas, operational-only and obvious-name filtering. No outreach, form submissions, social-page scraping, or CRM imports. Negative results do not prove no public email exists."],
 ];
-workbook.Sheets["Next 100 email review"] = XLSX.utils.json_to_sheet(normalized);
+workbook.Sheets["Next 100 email review"] = XLSX.utils.json_to_sheet(workbookReviewed);
 workbook.SheetNames.push("Next 100 email review");
+workbook.Sheets["Owner Name Evidence"] = XLSX.utils.json_to_sheet(ownerNameEvidenceRows);
+workbook.SheetNames.push("Owner Name Evidence");
 workbook.Sheets["Next 100 off-list evidence"] = XLSX.utils.json_to_sheet(offListEvidence);
 workbook.SheetNames.push("Next 100 off-list evidence");
 workbook.Sheets["Next 100 summary"] = XLSX.utils.aoa_to_sheet(summary);
@@ -149,7 +215,8 @@ XLSX.writeFile(workbook, directoryOutput);
 
 const pilot = XLSX.utils.book_new();
 XLSX.utils.book_append_sheet(pilot, XLSX.utils.aoa_to_sheet(summary), "Summary");
-XLSX.utils.book_append_sheet(pilot, XLSX.utils.json_to_sheet(normalized), "100 reviewed");
+XLSX.utils.book_append_sheet(pilot, XLSX.utils.json_to_sheet(workbookReviewed), "100 reviewed");
+XLSX.utils.book_append_sheet(pilot, XLSX.utils.json_to_sheet(ownerNameEvidenceRows), "Owner Name Evidence");
 XLSX.utils.book_append_sheet(pilot, XLSX.utils.json_to_sheet(offListEvidence), "Off-list");
 const pilotOutput = "reports/salon-next-100-email-review.xlsx";
 XLSX.writeFile(pilot, pilotOutput);
@@ -157,6 +224,8 @@ XLSX.writeFile(pilot, pilotOutput);
 const result = {
   selection: "reports/salon-public-web-next-100-selection.json",
   perStateRawEvidence: ["ca", "ny", "tx"].map(state => `reports/salon-next-100-${state}-review.json`),
+  ownerNameValidationSource: ownerValidationPath,
+  ownerNameValidation: ownerValidation,
   directoryOutput, pilotOutput,
   counts: {
     selected: 100, verifiedPublicEmails: verified.length, generalContactCandidates: generalContact.length, firstParty: firstParty.length,
@@ -174,6 +243,8 @@ fs.writeFileSync("reports/salon-next-100-summary.md", [
   "# Next 100 salon email review",
   "",
   `This bounded follow-up selected 100 new Place IDs from the original CA/NY/TX directory: 34 CA, 33 NY and 33 TX. It excluded every one of the earlier 120 provider-pilot IDs, existing email rows, non-operational entries and obvious non-salon names before selection. Result: **${generalContact.length} source-verified general-contact candidates** for manual review, **${bookingOnly.length} booking-only public business addresses** (not general-contact yield), **${reviewOnly.length} other review-only**, **${noVerified.length} no verified email in this bounded search**, **${excluded.length} non-grooming**, **${inaccessible.length} inaccessible/unresolved**. There are ${verified.length} source-confirmed business mailboxes in total (${firstParty.length} first-party, ${directory.length} independent directory).`,
+  "",
+  `Owner-name validation is a separate three-salon sample documented in \`${ownerValidationPath}\`: six public-page fetches and zero paid-provider calls. Curly Tails Grooming has the source-backed candidate Eliud Jimenez, explicitly titled Founder & Groomer and described as a business owner on its first-party page; this remains review-only, not approved. A Dog's Tail has Jacqueline and Elizabeth only in a public neighborhood-summary team mention, not owner evidence, so both remain unresolved. Dog Folks had no named owner in the two checked pages; this is not a claim that no owner exists elsewhere. The other 97 of these 100 email-review rows are unsearched for owner names; no owner-name yield is extrapolated.`,
   "",
   `Of the ${verified.length} published business emails, ${bookingOnly.length} are explicitly appointment/booking addresses and were not filled into the general Email Address column. ${rowsUpdated} other existing directory rows were filled in the review copy. An additional distinct Peninsula mobile grooming business was found, but its site directs only existing clients to email, so it was retained in the off-list evidence sheet rather than appended to the general directory. Neither original uploaded workbook nor CRM contacts changed.`,
   "",

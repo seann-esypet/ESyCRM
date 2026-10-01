@@ -1,14 +1,31 @@
 // From Replit Auth blueprint
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { storage } from "./storage";
+import { SalonOwnerNameStorageConflict, storage } from "./storage";
 import { setupAuth, isAuthenticated, isAdmin } from "./replitAuth";
 import { insertContactSchema, insertContactGroupSchema, insertDealSchema, insertTaskSchema, insertEmailSequenceSchema, insertLeadDiscoveryJobSchema, insertCommissionSchema, insertSalonEnrichmentBatchSchema, insertSalonEnrichmentRowSchema, type InsertContact } from "@shared/schema";
+import {
+  EMPTY_OWNER_NAME_RESULT,
+  type OwnerNameResult,
+  type SalonOwnerNameCandidate,
+} from "@shared/salonOwnerName";
+import {
+  plannedSalonOwnerNamePreview,
+  salonOwnerNameLookupBlockedByRowStatus,
+  salonOwnerNamePreviewMode,
+} from "./salonOwnerNameMutationPolicy";
 import { getCommissionAmounts } from "@shared/utils";
 import { z } from "zod";
 import Papa from "papaparse";
 import { runLeadDiscoveryJob, importResultsToCRM, runNationalSearchJob } from "./lead-discovery";
 import { startSalonEnrichment } from "./salonEnrichment";
+import {
+  estimateSalonOwnerNameSearch,
+  getSalonOwnerNameResult,
+  lookupSalonOwnerName,
+  salonOwnerNameLimits,
+  stripLegacyOwnerHtml,
+} from "./salonOwnerNames";
 import { enrollFormOutreach, listFormOutreach, recordFormAction } from "./formOutreach";
 import { validFormUrl } from "./formOutreachPolicy";
 import * as XLSX from "xlsx";
@@ -549,14 +566,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return null;
       }
 
-      function stripHtml(html: string): string {
-        return html
-          .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, " ")
-          .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, " ")
-          .replace(/<[^>]+>/g, " ")
-          .replace(/\s+/g, " ")
-          .trim();
-      }
+      const stripHtml = stripLegacyOwnerHtml;
 
       function extractMeta(html: string): string {
         const ogA = html.match(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)/i);
@@ -2747,7 +2757,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
         name: "Salon public web review pilot",
         reviewed: salonSearchPilot.reviewed,
       }, true);
-      res.status(result.status).json(result.body);
+      const bundledSeeds: Record<string, OwnerNameResult> = {};
+      const bundledRows = (salonSearchPilot as any).reviewed as Array<Record<string, unknown>>;
+      for (const entry of bundledRows || []) {
+        const placeId = typeof entry["Google Place ID"] === "string" ? entry["Google Place ID"].trim() : "";
+        const raw = entry.ownerName as Partial<OwnerNameResult> | undefined;
+        if (!placeId || !raw || !Array.isArray(raw.candidates)) continue;
+        const candidates = raw.candidates.flatMap((candidate: any) => {
+          if (!candidate || typeof candidate.firstName !== "string" || !candidate.firstName.trim() ||
+              typeof candidate.id !== "string" || typeof candidate.role !== "string") return [];
+          const sources = Array.isArray(candidate.sources) ? candidate.sources.flatMap((source: any) => {
+            if (!source || typeof source.url !== "string" || typeof source.excerpt !== "string" ||
+                typeof source.kind !== "string") return [];
+            return [{ url: source.url, excerpt: source.excerpt.slice(0, 800), kind: source.kind }];
+          }) : [];
+          return [{
+            id: candidate.id,
+            firstName: candidate.firstName,
+            lastName: typeof candidate.lastName === "string" ? candidate.lastName : null,
+            role: candidate.role,
+            roleConfirmed: candidate.roleConfirmed === true,
+            businessMatched: candidate.businessMatched === true,
+            confidence: ["high", "medium", "low"].includes(candidate.confidence) ? candidate.confidence : "low",
+            sources,
+          }] as SalonOwnerNameCandidate[];
+        });
+        bundledSeeds[placeId] = {
+          ...EMPTY_OWNER_NAME_RESULT,
+          status: candidates.length ? "needs_review" : "not_found",
+          candidates,
+          selectedCandidateId: null,
+          approvedAt: null,
+          usePersonalName: false,
+          providerCalls: 0,
+          pagesFetched: Number.isInteger(raw.pagesFetched) ? Math.max(0, raw.pagesFetched as number) : 0,
+          ...(typeof raw.error === "string" ? { error: raw.error } : {}),
+          ...(typeof raw.lookedUpAt === "string" ? { lookedUpAt: raw.lookedUpAt } : {}),
+        };
+      }
+      const seededOwnerNames = result.status < 300 && Object.keys(bundledSeeds).length
+        ? await storage.seedSalonReportOwnerNames(bundledSeeds, req.user.claims.sub as string)
+        : 0;
+      const body = { ...result.body, seededOwnerNames };
+      res.status(result.status).json(body);
     } catch (error) {
       if (error instanceof z.ZodError) return res.status(500).json({ message: "The bundled salon search pilot is invalid", errors: error.errors });
       console.error("Failed to load bundled salon search pilot:", error);
@@ -2790,10 +2842,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const pageRows = filteredRows.slice(offset, offset + limit);
       const linkedContacts = pageRows.map(row => row.importedContactId).filter((id): id is string => !!id);
       const links = await storage.getSalonSearchReportLinks(linkedContacts, userId);
-      const rows = pageRows.map(row => {
+      const rows = await Promise.all(pageRows.map(async row => {
         const evidence = row.evidence as { sourceUrl?: string | null; note?: string | null } | null;
         const sourceData = row.sourceData as Record<string, unknown>;
         const contactLinks = row.importedContactId ? links[row.importedContactId] : undefined;
+        const importedContact = row.importedContactId
+          ? await storage.getContact(row.importedContactId, userId)
+          : undefined;
         return {
           id: row.id,
           batchId: row.batchId,
@@ -2814,8 +2869,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
           dealStage: contactLinks?.dealStage || null,
           sequenceStatus: contactLinks?.sequenceStatus || null,
           audienceTrack: row.audienceTrack,
+          ownerName: getSalonOwnerNameResult(row),
+          ...(importedContact ? {
+            contactName: {
+              firstName: importedContact.firstName,
+              lastName: importedContact.lastName,
+              useBusinessNameForEmail: importedContact.useBusinessNameForEmail,
+            },
+          } : {}),
         };
-      });
+      }));
       res.json({
         batches: allBatches,
         totals: {
@@ -2915,13 +2978,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
       limit,
       offset,
     });
-    res.json(rows);
+    res.json(await Promise.all(rows.map(async row => {
+      const contact = row.importedContactId
+        ? await storage.getContact(row.importedContactId, req.user.claims.role === "admin" ? null : userId)
+        : undefined;
+      return {
+        ...row,
+        ownerName: getSalonOwnerNameResult(row),
+        ...(contact ? {
+          contactName: {
+            firstName: contact.firstName,
+            lastName: contact.lastName,
+            useBusinessNameForEmail: contact.useBusinessNameForEmail,
+          },
+        } : {}),
+      };
+    })));
   });
 
   app.post("/api/salon-enrichment/batches", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
       const body = req.body || {};
+      const includeOwnerNames = body.includeOwnerNames === true;
       const parsedBatch = insertSalonEnrichmentBatchSchema.parse({
         name: body.name || body.fileName || "Salon list",
         fileName: body.fileName,
@@ -2932,7 +3011,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!Array.isArray(body.rows) || !body.rows.length) return res.status(400).json({ message: "At least one normalized row is required" });
       const rejectedRows: Array<{ rowNumber: number; reason: string; sourceData: unknown }> = [];
       const rows = body.rows.flatMap((input: any, index: number) => {
-        const sourceData = input?.sourceData || input;
+        const rawSourceData = input?.sourceData || input;
+        const sourceData = rawSourceData && typeof rawSourceData === "object" && !Array.isArray(rawSourceData)
+          ? { ...rawSourceData, includeOwnerNames }
+          : { originalSourceData: rawSourceData, includeOwnerNames };
         const businessName = typeof input?.businessName === "string" ? input.businessName.trim() : "";
         if (!businessName) {
           rejectedRows.push({ rowNumber: input?.rowNumber || index + 1, reason: "businessName is required", sourceData });
@@ -3017,22 +3099,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const rows = batch ? await storage.getSalonEnrichmentRows(req.params.id, batch.userId) : [];
     const rowIds = Array.isArray(req.body?.rowIds) ? req.body.rowIds : [];
     if (!batch || rowIds.some((id: unknown) => !rows.some(row => row.id === id))) return res.status(404).json({ message: "Batch or row not found" });
-    const count = await storage.resetSalonRowsForRetry(rowIds, actorScope);
-    if (count && batch.status === "completed") {
-      await storage.updateSalonEnrichmentBatch(batch.id, {
-        status: "paused", pausedAt: new Date(), completedAt: null,
-      }, batch.userId);
+    try {
+      const count = await storage.resetSalonRowsForRetry(rowIds, actorScope);
+      if (count && batch.status === "completed") {
+        await storage.updateSalonEnrichmentBatch(batch.id, {
+          status: "paused", pausedAt: new Date(), completedAt: null,
+        }, batch.userId);
+      }
+      await storage.refreshSalonEnrichmentBatchCounts(batch.id, batch.userId);
+      res.json({ updated: count });
+    } catch (error) {
+      const status = error instanceof SalonOwnerNameStorageConflict ? 409 : 500;
+      res.status(status).json({ message: error instanceof Error ? error.message : "Failed to retry salon rows" });
     }
-    await storage.refreshSalonEnrichmentBatchCounts(batch.id, batch.userId);
-    res.json({ updated: count });
   });
 
   app.patch("/api/salon-enrichment/rows/:rowId", isAuthenticated, async (req: any, res) => {
     const actorScope = req.user.claims.role === "admin" ? null : req.user.claims.sub;
-    const allowed = ["businessName", "address", "address1", "city", "state", "zipCode", "websiteUrl", "email", "phone", "contactRequestFormUrl", "contactFormStatus", "bookingUrl", "currentSoftware", "usesSoftware", "hasWebsite", "audienceTrack"];
+    const allowed = ["businessName", "address", "address1", "city", "state", "zipCode", "websiteUrl", "placeId", "email", "phone", "contactRequestFormUrl", "contactFormStatus", "bookingUrl", "currentSoftware", "usesSoftware", "hasWebsite", "audienceTrack"];
     const updates = Object.keys(req.body || {});
     if (updates.some(key => !allowed.includes(key))) return res.status(400).json({ message: "One or more fields are not editable" });
     if (typeof req.body.businessName === "string" && !req.body.businessName.trim()) return res.status(400).json({ message: "businessName cannot be empty" });
+    if (req.body.placeId !== undefined && req.body.placeId !== null && typeof req.body.placeId !== "string") {
+      return res.status(400).json({ message: "placeId must be a string or null" });
+    }
     const row = await storage.getSalonEnrichmentRow(req.params.rowId, actorScope);
     if (!row) return res.status(404).json({ message: "Row not found" });
     const formUrl = req.body.contactRequestFormUrl ?? row.contactRequestFormUrl;
@@ -3050,7 +3140,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (changes.contactFormStatus !== "verified") changes.contactFormStatus = "candidate";
     }
     if (!formUrl && changes.contactFormStatus === "candidate") changes.contactFormStatus = "unknown";
-    const updated = await storage.updateSalonEnrichmentRow(row.id, changes, actorScope);
+    let updated: Awaited<ReturnType<typeof storage.updateSalonEnrichmentRow>>;
+    try {
+      updated = await storage.updateSalonEnrichmentRow(row.id, changes, actorScope, {
+        rejectIdentityDuringEnrichment: true,
+      });
+    } catch (error) {
+      const status = error instanceof SalonOwnerNameStorageConflict ? 409 : 500;
+      return res.status(status).json({
+        message: error instanceof Error ? error.message : "Could not update salon row",
+      });
+    }
+    if (!updated) return res.status(404).json({ message: "Row not found" });
     await storage.refreshSalonEnrichmentBatchCounts(row.batchId, row.userId);
     res.json(updated);
   });
@@ -3103,6 +3204,167 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(result);
     } catch (error) {
       res.status(400).json({ message: error instanceof Error ? error.message : "Import failed" });
+    }
+  });
+
+  const ownerNameRowsInput = z.object({
+    rowIds: z.array(z.string().min(1)).min(1).max(salonOwnerNameLimits.maxRowsPerRequest),
+  });
+  const getOwnedOwnerNameRows = async (rowIds: string[], userId: string) => {
+    const rows = await Promise.all(rowIds.map(id => storage.getSalonEnrichmentRow(id, userId)));
+    return rows.every(Boolean) ? rows as NonNullable<typeof rows[number]>[] : null;
+  };
+
+  app.post("/api/salon-owner-names/estimate", isAuthenticated, async (req: any, res) => {
+    try {
+      const input = ownerNameRowsInput.parse(req.body);
+      if (new Set(input.rowIds).size !== input.rowIds.length) {
+        return res.status(400).json({ message: "rowIds must be unique" });
+      }
+      const rows = await getOwnedOwnerNameRows(input.rowIds, req.user.claims.sub);
+      if (!rows) return res.status(404).json({ message: "One or more salon rows were not found or are not owned by you" });
+      if (rows.some(row => salonOwnerNameLookupBlockedByRowStatus(row.status))) {
+        return res.status(409).json({ message: "Wait for ordinary salon enrichment to complete before estimating owner-name lookup" });
+      }
+      res.json(await estimateSalonOwnerNameSearch(rows));
+    } catch (error) {
+      res.status(error instanceof z.ZodError ? 400 : 500).json({
+        message: error instanceof Error ? error.message : "Could not estimate owner-name lookup",
+      });
+    }
+  });
+
+  app.post("/api/salon-owner-names/search", isAuthenticated, async (req: any, res) => {
+    try {
+      const input = ownerNameRowsInput.extend({
+        maxProviderCalls: z.number().int().min(0).max(salonOwnerNameLimits.maxRowsPerRequest),
+        confirmed: z.literal(true),
+      }).parse(req.body);
+      if (new Set(input.rowIds).size !== input.rowIds.length) {
+        return res.status(400).json({ message: "rowIds must be unique" });
+      }
+      const rows = await getOwnedOwnerNameRows(input.rowIds, req.user.claims.sub);
+      if (!rows) return res.status(404).json({ message: "One or more salon rows were not found or are not owned by you" });
+      if (rows.some(row => salonOwnerNameLookupBlockedByRowStatus(row.status))) {
+        return res.status(409).json({ message: "Wait for ordinary salon enrichment to complete before starting owner-name lookup" });
+      }
+      const estimate = await estimateSalonOwnerNameSearch(rows);
+      if (input.maxProviderCalls > estimate.maxProviderCalls) {
+        return res.status(409).json({
+          message: "The requested provider-call budget exceeds the current available estimate",
+          estimate,
+        });
+      }
+      let callsUsed = 0;
+      const results: Array<{ rowId: string; ownerName: OwnerNameResult }> = [];
+      for (const row of rows) {
+        const ownerName = await lookupSalonOwnerName(
+          row.id,
+          req.user.claims.sub,
+          callsUsed < input.maxProviderCalls,
+        );
+        if (ownerName) {
+          callsUsed += ownerName.providerCalls;
+          results.push({ rowId: row.id, ownerName });
+        }
+      }
+      res.json({ results, callsUsed });
+    } catch (error) {
+      const status = error instanceof z.ZodError ? 400 :
+        error instanceof SalonOwnerNameStorageConflict ? 409 : 500;
+      res.status(status).json({
+        message: error instanceof Error ? error.message : "Owner-name search failed",
+      });
+    }
+  });
+
+  app.patch("/api/salon-owner-names/rows/:id/review", isAuthenticated, async (req: any, res) => {
+    try {
+      const input = z.object({
+        candidateId: z.string().min(1),
+        decision: z.enum(["approved", "rejected"]),
+        usePersonalName: z.boolean(),
+      }).parse(req.body);
+      const userId = req.user.claims.sub;
+      const result = await storage.reviewSalonOwnerName(req.params.id, userId, input);
+      if (result.error) return res.status(result.error.status).json({ message: result.error.message });
+      res.json({ row: result.row, ownerName: result.row ? getSalonOwnerNameResult(result.row) : undefined });
+    } catch (error) {
+      res.status(error instanceof z.ZodError ? 400 : 500).json({
+        message: error instanceof Error ? error.message : "Could not review owner-name candidate",
+      });
+    }
+  });
+
+  app.post("/api/salon-owner-names/rows/:id/apply", isAuthenticated, async (req: any, res) => {
+    try {
+      const input = z.object({
+        overwriteExisting: z.boolean(),
+        usePersonalName: z.boolean(),
+      }).parse(req.body);
+      const userId = req.user.claims.sub;
+      const result = await storage.applySalonOwnerName(req.params.id, userId, input);
+      if (result.error) return res.status(result.error.status).json({ message: result.error.message });
+      res.json({
+        contact: result.contact,
+        ownerName: result.row ? getSalonOwnerNameResult(result.row) : undefined,
+        row: result.row,
+      });
+    } catch (error) {
+      res.status(error instanceof z.ZodError ? 400 : 500).json({
+        message: error instanceof Error ? error.message : "Could not apply owner name",
+      });
+    }
+  });
+
+  app.delete("/api/salon-owner-names/rows/:id/apply", isAuthenticated, async (req: any, res) => {
+    try {
+      const result = await storage.revokeSalonOwnerName(req.params.id, req.user.claims.sub);
+      if (result.error) return res.status(result.error.status).json({ message: result.error.message });
+      res.json({
+        contact: result.contact,
+        ownerName: result.row ? getSalonOwnerNameResult(result.row) : undefined,
+        row: result.row,
+      });
+    } catch (error) {
+      res.status(500).json({ message: error instanceof Error ? error.message : "Could not revoke applied owner name" });
+    }
+  });
+
+  app.get("/api/salon-owner-names/rows/:id/preview", isAuthenticated, async (req: any, res) => {
+    try {
+      const input = z.object({ sequenceId: z.string().min(1) }).parse({ sequenceId: req.query.sequenceId });
+      const userId = req.user.claims.sub;
+      const row = await storage.getSalonEnrichmentRow(req.params.id, userId);
+      if (!row) return res.status(404).json({ message: "Salon row not found or not owned by you" });
+      const sequence = await storage.getEmailSequence(input.sequenceId, userId);
+      if (!sequence) return res.status(404).json({ message: "Email sequence not found or not owned by you" });
+      const salesperson = await storage.getUser(userId);
+      if (!salesperson) return res.status(404).json({ message: "Sequence owner profile was not found" });
+      let contact: any;
+      let previewSource: "linked_contact" | "planned_import";
+      let mode: "personal_name" | "business_name";
+      if (row.importedContactId) {
+        const linked = await storage.getContact(row.importedContactId, userId);
+        if (!linked) return res.status(404).json({ message: "The linked contact is not owned by you" });
+        contact = linked;
+        previewSource = "linked_contact";
+        mode = salonOwnerNamePreviewMode(linked);
+      } else {
+        const ownerName = getSalonOwnerNameResult(row);
+        const planned = plannedSalonOwnerNamePreview(row, ownerName, userId);
+        mode = planned.mode;
+        previewSource = "planned_import";
+        contact = planned.contact;
+      }
+      const subject = replaceTemplateVariables(sequence.subject, contact, salesperson);
+      const body = replaceTemplateVariables(sequence.body, contact, salesperson);
+      const salutation = replaceTemplateVariables("[Contact_First_Name]", contact, salesperson);
+      res.json({ subject, body, salutation, mode, previewSource });
+    } catch (error) {
+      res.status(error instanceof z.ZodError ? 400 : 500).json({
+        message: error instanceof Error ? error.message : "Could not preview sequence variables",
+      });
     }
   });
 

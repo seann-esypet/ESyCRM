@@ -145,14 +145,14 @@ content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.shee
 id = "u-JP0H5DgeECFL2NoyMey"
 uri = "file://reports/salon-next-100-email-review.xlsx"
 type = "table"
-title = "Next 100 salon email pilot"
-description = "All 100 decisions, source links and notes: 24 general-contact candidates, 2 booking-only mailboxes, 12 review-only leads, and exclusions. Includes one off-list candidate held for review."
+title = "Salon review with owner-name evidence"
+description = "Updated 100-salon workbook with separate owner evidence. Three salons checked; names remain review-only and no contacts or sequences were changed."
 logical_id = "c290001c-b921-477a-930f-d1a93c849b95"
-content_hash = "sha256:7e8d3eccf927dd79c2ebfaf0b5b3545d738c624361ca6abe7831e4757671b292"
-size = 98812
-mtime_ms = 1790560851105
-storage_uri = "gcs://replit-rams-assets-picard/rams/assets/repl:1910afef-1072-4e99-9487-9737d06762ee/c290001c-b921-477a-930f-d1a93c849b95/7d17c0b8-80e3-4df1-8653-4fd5310c2512"
-storage_version_token = "1790560863963376"
+content_hash = "sha256:37f58a049ee919e24a6cda01714f2e51c85af917570278e403817d3c0fa83e3e"
+size = 180419
+mtime_ms = 1790821008549
+storage_uri = "gcs://replit-rams-assets-picard/rams/assets/repl:1910afef-1072-4e99-9487-9737d06762ee/c290001c-b921-477a-930f-d1a93c849b95/154bfca3-5649-4275-909c-f6d353ce086a"
+storage_version_token = "1790822204054049"
 content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 [[outputs]]

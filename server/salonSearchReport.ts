@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { InsertSalonEnrichmentRow } from "@shared/schema";
+import type { OwnerNameResult } from "@shared/salonOwnerName";
 import { importableSalonEmail, importableSalonEmailCandidate } from "./bookingPageEmail";
 
 const reviewedSalonSchema = z.object({
@@ -21,6 +22,7 @@ const reviewedSalonSchema = z.object({
   "Email evidence URL": z.string().trim().optional().default(""),
   "Email use": z.string().trim().optional().default(""),
   "Evidence and exceptions": z.string().trim().min(1),
+  ownerName: z.unknown().optional(),
 });
 
 export const salonSearchReportBatchSchema = z.object({
@@ -29,6 +31,57 @@ export const salonSearchReportBatchSchema = z.object({
 });
 
 export type ReviewedSalonReportEntry = z.infer<typeof reviewedSalonSchema>;
+
+function untrustedOwnerName(value: unknown): OwnerNameResult | undefined {
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return undefined;
+    }
+  }
+  if (!value || typeof value !== "object") return undefined;
+  const input = value as Partial<OwnerNameResult>;
+  const candidates = Array.isArray(input.candidates) ? input.candidates.slice(0, 50).flatMap((candidate, index) => {
+    if (!candidate || typeof candidate !== "object") return [];
+    const item = candidate as OwnerNameResult["candidates"][number];
+    if (typeof item.firstName !== "string" || !item.firstName.trim()) return [];
+    const sources = Array.isArray(item.sources) ? item.sources.slice(0, 10).flatMap(source => {
+      if (!source || typeof source !== "object" ||
+          typeof source.url !== "string" || typeof source.excerpt !== "string") return [];
+      try {
+        const url = new URL(source.url);
+        if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) return [];
+        return [{
+          url: url.toString(),
+          excerpt: source.excerpt.trim().slice(0, 800),
+          kind: "uploaded_report_evidence",
+        }];
+      } catch {
+        return [];
+      }
+    }) : [];
+    return [{
+      id: typeof item.id === "string" && item.id.trim() ? item.id.slice(0, 100) : `uploaded-owner-${index}`,
+      firstName: item.firstName.trim().slice(0, 100),
+      lastName: typeof item.lastName === "string" && item.lastName.trim() ? item.lastName.trim().slice(0, 100) : null,
+      role: typeof item.role === "string" && item.role.trim() ? item.role.trim().slice(0, 160) : "Unconfirmed imported mention",
+      roleConfirmed: false,
+      businessMatched: false,
+      confidence: "low" as const,
+      sources,
+    }];
+  }) : [];
+  return {
+    status: candidates.length ? "needs_review" : "not_searched",
+    candidates,
+    selectedCandidateId: null,
+    approvedAt: null,
+    usePersonalName: false,
+    providerCalls: 0,
+    pagesFetched: 0,
+  };
+}
 
 export function reportCategory(entry: Pick<ReviewedSalonReportEntry, "Outcome" | "Email use">): string {
   if (entry.Outcome === "excluded_non_grooming") return "non_grooming";
@@ -69,6 +122,7 @@ export function convertSalonSearchReportEntry(
     purpose: "general",
   } : undefined;
   const email = emailEvidence ? emailCandidate : null;
+  const ownerName = untrustedOwnerName(entry.ownerName);
   const base = {
     batchId,
     userId,
@@ -98,6 +152,7 @@ export function convertSalonSearchReportEntry(
       note: entry["Evidence and exceptions"],
       sourceUrl: sourceUrl || null,
       ...(emailEvidence ? { email: emailEvidence } : {}),
+      ...(ownerName ? { ownerName } : {}),
     },
     confidence: {},
     identityMatchStatus: emailEvidence ? "strong" : "unmatched",

@@ -886,7 +886,34 @@
           "fetchError": "",
           "evidence": "pup’s shot records! Please email us a copy of your dog’s current vaccination/shot records along with a photo of your dog so we’re ready for your visit. [Email Shot Records & Photo](mailto:curlytailsgroomingnrh@outlook.com?subject=Shot%20Records%20%26%20Photo%20of%20My%20Dog&body=Hi%20Curly%20Tails%2C%0A%0AHere%20are%20my%20dog%27s%20shot%20records%20and%20a%20photo%20for%20our%20upcoming%20grooming%20appointment.%0A%0ADog%27s%20name%3A%2"
         }
-      ]
+      ],
+      "ownerName": {
+        "selectedCandidateId": null,
+        "approvedAt": null,
+        "usePersonalName": false,
+        "providerCalls": 0,
+        "lookedUpAt": "2026-09-30T00:00:00.000Z",
+        "status": "needs_review",
+        "pagesFetched": 1,
+        "candidates": [
+          {
+            "id": "owner-eliud-jimenez",
+            "firstName": "Eliud",
+            "lastName": "Jimenez",
+            "role": "Founder & Groomer; business owner",
+            "roleConfirmed": true,
+            "businessMatched": true,
+            "confidence": "high",
+            "sources": [
+              {
+                "url": "https://www.curlytailsgrooming.com/",
+                "excerpt": "Eliud Jimenez — Founder & Groomer. As a business owner with decades of executive leadership, human resources, operations, and compliance experience, founder Eliud Jimenez is committed to building a franchise model. Curly Tails Grooming NRH: 5651 Tourist Dr, North Richland Hills, TX 76117.",
+                "kind": "website_homepage"
+              }
+            ]
+          }
+        ]
+      }
     },
     {
       "placeId": "ChIJE6z3q7DLSYYRpAlK-RKi8No",

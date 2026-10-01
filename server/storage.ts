@@ -73,6 +73,105 @@ import { eq, desc, and, sql, gte, lte, or, ne, inArray, isNull } from "drizzle-o
 import { DIRECTORY_FIRST_STRATEGY, DIRECTORY_TRACKS, directoryEmailSequenceTemplates } from "./directoryEmailSequences";
 import { importableSalonEmail } from "./bookingPageEmail";
 import { salonReportSendRejection } from "./salonSearchReport";
+import {
+  EMPTY_OWNER_NAME_RESULT,
+  hasStrongOwnerNameEvidence,
+  isStrongApprovedOwnerCandidate,
+  salonOwnerNameForImport,
+  type OwnerNameResult,
+} from "@shared/salonOwnerName";
+import {
+  contactHasManualName,
+  contactNameMatchesOwnerApplication,
+  mergeBundledOwnerNameEvidence,
+  mergeSalonOwnerNameMetadata,
+  ownerNameLookupStarted,
+  resetSalonOwnerNameForIdentityChange,
+  salonIdentityEditBlocked,
+  salonIdentityFieldsChanged,
+  salonOwnerNameLookupBlockedByRowStatus,
+  salonOwnerNameImportBlocked,
+  salonOwnerNameMutationBlocked,
+  shouldStageBundledOwnerNameOnRow,
+  type SalonOwnerNameContactApplication,
+} from "./salonOwnerNameMutationPolicy";
+
+export type SalonOwnerNameMutationResult = {
+  row?: SalonEnrichmentRow;
+  contact?: Contact;
+  error?: { status: 404 | 409; message: string };
+};
+
+export type SalonOwnerNameReviewInput = {
+  candidateId: string;
+  decision: "approved" | "rejected";
+  usePersonalName: boolean;
+};
+
+export type SalonOwnerNameApplyInput = {
+  overwriteExisting: boolean;
+  usePersonalName: boolean;
+};
+
+export class SalonOwnerNameStorageConflict extends Error {
+  status = 409;
+}
+
+function salonRowEvidence(row: SalonEnrichmentRow): Record<string, unknown> {
+  return row.evidence && typeof row.evidence === "object" && !Array.isArray(row.evidence)
+    ? row.evidence as Record<string, unknown>
+    : {};
+}
+
+function ownerNameFromRow(row: SalonEnrichmentRow): OwnerNameResult {
+  const value = salonRowEvidence(row).ownerName as Partial<OwnerNameResult> | undefined;
+  return value && typeof value === "object"
+    ? {
+      ...EMPTY_OWNER_NAME_RESULT,
+      ...value,
+      candidates: Array.isArray(value.candidates) ? value.candidates : [],
+    }
+    : { ...EMPTY_OWNER_NAME_RESULT };
+}
+
+function parseContactNotes(contact: Contact): Record<string, unknown> {
+  try {
+    const parsed = contact.notes ? JSON.parse(contact.notes) : {};
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : { legacyNotes: contact.notes };
+  } catch {
+    return { legacyNotes: contact.notes };
+  }
+}
+
+async function revokeOwnerNameContactInTransaction(
+  tx: any,
+  row: SalonEnrichmentRow,
+  ownerName: OwnerNameResult,
+  contact: Contact | undefined,
+): Promise<Contact | undefined> {
+  if (!contact || !row.importedContactId) return contact;
+  const notes = parseContactNotes(contact);
+  const applied = notes.salonOwnerNameApplication as SalonOwnerNameContactApplication | undefined;
+  if (!applied || applied.rowId !== row.id) return contact;
+  const provenanceMatches = contactNameMatchesOwnerApplication(
+    contact,
+    applied,
+    row.id,
+    ownerName.selectedCandidateId,
+  );
+  delete notes.salonOwnerNameApplication;
+  const [updated] = await tx.update(contacts).set({
+    ...(provenanceMatches ? {
+      firstName: null,
+      lastName: null,
+      useBusinessNameForEmail: "Yes",
+    } : {}),
+    notes: JSON.stringify(notes),
+  }).where(and(eq(contacts.id, contact.id), eq(contacts.userId, row.userId))).returning();
+  return updated || contact;
+}
 
 export type PayrollPreviewItem = {
   tempId: string;
@@ -249,9 +348,20 @@ export interface IStorage {
   updateSalonEnrichmentBatch(id: string, data: Partial<SalonEnrichmentBatch>, userId: string | null): Promise<SalonEnrichmentBatch | undefined>;
   getSalonEnrichmentRows(batchId: string, userId: string | null, filters?: { status?: string; reviewStatus?: string; search?: string; limit?: number; offset?: number }): Promise<SalonEnrichmentRow[]>;
   getSalonEnrichmentRow(id: string, userId: string | null): Promise<SalonEnrichmentRow | undefined>;
+  seedSalonReportOwnerNames(seeds: Record<string, OwnerNameResult>, userId: string): Promise<number>;
+  beginSalonOwnerNameLookup(rowId: string, userId: string, lookupToken: string): Promise<SalonEnrichmentRow | undefined>;
+  completeSalonOwnerNameLookup(rowId: string, userId: string, lookupToken: string, ownerName: OwnerNameResult): Promise<boolean>;
+  reviewSalonOwnerName(rowId: string, userId: string, input: SalonOwnerNameReviewInput): Promise<SalonOwnerNameMutationResult>;
+  applySalonOwnerName(rowId: string, userId: string, input: SalonOwnerNameApplyInput): Promise<SalonOwnerNameMutationResult>;
+  revokeSalonOwnerName(rowId: string, userId: string): Promise<SalonOwnerNameMutationResult>;
   getSalonSearchReportLinks(contactIds: string[], userId: string): Promise<Record<string, { dealId: string | null; dealStage: string | null; sequenceStatus: string | null }>>;
   getSalonReportSendRejection(contactId: string, ownerId: string, contactOwnerId: string, contactEmail: string | null): Promise<string | null>;
-  updateSalonEnrichmentRow(id: string, data: Partial<SalonEnrichmentRow>, userId: string | null): Promise<SalonEnrichmentRow | undefined>;
+  updateSalonEnrichmentRow(
+    id: string,
+    data: Partial<SalonEnrichmentRow>,
+    userId: string | null,
+    options?: { rejectIdentityDuringEnrichment?: boolean },
+  ): Promise<SalonEnrichmentRow | undefined>;
   markSalonRowsForReview(ids: string[], decision: "approved" | "rejected", userId: string | null): Promise<number>;
   resetSalonRowsForRetry(ids: string[], userId: string | null): Promise<number>;
   importApprovedSalonRows(batchId: string, rowIds: string[] | undefined, userId: string | null): Promise<{ imported: SalonEnrichmentRow[]; skipped: Array<{ rowId: string; reason: string }> }>;
@@ -1897,6 +2007,256 @@ export class DatabaseStorage implements IStorage {
     return row;
   }
 
+  async beginSalonOwnerNameLookup(
+    rowId: string,
+    userId: string,
+    lookupToken: string,
+  ): Promise<SalonEnrichmentRow | undefined> {
+    return db.transaction(async tx => {
+      const [row] = await tx.select().from(salonEnrichmentRows).where(and(
+        eq(salonEnrichmentRows.id, rowId),
+        eq(salonEnrichmentRows.userId, userId),
+      )).for("update");
+      if (!row) return undefined;
+      const evidence = salonRowEvidence(row);
+      const ownerName = ownerNameFromRow(row);
+      if (salonOwnerNameLookupBlockedByRowStatus(row.status)) {
+        throw new SalonOwnerNameStorageConflict("Wait for row enrichment to complete before starting owner-name lookup");
+      }
+      if (salonOwnerNameMutationBlocked(ownerName)) return undefined;
+      let contact: Contact | undefined;
+      if (row.importedContactId) {
+        const [linked] = await tx.select().from(contacts).where(and(
+          eq(contacts.id, row.importedContactId),
+          eq(contacts.userId, userId),
+        )).for("update");
+        contact = linked;
+        await revokeOwnerNameContactInTransaction(tx, row, ownerName, contact);
+      }
+      const searching = ownerNameLookupStarted(ownerName);
+      const [updated] = await tx.update(salonEnrichmentRows).set({
+        evidence: { ...evidence, ownerName: searching, ownerNameLookupToken: lookupToken },
+        updatedAt: new Date(),
+      }).where(eq(salonEnrichmentRows.id, row.id)).returning();
+      return updated;
+    });
+  }
+
+  async completeSalonOwnerNameLookup(
+    rowId: string,
+    userId: string,
+    lookupToken: string,
+    ownerName: OwnerNameResult,
+  ): Promise<boolean> {
+    return db.transaction(async tx => {
+      const [row] = await tx.select().from(salonEnrichmentRows).where(and(
+        eq(salonEnrichmentRows.id, rowId),
+        eq(salonEnrichmentRows.userId, userId),
+      )).for("update");
+      if (!row) return false;
+      const evidence = salonRowEvidence(row);
+      if (evidence.ownerNameLookupToken !== lookupToken) return false;
+      const updatedEvidence: Record<string, unknown> = { ...evidence, ownerName };
+      delete updatedEvidence.ownerNameLookupToken;
+      await tx.update(salonEnrichmentRows).set({
+        evidence: updatedEvidence,
+        serpCallsUsed: row.serpCallsUsed + Math.max(0, ownerName.providerCalls || 0),
+        updatedAt: new Date(),
+      }).where(eq(salonEnrichmentRows.id, row.id));
+      return true;
+    });
+  }
+
+  async reviewSalonOwnerName(
+    rowId: string,
+    userId: string,
+    input: SalonOwnerNameReviewInput,
+  ): Promise<SalonOwnerNameMutationResult> {
+    return db.transaction(async tx => {
+      const [row] = await tx.select().from(salonEnrichmentRows).where(and(
+        eq(salonEnrichmentRows.id, rowId),
+        eq(salonEnrichmentRows.userId, userId),
+      )).for("update");
+      if (!row) return { error: { status: 404, message: "Salon row not found or not owned by you" } };
+      const ownerName = ownerNameFromRow(row);
+      if (salonOwnerNameMutationBlocked(ownerName)) {
+        return { error: { status: 409, message: "Owner-name search is still in progress; retry review after it finishes" } };
+      }
+      const candidate = ownerName.candidates.find(item => item.id === input.candidateId);
+      if (!candidate) return { error: { status: 404, message: "Owner-name candidate was not found" } };
+      if (input.decision === "approved" && !hasStrongOwnerNameEvidence(candidate)) {
+        return { error: { status: 409, message: "Only a candidate with explicit owner-role evidence on a fetched page matching this business and location can be approved" } };
+      }
+      let contact: Contact | undefined;
+      if (row.importedContactId) {
+        const [linked] = await tx.select().from(contacts).where(and(
+          eq(contacts.id, row.importedContactId),
+          eq(contacts.userId, userId),
+        )).for("update");
+        contact = linked;
+      }
+      const switchingCandidate = input.decision === "rejected" ||
+        (!!ownerName.selectedCandidateId && ownerName.selectedCandidateId !== candidate.id);
+      if (switchingCandidate) {
+        contact = await revokeOwnerNameContactInTransaction(tx, row, ownerName, contact);
+      }
+      const reviewed: OwnerNameResult = input.decision === "approved"
+        ? {
+          ...ownerName,
+          status: "needs_review",
+          selectedCandidateId: candidate.id,
+          approvedAt: new Date().toISOString(),
+          usePersonalName: input.usePersonalName,
+          error: undefined,
+        }
+        : {
+          ...ownerName,
+          status: "excluded",
+          selectedCandidateId: null,
+          approvedAt: null,
+          usePersonalName: false,
+        };
+      const evidence = salonRowEvidence(row);
+      const [updated] = await tx.update(salonEnrichmentRows).set({
+        evidence: { ...evidence, ownerName: reviewed },
+        updatedAt: new Date(),
+      }).where(eq(salonEnrichmentRows.id, row.id)).returning();
+      return { row: updated, contact };
+    });
+  }
+
+  async applySalonOwnerName(
+    rowId: string,
+    userId: string,
+    input: SalonOwnerNameApplyInput,
+  ): Promise<SalonOwnerNameMutationResult> {
+    return db.transaction(async tx => {
+      const [row] = await tx.select().from(salonEnrichmentRows).where(and(
+        eq(salonEnrichmentRows.id, rowId),
+        eq(salonEnrichmentRows.userId, userId),
+      )).for("update");
+      if (!row) return { error: { status: 404, message: "Salon row not found or not owned by you" } };
+      const ownerName = ownerNameFromRow(row);
+      if (salonOwnerNameMutationBlocked(ownerName)) {
+        return { error: { status: 409, message: "Owner-name search is still in progress; retry apply after it finishes" } };
+      }
+      if (!row.importedContactId) {
+        return { error: { status: 409, message: "Import the row before applying owner names to a contact" } };
+      }
+      const [contact] = await tx.select().from(contacts).where(and(
+        eq(contacts.id, row.importedContactId),
+        eq(contacts.userId, userId),
+      )).for("update");
+      if (!contact) return { error: { status: 404, message: "The linked contact is not owned by you" } };
+      const candidate = isStrongApprovedOwnerCandidate(ownerName);
+      if (!candidate) return { error: { status: 409, message: "Approve a strongly matched owner-role candidate before applying it" } };
+      const notes = parseContactNotes(contact);
+      const priorApplication = notes.salonOwnerNameApplication as SalonOwnerNameContactApplication | undefined;
+      const hasExistingManualName = contactHasManualName(contact, priorApplication, row.id, candidate.id);
+      if (hasExistingManualName && !input.overwriteExisting) {
+        return { error: { status: 409, message: "The linked contact already has a manual name. Confirm overwriteExisting to replace it." } };
+      }
+      notes.salonOwnerNameApplication = {
+        rowId: row.id,
+        candidateId: candidate.id,
+        firstName: candidate.firstName,
+        lastName: candidate.lastName,
+      };
+      const [updatedContact] = await tx.update(contacts).set({
+        firstName: candidate.firstName,
+        lastName: candidate.lastName,
+        useBusinessNameForEmail: input.usePersonalName ? "No" : "Yes",
+        notes: JSON.stringify(notes),
+      }).where(and(eq(contacts.id, contact.id), eq(contacts.userId, userId))).returning();
+      const updatedOwnerName = { ...ownerName, usePersonalName: input.usePersonalName };
+      const evidence = salonRowEvidence(row);
+      const [updatedRow] = await tx.update(salonEnrichmentRows).set({
+        evidence: { ...evidence, ownerName: updatedOwnerName },
+        updatedAt: new Date(),
+      }).where(eq(salonEnrichmentRows.id, row.id)).returning();
+      return { row: updatedRow, contact: updatedContact };
+    });
+  }
+
+  async revokeSalonOwnerName(rowId: string, userId: string): Promise<SalonOwnerNameMutationResult> {
+    return db.transaction(async tx => {
+      const [row] = await tx.select().from(salonEnrichmentRows).where(and(
+        eq(salonEnrichmentRows.id, rowId),
+        eq(salonEnrichmentRows.userId, userId),
+      )).for("update");
+      if (!row) return { error: { status: 404, message: "Salon row not found or not owned by you" } };
+      const ownerName = ownerNameFromRow(row);
+      if (salonOwnerNameMutationBlocked(ownerName)) {
+        return { error: { status: 409, message: "Owner-name search is still in progress; retry revoke after it finishes" } };
+      }
+      let contact: Contact | undefined;
+      if (row.importedContactId) {
+        const [linked] = await tx.select().from(contacts).where(and(
+          eq(contacts.id, row.importedContactId),
+          eq(contacts.userId, userId),
+        )).for("update");
+        contact = await revokeOwnerNameContactInTransaction(tx, row, ownerName, linked);
+      }
+      const updatedOwnerName: OwnerNameResult = {
+        ...ownerName,
+        status: ownerName.candidates.length ? "needs_review" : "not_found",
+        selectedCandidateId: null,
+        approvedAt: null,
+        usePersonalName: false,
+      };
+      const evidence = salonRowEvidence(row);
+      const [updatedRow] = await tx.update(salonEnrichmentRows).set({
+        evidence: { ...evidence, ownerName: updatedOwnerName },
+        updatedAt: new Date(),
+      }).where(eq(salonEnrichmentRows.id, row.id)).returning();
+      return { row: updatedRow, contact };
+    });
+  }
+
+  async seedSalonReportOwnerNames(seeds: Record<string, OwnerNameResult>, userId: string): Promise<number> {
+    const seedByPlaceId = new Map(Object.entries(seeds).map(([id, seed]) => [id.trim().toLowerCase(), seed]));
+    const placeIds = Array.from(seedByPlaceId.keys()).filter(Boolean);
+    if (!placeIds.length) return 0;
+    return db.transaction(async tx => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`salon-owner-seed:${userId}`}))`);
+      const batches = await tx.select({ id: salonEnrichmentBatches.id })
+        .from(salonEnrichmentBatches)
+        .where(and(
+          eq(salonEnrichmentBatches.userId, userId),
+          eq(salonEnrichmentBatches.fileName, "salon-public-web-review"),
+        ));
+      if (!batches.length) return 0;
+      const rows = await tx.select().from(salonEnrichmentRows).where(and(
+        eq(salonEnrichmentRows.userId, userId),
+        inArray(salonEnrichmentRows.batchId, batches.map(batch => batch.id)),
+      )).for("update");
+      let updatedCount = 0;
+      for (const row of rows) {
+        const evidence = row.evidence && typeof row.evidence === "object" && !Array.isArray(row.evidence)
+          ? row.evidence as Record<string, unknown>
+          : {};
+        const seed = seedByPlaceId.get(row.placeId?.trim().toLowerCase() || "");
+        if (!shouldStageBundledOwnerNameOnRow(row, !!seed) || !seed) continue;
+        // Bundled report evidence is reviewable but never treated as an
+        // approval, nor as an opt-in to personalize an imported contact.
+        const staged: OwnerNameResult = {
+          ...seed,
+          status: seed.candidates.length ? "needs_review" : "not_found",
+          selectedCandidateId: null,
+          approvedAt: null,
+          usePersonalName: false,
+          providerCalls: 0,
+        };
+        await tx.update(salonEnrichmentRows).set({
+          evidence: mergeBundledOwnerNameEvidence(evidence, staged),
+          updatedAt: new Date(),
+        }).where(eq(salonEnrichmentRows.id, row.id));
+        updatedCount++;
+      }
+      return updatedCount;
+    });
+  }
+
   async getSalonSearchReportLinks(
     contactIds: string[],
     userId: string,
@@ -1970,10 +2330,60 @@ export class DatabaseStorage implements IStorage {
     return null;
   }
 
-  async updateSalonEnrichmentRow(id: string, data: Partial<SalonEnrichmentRow>, userId: string | null): Promise<SalonEnrichmentRow | undefined> {
-    const where = userId === null ? eq(salonEnrichmentRows.id, id) : and(eq(salonEnrichmentRows.id, id), eq(salonEnrichmentRows.userId, userId));
-    const [updated] = await db.update(salonEnrichmentRows).set({ ...data, updatedAt: new Date() }).where(where).returning();
-    return updated;
+  async updateSalonEnrichmentRow(
+    id: string,
+    data: Partial<SalonEnrichmentRow>,
+    userId: string | null,
+    options: { rejectIdentityDuringEnrichment?: boolean } = {},
+  ): Promise<SalonEnrichmentRow | undefined> {
+    return db.transaction(async tx => {
+      const where = userId === null
+        ? eq(salonEnrichmentRows.id, id)
+        : and(eq(salonEnrichmentRows.id, id), eq(salonEnrichmentRows.userId, userId));
+      const [row] = await tx.select().from(salonEnrichmentRows).where(where).for("update");
+      if (!row) return undefined;
+
+      const identityChanged = salonIdentityFieldsChanged(row, data);
+      const ownerName = ownerNameFromRow(row);
+      if (salonIdentityEditBlocked(
+        row.status,
+        ownerName,
+        identityChanged,
+        options.rejectIdentityDuringEnrichment ?? false,
+      )) {
+        throw new SalonOwnerNameStorageConflict(
+          ownerName.status === "searching"
+            ? "Business identity cannot be edited while owner-name lookup is in progress"
+            : "Business identity cannot be edited while salon enrichment is in progress",
+        );
+      }
+
+      if (identityChanged && row.importedContactId) {
+        const contactWhere = userId === null
+          ? eq(contacts.id, row.importedContactId)
+          : and(eq(contacts.id, row.importedContactId), eq(contacts.userId, row.userId));
+        const [linked] = await tx.select().from(contacts).where(contactWhere).for("update");
+        await revokeOwnerNameContactInTransaction(tx, row, ownerName, linked);
+      }
+
+      const updates: Partial<SalonEnrichmentRow> = { ...data, updatedAt: new Date() };
+      const currentEvidence = salonRowEvidence(row);
+      if (data.evidence !== undefined) {
+        const incomingEvidence = data.evidence && typeof data.evidence === "object" && !Array.isArray(data.evidence)
+          ? data.evidence as Record<string, unknown>
+          : {};
+        updates.evidence = mergeSalonOwnerNameMetadata(incomingEvidence, currentEvidence);
+      }
+      if (identityChanged) {
+        const evidence = updates.evidence && typeof updates.evidence === "object" && !Array.isArray(updates.evidence)
+          ? updates.evidence as Record<string, unknown>
+          : currentEvidence;
+        updates.evidence = resetSalonOwnerNameForIdentityChange(evidence);
+      }
+
+      const [updated] = await tx.update(salonEnrichmentRows).set(updates).where(eq(salonEnrichmentRows.id, row.id)).returning();
+      return updated;
+    });
   }
 
   async markSalonRowsForReview(ids: string[], decision: "approved" | "rejected", userId: string | null): Promise<number> {
@@ -1989,12 +2399,49 @@ export class DatabaseStorage implements IStorage {
 
   async resetSalonRowsForRetry(ids: string[], userId: string | null): Promise<number> {
     if (!ids.length) return 0;
-    const owner = userId === null ? undefined : eq(salonEnrichmentRows.userId, userId);
-    const where = owner ? and(inArray(salonEnrichmentRows.id, ids), owner) : inArray(salonEnrichmentRows.id, ids);
-    const result = await db.update(salonEnrichmentRows).set({
-      status: "pending", reviewStatus: "pending", lastError: null, processedAt: null, updatedAt: new Date(),
-    }).where(where);
-    return result.rowCount ?? 0;
+    return db.transaction(async tx => {
+      const owner = userId === null ? undefined : eq(salonEnrichmentRows.userId, userId);
+      const where = owner ? and(inArray(salonEnrichmentRows.id, ids), owner) : inArray(salonEnrichmentRows.id, ids);
+      const rows = await tx.select().from(salonEnrichmentRows).where(where).for("update");
+      if (rows.some(row => salonOwnerNameMutationBlocked(ownerNameFromRow(row)))) {
+        throw new SalonOwnerNameStorageConflict("An owner-name lookup is still in progress; retry after it finishes");
+      }
+      let updatedCount = 0;
+      for (const row of rows) {
+        const ownerName = ownerNameFromRow(row);
+        let contact: Contact | undefined;
+        if (row.importedContactId) {
+          const [linked] = await tx.select().from(contacts).where(and(
+            eq(contacts.id, row.importedContactId),
+            eq(contacts.userId, row.userId),
+          )).for("update");
+          contact = linked;
+          await revokeOwnerNameContactInTransaction(tx, row, ownerName, contact);
+        }
+        const evidence = salonRowEvidence(row);
+        const resetOwnerName: OwnerNameResult = ownerName.selectedCandidateId || ownerName.approvedAt
+          ? {
+            ...ownerName,
+            status: ownerName.candidates.length ? "needs_review" : "not_searched",
+            selectedCandidateId: null,
+            approvedAt: null,
+            usePersonalName: false,
+          }
+          : ownerName;
+        await tx.update(salonEnrichmentRows).set({
+          ...(row.importedContactId ? {} : {
+            status: "pending",
+            reviewStatus: "pending",
+            lastError: null,
+            processedAt: null,
+          }),
+          evidence: { ...evidence, ownerName: resetOwnerName },
+          updatedAt: new Date(),
+        }).where(eq(salonEnrichmentRows.id, row.id));
+        updatedCount++;
+      }
+      return updatedCount;
+    });
   }
 
   async refreshSalonEnrichmentBatchCounts(batchId: string, userId: string | null): Promise<SalonEnrichmentBatch | undefined> {
@@ -2033,7 +2480,7 @@ export class DatabaseStorage implements IStorage {
       const rows = await tx.select().from(salonEnrichmentRows).where(and(
         eq(salonEnrichmentRows.batchId, batchId),
         eq(salonEnrichmentRows.userId, ownerId),
-      ));
+      )).for("update");
       const selected = rows.filter(row =>
         (!rowIds || rowIds.includes(row.id)) &&
         row.reviewStatus === "approved" &&
@@ -2057,6 +2504,10 @@ export class DatabaseStorage implements IStorage {
       for (const row of selected) {
         if (row.importedContactId) {
           skipped.push({ rowId: row.id, reason: "Already imported" });
+          continue;
+        }
+        if (salonOwnerNameImportBlocked(ownerNameFromRow(row))) {
+          skipped.push({ rowId: row.id, reason: "Owner-name lookup is still in progress" });
           continue;
         }
         const verifiedEmail = importableSalonEmail(row);
@@ -2096,10 +2547,30 @@ export class DatabaseStorage implements IStorage {
           continue;
         }
 
+        const evidence = row.evidence && typeof row.evidence === "object" && !Array.isArray(row.evidence)
+          ? row.evidence as Record<string, unknown>
+          : {};
+        const ownerName = evidence.ownerName as OwnerNameResult | undefined;
+        const approvedOwner = salonOwnerNameForImport(ownerName);
+        const contactNotes: Record<string, unknown> = {
+          enrichmentRowId: row.id,
+          placeId: row.placeId,
+          evidence: row.evidence,
+          confidence: row.confidence,
+        };
+        if (approvedOwner.candidate) {
+          contactNotes.salonOwnerNameApplication = {
+            rowId: row.id,
+            candidateId: approvedOwner.candidate.id,
+            firstName: approvedOwner.firstName,
+            lastName: approvedOwner.lastName,
+          };
+        }
         const [contact] = await tx.insert(contacts).values({
           userId: ownerId,
-          firstName: null,
-          lastName: null,
+          firstName: approvedOwner.firstName,
+          lastName: approvedOwner.lastName,
+          useBusinessNameForEmail: approvedOwner.useBusinessNameForEmail,
           company: row.businessName,
           email: verifiedEmail,
           phone: row.phone,
@@ -2116,7 +2587,7 @@ export class DatabaseStorage implements IStorage {
           leadSource: "Google Search",
           businessType: "salon",
           sequenceTrack: row.audienceTrack || "directory_general",
-          notes: JSON.stringify({ enrichmentRowId: row.id, placeId: row.placeId, evidence: row.evidence, confidence: row.confidence }),
+          notes: JSON.stringify(contactNotes),
           lastContactDate: new Date(),
         }).returning();
         await tx.insert(activities).values({

@@ -32,7 +32,18 @@
           "snippet": "208 S 3rd St Brooklyn, NY 11211"
         }
       ],
-      "searchAnswer": ""
+      "searchAnswer": "",
+      "ownerName": {
+        "selectedCandidateId": null,
+        "approvedAt": null,
+        "usePersonalName": false,
+        "providerCalls": 0,
+        "lookedUpAt": "2026-09-30T00:00:00.000Z",
+        "status": "not_found",
+        "pagesFetched": 2,
+        "candidates": [],
+        "error": "No named owner in the checked homepage/contact pages; this is not a claim that no owner name exists elsewhere."
+      }
     },
     {
       "placeId": "ChIJF3oEkAlZwokRsJgU6l0AX9g",

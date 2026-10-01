@@ -1,6 +1,7 @@
 import { storage } from "./storage";
 import { crawlWebsite, searchWithSerpApi } from "./lead-discovery";
 import { bookingPlatformForUrl, findSalonEmailOnBookingPage } from "./bookingPageEmail";
+import { lookupSalonOwnerName } from "./salonOwnerNames";
 import type { SalonEnrichmentBatch, SalonEnrichmentRow } from "@shared/schema";
 
 type Evidence = Record<string, {
@@ -319,25 +320,36 @@ async function processBatch(batch: SalonEnrichmentBatch): Promise<void> {
       for (let i = 0; i < work.length; i += current.concurrency) {
         const chunk = work.slice(i, i + current.concurrency);
         await Promise.all(chunk.map(async row => {
-          await storage.updateSalonEnrichmentRow(row.id, { status: "processing", lastError: null }, batch.userId);
+          const processingRow = await storage.updateSalonEnrichmentRow(
+            row.id,
+            { status: "processing", lastError: null },
+            batch.userId,
+          );
+          if (!processingRow) return;
           try {
-            const result = await enrichRow(row);
+            const result = await enrichRow(processingRow);
             const candidateContact = {
-              firstName: null, lastName: null, company: row.businessName,
-              email: (result.email as string | null | undefined) ?? row.email,
-              phone: (result.phone as string | null | undefined) ?? row.phone,
+              firstName: null, lastName: null, company: processingRow.businessName,
+              email: (result.email as string | null | undefined) ?? processingRow.email,
+              phone: (result.phone as string | null | undefined) ?? processingRow.phone,
               usesSoftware: (result.usesSoftware as string | null | undefined) || "Unknown",
             } as any;
-            const duplicates = await storage.findDuplicateContacts(candidateContact, row.userId);
+            const duplicates = await storage.findDuplicateContacts(candidateContact, processingRow.userId);
             if (duplicates.length) {
               result.duplicateMetadata = { contactIds: duplicates.map(contact => contact.id), reason: "Existing contact match" };
               result.reviewStatus = "needs_review";
             }
-            await storage.updateSalonEnrichmentRow(row.id, result, batch.userId);
+            await storage.updateSalonEnrichmentRow(processingRow.id, result, batch.userId);
+            const sourceData = processingRow.sourceData as { includeOwnerNames?: boolean } | null;
+            if (sourceData?.includeOwnerNames === true &&
+                result.status === "enriched" &&
+                result.identityMatchStatus === "strong") {
+              await lookupSalonOwnerName(processingRow.id, processingRow.userId, true);
+            }
           } catch (error) {
             const message = error instanceof Error ? error.message : "Enrichment failed";
             if (/quota|hourly serp limit|rate limit/i.test(message)) {
-              await storage.updateSalonEnrichmentRow(row.id, {
+              await storage.updateSalonEnrichmentRow(processingRow.id, {
                 status: "pending", lastError: message, processedAt: null,
               }, batch.userId);
               await storage.updateSalonEnrichmentBatch(batch.id, {
@@ -345,7 +357,7 @@ async function processBatch(batch: SalonEnrichmentBatch): Promise<void> {
               }, batch.userId);
               return;
             }
-            await storage.updateSalonEnrichmentRow(row.id, {
+            await storage.updateSalonEnrichmentRow(processingRow.id, {
               status: "failed", lastError: message, processedAt: new Date(),
             }, batch.userId);
           }
