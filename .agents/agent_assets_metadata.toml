@@ -196,3 +196,31 @@ mtime_ms = 1790908128593
 storage_uri = "gcs://replit-rams-assets-picard/rams/assets/repl:1910afef-1072-4e99-9487-9737d06762ee/c515d105-04ff-4aba-9927-53609de5c94f/108036e1-afee-40f5-9188-693ce281e089"
 storage_version_token = "1790908431691679"
 content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+[[outputs]]
+id = "UOPPn0vHy7VektBvL7Z1p"
+uri = "file://reports/salon-36-crm-ready.xlsx"
+type = "table"
+title = "CRM-ready Excel — 36 Businesses"
+description = "Upload through Contacts → Import. Restored company names, phones and locations; research preserved in notes and a reference sheet. Unapproved emails and unknown names remain blank."
+logical_id = "a9472016-3d02-4c86-a480-28505acb0fa9"
+content_hash = "sha256:aad6416bc7811b6a3ba905181c28995a623aa687255f260130e81ee4bf7a6941"
+size = 134315
+mtime_ms = 1790940389595
+storage_uri = "gcs://replit-rams-assets-picard/rams/assets/repl:1910afef-1072-4e99-9487-9737d06762ee/a9472016-3d02-4c86-a480-28505acb0fa9/052ba292-5fd2-4225-ae30-35c4e4cfb3b5"
+storage_version_token = "1790940396833863"
+content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+[[outputs]]
+id = "5Xw9xsfaDWIdnyViS9-HP"
+uri = "file://reports/salon-36-crm-ready.csv"
+type = "table"
+title = "CRM-ready CSV — Same 36 Businesses"
+description = "Alternative to the Excel download. Import one version only. Recognized CRM headings, restored company column, and all research retained in notes; candidate emails are not approved contact emails."
+logical_id = "4e04ae1c-b35b-4a62-80a7-b59c68051d99"
+content_hash = "sha256:cd0e05f634fd192dc295239dba7f7eb80a07343d5d5883a2bc4685d05cbecf03"
+size = 43803
+mtime_ms = 1790940389567
+storage_uri = "gcs://replit-rams-assets-picard/rams/assets/repl:1910afef-1072-4e99-9487-9737d06762ee/4e04ae1c-b35b-4a62-80a7-b59c68051d99/d1f53c26-c199-46d0-95d2-5658fafc6a5f"
+storage_version_token = "1790940397352307"
+content_type = "text/csv"

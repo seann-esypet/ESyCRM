@@ -12,9 +12,10 @@ import {
 } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Edit, Mail, Phone, Users, Building, MapPin, Globe, User, Briefcase, FileText, Archive, ArchiveRestore, ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react";
+import { Edit, Mail, Phone, Users, Building, MapPin, Globe, User, Briefcase, FileText, Archive, ArchiveRestore, ChevronUp, ChevronDown, ChevronsUpDown, Trash2 } from "lucide-react";
 import type { Contact, Deal, User as UserType } from "@shared/schema";
 import { getContactDisplay } from "@/lib/contact-display";
+import { contactDeletionLabel } from "@/lib/contact-deletion";
 
 interface ContactListProps {
   contacts: Contact[];
@@ -31,6 +32,12 @@ interface ContactListProps {
   onUnarchive: (id: string) => void;
   onStatusChange: (contactId: string, newStatus: string) => void;
   onAssign?: (contactId: string, newUserId: string) => void;
+  selectedContactIds: Set<string>;
+  isDeleting: boolean;
+  onToggleSelection: (id: string) => void;
+  onToggleSelectVisible: () => void;
+  onDelete: (contact: Contact) => void;
+  onDeleteSelected: () => void;
 }
 
 const getStageLabel = (stage: string) => {
@@ -74,7 +81,7 @@ function SortIcon({ col, sortColumn, sortDir }: { col: "name" | "company" | "las
     : <ChevronDown className="h-3.5 w-3.5 ml-1 text-primary" />;
 }
 
-export default function ContactList({ contacts, deals, isLoading, isAdmin, adminUsers, showArchived, sortColumn, sortDir, onSortChange, onEdit, onArchive, onUnarchive, onStatusChange, onAssign }: ContactListProps) {
+export default function ContactList({ contacts, deals, isLoading, isAdmin, adminUsers, showArchived, sortColumn, sortDir, onSortChange, onEdit, onArchive, onUnarchive, onStatusChange, onAssign, selectedContactIds, isDeleting, onToggleSelection, onToggleSelectVisible, onDelete, onDeleteSelected }: ContactListProps) {
   const [viewContact, setViewContact] = useState<Contact | null>(null);
 
   const formatDate = (date: string | Date | null) => {
@@ -152,11 +159,39 @@ export default function ContactList({ contacts, deals, isLoading, isAdmin, admin
 
   return (
     <>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3" data-testid="contact-selection-toolbar">
+        <label className="flex items-center gap-2 text-sm text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={contacts.length > 0 && contacts.every(contact => selectedContactIds.has(contact.id))}
+            disabled={isDeleting || contacts.length === 0}
+            onChange={onToggleSelectVisible}
+            aria-label="Select all visible businesses"
+            data-testid="select-visible-contacts"
+            className="h-4 w-4 rounded border-input accent-primary"
+          />
+          Select all {contacts.length} visible
+          {selectedContactIds.size > 0 && <span> · {selectedContactIds.size} selected</span>}
+        </label>
+        <Button
+          variant="destructive"
+          size="sm"
+          disabled={isDeleting || selectedContactIds.size === 0}
+          onClick={onDeleteSelected}
+          data-testid="delete-selected-contacts"
+        >
+          <Trash2 className="mr-2 h-4 w-4" />
+          Delete Selected
+        </Button>
+      </div>
       <Card data-testid="contacts-table">
         <CardContent className="p-0">
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-10">
+                  <span className="sr-only">Select</span>
+                </TableHead>
                 <SortableHead col="name" label="Contact" />
                 <SortableHead col="company" label="Company" />
                 <TableHead>Address</TableHead>
@@ -174,6 +209,17 @@ export default function ContactList({ contacts, deals, isLoading, isAdmin, admin
                   className={`hover:bg-muted/50 ${contact.archivedAt ? "opacity-70" : ""}`}
                   data-testid={`contact-row-${contact.id}`}
                 >
+                  <TableCell>
+                    <input
+                      type="checkbox"
+                      checked={selectedContactIds.has(contact.id)}
+                      disabled={isDeleting}
+                      onChange={() => onToggleSelection(contact.id)}
+                      aria-label={`Select ${contactDeletionLabel(contact)}`}
+                      data-testid={`select-contact-${contact.id}`}
+                      className="h-4 w-4 rounded border-input accent-primary"
+                    />
+                  </TableCell>
                   <TableCell className="font-medium">
                     <div className="flex items-center space-x-3">
                       <div className="w-8 h-8 bg-primary text-primary-foreground rounded-full flex items-center justify-center text-sm font-medium">
@@ -289,6 +335,19 @@ export default function ContactList({ contacts, deals, isLoading, isAdmin, admin
                           <Archive className="h-4 w-4" />
                         </Button>
                       )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => onDelete(contact)}
+                        disabled={isDeleting}
+                        className="text-destructive hover:text-destructive"
+                        title="Delete business permanently"
+                        aria-label={`Delete ${contactDeletionLabel(contact)} permanently`}
+                        data-testid={`delete-contact-${contact.id}`}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        <span className="ml-1">Delete</span>
+                      </Button>
                     </div>
                   </TableCell>
                 </TableRow>

@@ -74,6 +74,8 @@ import { DIRECTORY_FIRST_STRATEGY, DIRECTORY_TRACKS, directoryEmailSequenceTempl
 import { importableSalonEmail } from "./bookingPageEmail";
 import { salonReportSendRejection } from "./salonSearchReport";
 import { isRetryableStagedSalonRow } from "./salonListStaging";
+import { deleteContactSafely } from "./contactDeletion";
+import { deleteSalonReviewRowSafely } from "./salonReviewDeletion";
 import {
   EMPTY_OWNER_NAME_RESULT,
   hasStrongOwnerNameEvidence,
@@ -257,6 +259,7 @@ export interface IStorage {
   archiveContact(id: string, userId: string | null): Promise<Contact | undefined>;
   unarchiveContact(id: string, userId: string | null): Promise<Contact | undefined>;
   deleteContact(id: string, userId: string | null): Promise<boolean>;
+  deleteSalonSearchReportRow(id: string, userId: string): Promise<boolean>;
   searchContacts(query: string, userId: string | null): Promise<Contact[]>;
   findDuplicateContacts(contact: InsertContact, userId: string, excludeId?: string): Promise<Contact[]>;
 
@@ -763,25 +766,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteContact(id: string, userId: string | null): Promise<boolean> {
-    // Verify ownership before deleting
-    let contact;
-    if (userId === null) {
-      [contact] = await db.select().from(contacts).where(eq(contacts.id, id));
-    } else {
-      [contact] = await db.select().from(contacts)
-        .where(and(eq(contacts.id, id), eq(contacts.userId, userId)));
-    }
-    if (!contact) return false;
+    return deleteContactSafely(db, id, userId);
+  }
 
-    // Delete all related records first (cascade in code to avoid FK violations)
-    await db.delete(emailSequenceLogs).where(eq(emailSequenceLogs.contactId, id));
-    await db.delete(inboxMessages).where(eq(inboxMessages.contactId, id));
-    await db.delete(activities).where(eq(activities.contactId, id));
-    await db.delete(tasks).where(eq(tasks.contactId, id));
-    await db.delete(deals).where(eq(deals.contactId, id));
-
-    const result = await db.delete(contacts).where(eq(contacts.id, id));
-    return result.rowCount ? result.rowCount > 0 : false;
+  async deleteSalonSearchReportRow(id: string, userId: string): Promise<boolean> {
+    return deleteSalonReviewRowSafely(db, id, userId);
   }
 
   async searchContacts(query: string, userId: string | null): Promise<Contact[]> {

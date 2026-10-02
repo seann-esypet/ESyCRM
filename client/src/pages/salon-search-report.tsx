@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -14,10 +14,11 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { OwnerNameReview, OwnerSearchEstimate, OwnerPreview } from "@/components/owner-name-review";
 import SalesLeadListUpload from "@/components/sales-lead-list-upload";
 import type { OwnerNameResult } from "@shared/salonOwnerName";
+import { deleteContactBatch } from "@/lib/contact-deletion";
 import {
   AlertCircle, ArrowLeft, ArrowRight, BriefcaseBusiness, CalendarClock,
   Check, CircleHelp, ExternalLink, FileJson2, Mail, MapPin, RefreshCw,
-  Search, ShieldCheck, Upload, Users,
+  Search, ShieldCheck, Trash2, Upload, Users,
 } from "lucide-react";
 
 type SearchBatch = { id: string; name: string; totalRows: number; createdAt: string; [key: string]: unknown };
@@ -27,6 +28,7 @@ type SearchRow = {
   businessName: string;
   address?: string | null;
   state?: string | null;
+  phone?: string | null;
   placeId?: string | null;
   email?: string | null;
   candidateEmail?: string | null;
@@ -148,6 +150,18 @@ export default function SalonSearchReport() {
   const [ownerSelectedIds, setOwnerSelectedIds] = useState<string[]>([]);
   const [ownerEstimate, setOwnerEstimate] = useState<OwnerSearchEstimate | null>(null);
   const [confirmOwnerBatch, setConfirmOwnerBatch] = useState(false);
+  const [selectedDeleteIds, setSelectedDeleteIds] = useState<Set<string>>(new Set());
+  const [deleteTargets, setDeleteTargets] = useState<SearchRow[]>([]);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [isDeletingRows, setIsDeletingRows] = useState(false);
+  const deleteSelectionVersion = useRef(0);
+
+  useEffect(() => {
+    deleteSelectionVersion.current += 1;
+    setSelectedDeleteIds(new Set());
+    setDeleteTargets([]);
+    setDeleteDialogOpen(false);
+  }, [batchId, category, search, page]);
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams();
@@ -183,6 +197,60 @@ export default function SalonSearchReport() {
   });
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["/api/salon-search-report"] });
+  const openDeleteDialog = (targets: SearchRow[]) => {
+    if (isDeletingRows || !targets.length) return;
+    setDeleteTargets(targets);
+    setDeleteDialogOpen(true);
+  };
+  const deleteReviewRows = async () => {
+    if (isDeletingRows || !deleteTargets.length) return;
+    const targets = [...deleteTargets];
+    const versionAtStart = deleteSelectionVersion.current;
+    setIsDeletingRows(true);
+    try {
+      const { removedIds, failures } = await deleteContactBatch(
+        targets.map(row => row.id),
+        id => apiRequest("DELETE", `/api/salon-search-report/rows/${encodeURIComponent(id)}`),
+      );
+      if (removedIds.length) {
+        setOwnerSelectedIds(current => current.filter(id => !removedIds.includes(id)));
+        setOwnerEstimate(null);
+        setConfirmOwnerBatch(false);
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["/api/salon-search-report"] }),
+          queryClient.invalidateQueries({ queryKey: ["/api/salon-enrichment/batches"] }),
+        ]);
+        const refreshed = queryClient.getQueryData<ReportData>([
+          "/api/salon-search-report", batchId, category, search, page,
+        ]);
+        const remaining = refreshed?.pagination?.total ?? 0;
+        if (page > 0 && remaining <= page * PAGE_SIZE) {
+          setPage(Math.max(0, Math.ceil(remaining / PAGE_SIZE) - 1));
+        }
+      }
+      if (deleteSelectionVersion.current === versionAtStart) {
+        setSelectedDeleteIds(new Set(failures.map(failure => failure.id)));
+      }
+      setDeleteDialogOpen(false);
+      setDeleteTargets([]);
+      if (failures.length) {
+        const blockedCount = failures.filter(failure => failure.status === "409").length;
+        const description = [
+          removedIds.length ? `${removedIds.length} ${removedIds.length === 1 ? "uploaded row was" : "uploaded rows were"} removed.` : "",
+          `${failures.length} ${failures.length === 1 ? "row could not" : "rows could not"} be removed${deleteSelectionVersion.current === versionAtStart ? " and remain selected" : ""}.`,
+          blockedCount ? `${blockedCount} ${blockedCount === 1 ? "row is" : "rows are"} imported, linked to a deal, or being processed and cannot be deleted.` : "",
+        ].filter(Boolean).join(" ");
+        toast({ title: "Some uploaded rows were not removed", description, variant: "destructive" });
+      } else {
+        toast({
+          title: targets.length === 1 ? "Uploaded row removed" : "Uploaded rows removed",
+          description: `${targets.length} ${targets.length === 1 ? "Sales Lead Review row was" : "Sales Lead Review rows were"} removed.`,
+        });
+      }
+    } finally {
+      setIsDeletingRows(false);
+    }
+  };
   const review = useMutation({
     mutationFn: async (row: SearchRow) => {
       const response = await apiRequest("POST", `/api/salon-enrichment/batches/${row.batchId}/rows/review`, { rowIds: [row.id], decision: "approved" });
@@ -446,18 +514,47 @@ export default function SalonSearchReport() {
             <p className="text-xs text-muted-foreground">{reportQuery.isLoading ? "Loading…" : `${formatCount(totalRows)} matching rows`}</p>
           </div>
           <div className="grid gap-2 sm:grid-cols-[minmax(200px,1fr)_200px_200px_auto]">
-            <div className="relative"><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input className="pl-9" aria-label="Search business results" placeholder="Business, email, state, evidence…" value={search} onChange={event => { setSearch(event.target.value); setPage(0); }} /></div>
+            <div className="relative"><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input disabled={isDeletingRows} className="pl-9" aria-label="Search business results" placeholder="Business, email, state, evidence…" value={search} onChange={event => { setSearch(event.target.value); setPage(0); }} /></div>
             <Select value={batchId} onValueChange={value => { setBatchId(value); setPage(0); }}>
-              <SelectTrigger aria-label="Filter by batch"><SelectValue placeholder="All batches" /></SelectTrigger>
+              <SelectTrigger disabled={isDeletingRows} aria-label="Filter by batch"><SelectValue placeholder="All batches" /></SelectTrigger>
               <SelectContent><SelectItem value="all">All batches</SelectItem>{batches.map(batch => <SelectItem key={batch.id} value={batch.id}>{batch.name}</SelectItem>)}</SelectContent>
             </Select>
             <Select value={category} onValueChange={value => { setCategory(value); setPage(0); }}>
-              <SelectTrigger aria-label="Filter by category"><SelectValue placeholder="All categories" /></SelectTrigger>
+              <SelectTrigger disabled={isDeletingRows} aria-label="Filter by category"><SelectValue placeholder="All categories" /></SelectTrigger>
               <SelectContent><SelectItem value="all">All categories</SelectItem>{reportCategories.map(value => <SelectItem key={value} value={value}>{labelize(value)}</SelectItem>)}</SelectContent>
             </Select>
-            <Button variant="outline" onClick={() => reportQuery.refetch()} disabled={reportQuery.isFetching}><RefreshCw className={`mr-2 h-4 w-4 ${reportQuery.isFetching ? "animate-spin" : ""}`} />Refresh</Button>
+            <Button variant="outline" onClick={() => reportQuery.refetch()} disabled={isDeletingRows || reportQuery.isFetching}><RefreshCw className={`mr-2 h-4 w-4 ${reportQuery.isFetching ? "animate-spin" : ""}`} />Refresh</Button>
           </div>
-          <div className="flex flex-col gap-3 rounded-lg border border-primary/15 bg-primary/[0.025] p-3 sm:flex-row sm:items-center sm:justify-between">
+          {rows.length > 0 && !reportQuery.isLoading && !reportQuery.isError && <div className="flex flex-col gap-3 rounded-lg border border-destructive/20 bg-destructive/[0.025] p-3 sm:flex-row sm:items-center sm:justify-between">
+            <label className="flex items-center gap-2 text-sm text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={rows.length > 0 && rows.every(row => selectedDeleteIds.has(row.id))}
+                disabled={isDeletingRows}
+                onChange={() => setSelectedDeleteIds(current => {
+                  const allSelected = rows.length > 0 && rows.every(row => current.has(row.id));
+                  const next = new Set(current);
+                  rows.forEach(row => allSelected ? next.delete(row.id) : next.add(row.id));
+                  return next;
+                })}
+                aria-label={`Select all ${rows.length} visible review rows`}
+                data-testid="select-visible-review-rows"
+                className="h-4 w-4 rounded border-input accent-primary"
+              />
+              Select all {rows.length} visible rows
+              {selectedDeleteIds.size > 0 && <span> · {selectedDeleteIds.size} selected</span>}
+            </label>
+            <Button
+              size="sm"
+              variant="destructive"
+              disabled={isDeletingRows || selectedDeleteIds.size === 0}
+              onClick={() => openDeleteDialog(rows.filter(row => selectedDeleteIds.has(row.id)))}
+              data-testid="delete-selected-review-rows"
+            >
+              <Trash2 className="mr-2 h-4 w-4" />Delete Selected
+            </Button>
+          </div>}
+          {!isDeletingRows && <div className="flex flex-col gap-3 rounded-lg border border-primary/15 bg-primary/[0.025] p-3 sm:flex-row sm:items-center sm:justify-between">
             <div><p className="text-sm font-medium">Owner-name lookup</p><p className="text-xs text-muted-foreground">Select up to five eligible salons below. Each search is budget-estimated and requires confirmation.</p></div>
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs text-muted-foreground">{ownerSelectedIds.length}/5 selected</span>
@@ -466,8 +563,8 @@ export default function SalonSearchReport() {
               </Button>
               {ownerSelectedIds.length > 0 && <Button size="sm" variant="ghost" onClick={() => setOwnerSelectedIds([])}>Clear selection</Button>}
             </div>
-          </div>
-          {confirmOwnerBatch && ownerEstimate && <div className="rounded-lg border border-amber-300/70 bg-amber-50 p-4 text-sm text-amber-950">
+          </div>}
+          {confirmOwnerBatch && ownerEstimate && !isDeletingRows && <div className="rounded-lg border border-amber-300/70 bg-amber-50 p-4 text-sm text-amber-950">
             <p className="font-semibold">Confirm paid owner search for {ownerSelectedIds.length} salon{ownerSelectedIds.length === 1 ? "" : "s"}</p>
             <p className="mt-1 text-xs leading-5">Up to {ownerEstimate.maxProviderCalls} provider calls and {ownerEstimate.maxPages} page fetches. {ownerEstimate.remainingCredits} credits remain{ownerEstimate.reason ? ` · ${ownerEstimate.reason}` : ""}. This is capped at one provider call per selected row.</p>
             <div className="mt-3 flex gap-2"><Button size="sm" disabled={!ownerEstimate.allowed || searchOwnerBatch.isPending} onClick={() => searchOwnerBatch.mutate()}>{searchOwnerBatch.isPending ? "Searching…" : "Confirm searches"}</Button><Button size="sm" variant="outline" onClick={() => { setConfirmOwnerBatch(false); setOwnerEstimate(null); }}>Cancel</Button></div>
@@ -502,6 +599,20 @@ export default function SalonSearchReport() {
                   <div className="flex flex-col gap-4 p-4 sm:p-5 lg:flex-row lg:items-start lg:justify-between">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={selectedDeleteIds.has(row.id)}
+                          disabled={isDeletingRows}
+                          onChange={() => setSelectedDeleteIds(current => {
+                            const next = new Set(current);
+                            if (next.has(row.id)) next.delete(row.id);
+                            else next.add(row.id);
+                            return next;
+                          })}
+                          aria-label={`Select ${row.businessName} for deletion`}
+                          data-testid={`select-review-row-${row.id}`}
+                          className="h-4 w-4 rounded border-input accent-primary"
+                        />
                         <h3 className="text-base font-semibold">{row.businessName || "Unnamed business"}</h3>
                         <Badge variant={isSuccess ? "default" : "secondary"}>{labelize(row.category)}</Badge>
                         <Badge variant="outline">{labelize(row.reviewStatus || "pending review")}</Badge>
@@ -530,7 +641,7 @@ export default function SalonSearchReport() {
                         ownerName={row.ownerName}
                         contactName={row.contactName}
                         sequences={seqStepOne.map(sequence => ({ id: sequence.id, subject: sequence.subject }))}
-                        canSearch={categoryKey(row.category) !== "non_grooming"}
+                        canSearch={categoryKey(row.category) !== "non_grooming" && !isDeletingRows}
                         selectedForBatch={ownerSelectedIds.includes(row.id)}
                         onSelectedForBatchChange={checked => {
                           setOwnerSelectedIds(current => {
@@ -543,8 +654,11 @@ export default function SalonSearchReport() {
                       />
                     </div>
                     <div className="flex flex-wrap gap-2 lg:w-[265px] lg:justify-end">
-                      {isSuccess && !categoryIsRestricted && !isApproved && !isImported && <Button size="sm" variant="outline" onClick={() => review.mutate(row)} disabled={review.isPending}><ShieldCheck className="mr-1.5 h-3.5 w-3.5" />Approve</Button>}
-                      {isSuccess && !categoryIsRestricted && isApproved && !isImported && <Button size="sm" onClick={() => importContact.mutate(row)} disabled={importContact.isPending}><Upload className="mr-1.5 h-3.5 w-3.5" />Import contact</Button>}
+                      <Button size="sm" variant="ghost" onClick={() => openDeleteDialog([row])} disabled={isDeletingRows} className="text-destructive hover:text-destructive" aria-label={`Delete uploaded review row for ${row.businessName}`} data-testid={`delete-review-row-${row.id}`}>
+                        <Trash2 className="mr-1.5 h-3.5 w-3.5" />Delete
+                      </Button>
+                      {isSuccess && !categoryIsRestricted && !isApproved && !isImported && <Button size="sm" variant="outline" onClick={() => review.mutate(row)} disabled={isDeletingRows || review.isPending}><ShieldCheck className="mr-1.5 h-3.5 w-3.5" />Approve</Button>}
+                      {isSuccess && !categoryIsRestricted && isApproved && !isImported && <Button size="sm" onClick={() => importContact.mutate(row)} disabled={isDeletingRows || importContact.isPending}><Upload className="mr-1.5 h-3.5 w-3.5" />Import contact</Button>}
                       {!isSuccess && <span className="w-full text-right text-xs text-muted-foreground">{categoryIsRestricted ? "Not eligible for approval or import" : "Manual approval is reserved for successful matches"}</span>}
                       {isImported && !row.dealId && <Button size="sm" variant="outline" onClick={() => createDeal.mutate(row)} disabled={createDeal.isPending}><BriefcaseBusiness className="mr-1.5 h-3.5 w-3.5" />Create pipeline deal</Button>}
                       {isImported && !row.dealId && !row.sequenceStatus && <span className="w-full text-right text-xs text-muted-foreground">Create a pipeline deal before scheduling a sequence.</span>}
@@ -558,12 +672,41 @@ export default function SalonSearchReport() {
           {!reportQuery.isError && <div className="flex items-center justify-between border-t pt-4">
             <p className="text-xs text-muted-foreground">Showing {totalRows === 0 ? 0 : page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalRows)} of {formatCount(totalRows)}</p>
             <div className="flex gap-2">
-              <Button variant="outline" size="sm" disabled={page === 0 || reportQuery.isFetching} onClick={() => setPage(value => Math.max(0, value - 1))}><ArrowLeft className="mr-1.5 h-3.5 w-3.5" />Previous</Button>
-              <Button variant="outline" size="sm" disabled={(page + 1) * PAGE_SIZE >= totalRows || reportQuery.isFetching} onClick={() => setPage(value => value + 1)}>Next<ArrowRight className="ml-1.5 h-3.5 w-3.5" /></Button>
+              <Button variant="outline" size="sm" disabled={isDeletingRows || page === 0 || reportQuery.isFetching} onClick={() => setPage(value => Math.max(0, value - 1))}><ArrowLeft className="mr-1.5 h-3.5 w-3.5" />Previous</Button>
+              <Button variant="outline" size="sm" disabled={isDeletingRows || (page + 1) * PAGE_SIZE >= totalRows || reportQuery.isFetching} onClick={() => setPage(value => value + 1)}>Next<ArrowRight className="ml-1.5 h-3.5 w-3.5" /></Button>
             </div>
           </div>}
         </section>
       </main>
+
+      <Dialog open={deleteDialogOpen} onOpenChange={open => { if (!isDeletingRows) setDeleteDialogOpen(open); }}>
+        <DialogContent className="max-w-lg" data-testid="delete-review-row-confirmation">
+          <DialogHeader>
+            <DialogTitle>Delete {deleteTargets.length} uploaded {deleteTargets.length === 1 ? "review row" : "review rows"}?</DialogTitle>
+            <DialogDescription>Confirm removal of these Sales Lead Review records.</DialogDescription>
+          </DialogHeader>
+          <ul className="max-h-48 space-y-2 overflow-y-auto rounded-md border p-3 text-sm" aria-label="Review rows selected for deletion">
+            {deleteTargets.map(row => (
+              <li key={row.id} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                <span className="font-medium">{row.businessName}</span>
+                <span className="text-muted-foreground">{[row.address, row.state].filter(Boolean).join(", ") || "Location not provided"}{row.phone ? ` · ${row.phone}` : ""}</span>
+              </li>
+            ))}
+          </ul>
+          <div className="space-y-2 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">
+            <p className="font-medium">This only removes the selected uploaded review rows.</p>
+            <p>It does not delete CRM contacts or saved national search results, run owner or email lookups, or send mail.</p>
+            <p>Rows that are imported, linked to a deal, or actively being verified cannot be removed.</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" disabled={isDeletingRows} onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
+            <Button variant="destructive" disabled={isDeletingRows || !deleteTargets.length} onClick={deleteReviewRows} data-testid="confirm-delete-review-rows">
+              <Trash2 className="mr-2 h-4 w-4" />
+              {isDeletingRows ? "Deleting…" : `Delete ${deleteTargets.length} ${deleteTargets.length === 1 ? "row" : "rows"}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={Boolean(scheduleRow)} onOpenChange={open => { if (!open) { setScheduleRow(null); setScheduleConfirmed(false); } }}>
         <DialogContent>

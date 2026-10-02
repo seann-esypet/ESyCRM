@@ -1,17 +1,18 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import Header from "@/components/layout/header";
 import ContactList from "@/components/contacts/contact-list";
 import ContactForm from "@/components/contacts/contact-form";
 import ContactImport from "@/components/contacts/contact-import";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Download, Users, Archive, ArchiveRestore } from "lucide-react";
+import { Download, Users, Archive, ArchiveRestore, Trash2 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import type { Contact, Deal, User } from "@shared/schema";
+import { contactDeletionLabel, deleteContactBatch } from "@/lib/contact-deletion";
 
 export default function Contacts() {
   const { user } = useAuth();
@@ -24,12 +25,16 @@ export default function Contacts() {
   const [selectedContact, setSelectedContact] = useState<Contact | undefined>();
   const [showArchived, setShowArchived] = useState(false);
   const [usesSoftwareFilter, setUsesSoftwareFilter] = useState<"all" | "Yes" | "No" | "Unknown">("all");
-
+  const [selectedContactIds, setSelectedContactIds] = useState<Set<string>>(new Set());
+  const [deleteTargets, setDeleteTargets] = useState<Contact[]>([]);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [sortColumn, setSortColumn] = useState<"name" | "company" | "lastContact" | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   const initialFilterUserId = isAdmin ? new URLSearchParams(window.location.search).get("filterUserId") || "" : "";
   const [filterUserId, setFilterUserId] = useState(initialFilterUserId);
+  const filterChangeVersion = useRef(0);
 
   // Auto-open edit dialog when navigated here with ?edit=contactId
   const editContactId = new URLSearchParams(window.location.search).get("edit") || "";
@@ -37,6 +42,13 @@ export default function Contacts() {
   const handleFilterChange = (value: string) => {
     setFilterUserId(value === "all" ? "" : value);
   };
+
+  useEffect(() => {
+    filterChangeVersion.current += 1;
+    setSelectedContactIds(new Set());
+    setDeleteTargets([]);
+    setIsDeleteDialogOpen(false);
+  }, [searchQuery, usesSoftwareFilter, filterUserId, showArchived]);
 
   const { data: adminUsers } = useQuery<User[]>({
     queryKey: ["/api/admin/users"],
@@ -151,6 +163,65 @@ export default function Contacts() {
 
   const handleExport = () => {
     window.open('/api/export/contacts', '_blank');
+  };
+
+  const openDeleteConfirmation = (targets: Contact[]) => {
+    if (isDeleting || !targets.length) return;
+    setDeleteTargets(targets);
+    setIsDeleteDialogOpen(true);
+  };
+
+  const handleDeleteContacts = async () => {
+    if (isDeleting || !deleteTargets.length) return;
+    const targets = [...deleteTargets];
+    const filterVersionAtStart = filterChangeVersion.current;
+    const removedIds = new Set<string>();
+    const failures: Array<{ contact: Contact; status: string }> = [];
+    setIsDeleting(true);
+    try {
+      const outcome = await deleteContactBatch(targets.map(contact => contact.id),
+        id => apiRequest("DELETE", `/api/contacts/${encodeURIComponent(id)}`));
+      outcome.removedIds.forEach(id => removedIds.add(id));
+      outcome.failures.forEach(failure => {
+        const contact = targets.find(target => target.id === failure.id);
+        if (contact) failures.push({ contact, status: failure.status });
+      });
+
+      if (removedIds.size) {
+        const cachePrefixes = [
+          "/api/contacts", "/api/deals", "/api/dashboard", "/api/activities",
+          "/api/tasks", "/api/inbox", "/api/email-sequence-logs", "/api/salon-enrichment",
+          "/api/salon-form-outreach", "/api/salon-search-report", "/api/salon-owner-names/rows",
+        ];
+        await queryClient.invalidateQueries({ predicate: query => {
+          const path = query.queryKey[0];
+          return typeof path === "string" && cachePrefixes.some(prefix =>
+            path === prefix || path.startsWith(`${prefix}/`) || path.startsWith(`${prefix}?`));
+        } });
+      }
+      if (filterChangeVersion.current === filterVersionAtStart) {
+        setSelectedContactIds(new Set(failures.map(({ contact }) => contact.id)));
+      }
+      setIsDeleteDialogOpen(false);
+      setDeleteTargets([]);
+
+      if (failures.length) {
+        const linkedCount = failures.filter(({ status }) => status === "409").length;
+        const description = [
+          removedIds.size ? `${removedIds.size} ${removedIds.size === 1 ? "record was" : "records were"} permanently removed.` : "",
+          `${failures.length} ${failures.length === 1 ? "record could not" : "records could not"} be removed${filterChangeVersion.current === filterVersionAtStart ? " and remain selected" : ""}.`,
+          linkedCount ? `${linkedCount} ${linkedCount === 1 ? "record is" : "records are"} linked to deals or history; archive ${linkedCount === 1 ? "it" : "them"} instead.` : "",
+        ].filter(Boolean).join(" ");
+        toast({ title: "Some businesses were not removed", description, variant: "destructive" });
+      } else {
+        toast({
+          title: targets.length === 1 ? "Business removed" : "Businesses removed",
+          description: `${targets.length} ${targets.length === 1 ? "business record was" : "business records were"} permanently removed.`,
+        });
+      }
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   const assignMutation = useMutation({
@@ -317,8 +388,66 @@ export default function Contacts() {
           onUnarchive={handleUnarchive}
           onStatusChange={handleStatusChange}
           onAssign={handleAssign}
+          selectedContactIds={selectedContactIds}
+          isDeleting={isDeleting}
+          onToggleSelection={(id) => setSelectedContactIds(current => {
+            const next = new Set(current);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+          })}
+          onToggleSelectVisible={() => setSelectedContactIds(current => {
+            const visibleIds = sortedContacts.map(contact => contact.id);
+            const allSelected = visibleIds.length > 0 && visibleIds.every(id => current.has(id));
+            const next = new Set(current);
+            visibleIds.forEach(id => allSelected ? next.delete(id) : next.add(id));
+            return next;
+          })}
+          onDelete={(contact) => openDeleteConfirmation([contact])}
+          onDeleteSelected={() => openDeleteConfirmation(
+            sortedContacts.filter(contact => selectedContactIds.has(contact.id))
+          )}
         />
       </main>
+
+      <Dialog open={isDeleteDialogOpen} onOpenChange={(open) => {
+        if (!isDeleting) setIsDeleteDialogOpen(open);
+      }}>
+        <DialogContent className="max-w-lg" data-testid="delete-business-confirmation">
+          <DialogHeader>
+            <DialogTitle>Delete {deleteTargets.length} {deleteTargets.length === 1 ? "business" : "businesses"} permanently?</DialogTitle>
+            <DialogDescription>
+              This permanently removes the selected contact records. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <ul className="max-h-40 space-y-2 overflow-y-auto rounded-md border p-3 text-sm" aria-label="Businesses selected for deletion">
+            {deleteTargets.map(contact => {
+              const fallbackName = contactDeletionLabel(contact);
+              return (
+                <li key={contact.id} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                  <span className="font-medium">{fallbackName}</span>
+                  {contact.phone && <span className="text-muted-foreground">{contact.phone}</span>}
+                </li>
+              );
+            })}
+          </ul>
+          <div className="space-y-2 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">
+            <p className="font-medium">What happens when you delete</p>
+            <p>Permanently removes these contact records. Queued email records are removed; emails already sent or in flight cannot be recalled.</p>
+            <p>Existing tasks, messages, and activity history are preserved but unlinked. Businesses linked to deals cannot be deleted.</p>
+            <p>To keep a business and its history, cancel and use Archive instead.</p>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" disabled={isDeleting} onClick={() => setIsDeleteDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" disabled={isDeleting || !deleteTargets.length} onClick={handleDeleteContacts} data-testid="confirm-delete-businesses">
+              <Trash2 className="mr-2 h-4 w-4" />
+              {isDeleting ? "Deleting…" : `Delete ${deleteTargets.length} ${deleteTargets.length === 1 ? "business" : "businesses"}`}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">

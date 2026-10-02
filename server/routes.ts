@@ -4,6 +4,8 @@ import { createServer, type Server } from "http";
 import { SalonOwnerNameStorageConflict, storage } from "./storage";
 import { setupAuth, isAuthenticated, isAdmin } from "./replitAuth";
 import { insertContactSchema, insertContactGroupSchema, insertDealSchema, insertTaskSchema, insertEmailSequenceSchema, insertLeadDiscoveryJobSchema, insertCommissionSchema, insertSalonEnrichmentBatchSchema, insertSalonEnrichmentRowSchema, type InsertContact } from "@shared/schema";
+import { ContactDeletionConflict } from "./contactDeletion";
+import { SalonReviewDeletionConflict } from "./salonReviewDeletion";
 import {
   EMPTY_OWNER_NAME_RESULT,
   type OwnerNameResult,
@@ -1117,6 +1119,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.status(204).send();
     } catch (error) {
+      if (error instanceof ContactDeletionConflict) {
+        return res.status(409).json({ message: error.message });
+      }
       res.status(500).json({ message: "Failed to delete contact" });
     }
   });
@@ -2889,6 +2894,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (error instanceof z.ZodError) return res.status(500).json({ message: "The bundled salon search pilot is invalid", errors: error.errors });
       console.error("Failed to load bundled salon search pilot:", error);
       res.status(500).json({ message: error instanceof Error ? error.message : "Failed to load bundled salon search pilot" });
+    }
+  });
+
+  app.delete("/api/salon-search-report/rows/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const deleted = await storage.deleteSalonSearchReportRow(req.params.id, req.user.claims.sub as string);
+      if (!deleted) return res.status(404).json({ message: "Review business not found" });
+      return res.status(204).send();
+    } catch (error) {
+      if (error instanceof SalonReviewDeletionConflict) return res.status(409).json({ message: error.message });
+      return res.status(500).json({ message: "Could not delete the review business" });
     }
   });
 
