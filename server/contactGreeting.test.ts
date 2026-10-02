@@ -44,11 +44,22 @@ test("saved greetings support leading whitespace, HTML and formatted name tokens
   }
 });
 
-test("first-name tokens outside the opening greeting retain their existing meaning", () => {
-  assert.equal(render("[Contact_First_Name], a question about [Business_Name]", { firstName: null }),
-    "Curly Tails, a question about Curly Tails");
+test("first-name tokens outside the opening salutation retain their existing meaning", () => {
+  assert.equal(render("A question for [Contact_First_Name] about [Business_Name]", { firstName: null }),
+    "A question for Curly Tails about Curly Tails");
   assert.equal(render("Hi [Contact_First_Name],\n[Contact_First_Name] at [Business_Name].", { firstName: null }),
     "Hi Curly Tails team,\nCurly Tails at Curly Tails.");
+});
+
+test("existing directory subjects use personal or team names for a mixed group", () => {
+  const subject = "[Contact_First_Name], are you listed on EsyPet's free grooming directory?";
+  const suffix = ", are you listed on EsyPet's free grooming directory?";
+  assert.equal(render(subject), `Eliud${suffix}`);
+  assert.equal(render(subject, { firstName: null }), `Curly Tails team${suffix}`);
+  assert.equal(render(subject, { firstName: "Eliud", useBusinessNameForEmail: "Yes" }), `Curly Tails team${suffix}`);
+  assert.equal(render(subject, { firstName: " " }), `Curly Tails team${suffix}`);
+  assert.equal(render(`  ${subject}`, { firstName: null }), `  Curly Tails team${suffix}`);
+  assert.equal(render(subject, { firstName: null, company: null }), `Hello${suffix}`);
 });
 
 test("missing business and personal names produce a neutral greeting", () => {

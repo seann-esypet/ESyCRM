@@ -63,15 +63,21 @@ export function replaceTemplateVariables(
 
   // Existing saved templates already begin with Hi [Contact_First_Name].
   // Adapt that opening at render time, without rewriting stored templates or
-  // changing first-name tokens used in subjects or the rest of the message.
+  // changing first-name tokens used in the rest of the message.
   const greetingContent = content.replace(
     /^((?:\s|<[^>]*>)*Hi(?:\s|&nbsp;)+(?:<(?:span|strong|b|em|i)\b[^>]*>\s*)*)\[Contact_First_Name\]/i,
     (_match, opening: string) => `${opening}${greetingName}`,
   );
+  // Subjects such as "[Contact_First_Name], are you listed..." use the same
+  // personal/team selection, without adding the body's "Hi" greeting.
+  const personalizedContent = greetingContent.replace(
+    /^(\s*)\[Contact_First_Name\](?=\s*,)/,
+    (_match, whitespace: string) => `${whitespace}${greetingName === "there" ? "Hello" : greetingName}`,
+  );
 
   console.log(`[replaceTemplateVariables] contact: ${contact.firstName} ${contact.lastName}, company: "${contact.company}", businessName: "${businessName}", city: "${city}", useBusinessName: ${contact.useBusinessNameForEmail}`);
 
-  return greetingContent
+  return personalizedContent
     .replace(/\[Contact_Greeting\]/g, () => greeting)
     .replace(/\[Contact_First_Name\]/g, contactFirstName)
     .replace(/\[Sales_Person\]/g, salespersonName)

@@ -9,7 +9,7 @@ Finding a salon owner does not prove that person monitors the salon's public mai
 
 **How to apply:** Default to business-name salutations until the user explicitly chooses personal-name personalization. Require an explicit owner role and matching business/location before approving an owner; team and summary mentions remain unresolved. Do not combine co-owners, guess surnames, or interpret name approval as email approval.
 
-The user wants mixed-group sequence greetings to automatically say “Hi Eliud,” when a personal name is enabled and “Hi Curly Tails team,” otherwise.
+The user wants mixed-group sequence greetings to automatically say “Hi Eliud,” when a personal name is enabled and “Hi Curly Tails team,” otherwise. They want the same personal-or-team selection in the subject line.
 
 **Why:** The user sends groups of 25 or 50 and may have first names for half or fewer; missing names must not require individual template edits.
 
