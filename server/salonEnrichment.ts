@@ -11,6 +11,7 @@ type Evidence = Record<string, {
   fetchedAt: string;
   confidence: "high" | "medium" | "low";
   rationale?: string;
+  sourceType?: string;
 }>;
 
 const activeProcessors = new Set<string>();
@@ -215,11 +216,35 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
       const crawled = await crawlWebsite(candidate.link);
       if (crawled.email) {
         next.email = crawled.email;
-        evidenceMap.email = evidence(crawled.email, "website", "high", candidate.link);
+        evidenceMap.email = {
+          ...evidence(crawled.email, "website", "high", crawled.emailSourceUrl || crawled.resolvedWebsiteUrl || candidate.link),
+          sourceType: crawled.emailSourceType || "visible",
+        };
+      }
+      if (crawled.metadataEmail) {
+        evidenceMap.emailMetadata = {
+          ...evidence(
+            crawled.metadataEmail,
+            "website_metadata",
+            "low",
+            crawled.metadataEmailSourceUrl || crawled.resolvedWebsiteUrl || candidate.link,
+            "First-party metadata-only address; review separately and not promoted to the usable email field",
+          ),
+          sourceType: "metadata",
+        };
       }
       if (crawled.phone && !next.phone) {
         next.phone = crawled.phone;
-        evidenceMap.phone = evidence(crawled.phone, "website", "high", candidate.link);
+        evidenceMap.phone = evidence(crawled.phone, "website", "high", crawled.resolvedWebsiteUrl || candidate.link);
+      }
+      if (crawled.resolvedWebsiteUrl || crawled.partialFailures.length) {
+        evidenceMap.website = evidence(
+          crawled.resolvedWebsiteUrl || candidate.link,
+          "website",
+          crawled.partialFailures.length ? "low" : "high",
+          crawled.resolvedWebsiteUrl || candidate.link,
+          crawled.partialFailures.length ? `Partially assessed; ${crawled.partialFailures.join("; ")}` : "Resolved website URL",
+        );
       }
       if (crawled.contactFormUrl) {
         next.contactRequestFormUrl = crawled.contactFormUrl;
@@ -228,7 +253,7 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
           crawled.contactFormUrl,
           "website",
           "medium",
-          candidate.link,
+          crawled.resolvedWebsiteUrl || candidate.link,
           "Candidate public inquiry form found; manual review required before use. Not verified.",
         );
       }
@@ -266,8 +291,20 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
           const fallbackCrawl = await crawlWebsite(fallbackCandidate.link);
           if (fallbackCrawl.email) {
             next.email = fallbackCrawl.email;
-            evidenceMap.email = evidence(fallbackCrawl.email, "serp_fallback_website", "medium", fallbackCandidate.link,
-              "Matched alternate salon website; review the email and source before import");
+            evidenceMap.email = {
+              ...evidence(fallbackCrawl.email, "serp_fallback_website", "medium",
+                fallbackCrawl.emailSourceUrl || fallbackCrawl.resolvedWebsiteUrl || fallbackCandidate.link,
+                "Matched alternate salon website; review the email and source before import"),
+              sourceType: fallbackCrawl.emailSourceType || "visible",
+            };
+          }
+          if (fallbackCrawl.metadataEmail) {
+            evidenceMap.emailMetadata = {
+              ...evidence(fallbackCrawl.metadataEmail, "website_metadata", "low",
+                fallbackCrawl.metadataEmailSourceUrl || fallbackCrawl.resolvedWebsiteUrl || fallbackCandidate.link,
+                "First-party metadata-only address; review separately and not promoted to the usable email field"),
+              sourceType: "metadata",
+            };
           }
           if (!next.bookingUrl && fallbackCrawl.bookingUrl) {
             next.bookingUrl = fallbackCrawl.bookingUrl;

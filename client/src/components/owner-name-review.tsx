@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -63,9 +63,15 @@ export function OwnerNameReview({
     onError: error => toast({ title: "Could not estimate owner lookup", description: (error as Error).message, variant: "destructive" }),
   });
   const searchMutation = useMutation({
-    mutationFn: () => jsonRequest("POST", "/api/salon-owner-names/search", { rowIds: [rowId], maxProviderCalls: Math.min(1, estimate?.maxProviderCalls ?? 1), confirmed: true }),
-    onSuccess: () => { setConfirmSearch(false); setEstimate(null); refresh(); toast({ title: "Owner search complete", description: "Review the source-backed candidates below." }); },
-    onError: error => toast({ title: "Owner search failed", description: (error as Error).message, variant: "destructive" }),
+    mutationFn: () => jsonRequest<{ results: { rowId: string; ownerName: OwnerNameResult }[] }>("POST", "/api/salon-owner-names/search", { rowIds: [rowId], maxProviderCalls: Math.min(1, estimate?.maxProviderCalls ?? 1), confirmed: true }),
+    onSuccess: data => {
+      setConfirmSearch(false); setEstimate(null); refresh();
+      const result = data.results.find(item => item.rowId === rowId)?.ownerName;
+      toast(result?.status === "failed"
+        ? { title: "Owner search could not finish", description: result.error || "No source-backed owner result was obtained. You can retry later.", variant: "destructive" }
+        : { title: "Owner search complete", description: result?.candidates.length ? "Review the source-backed candidates below." : "No confirmed owner was found. Business-name greetings remain available." });
+    },
+    onError: error => { refresh(); toast({ title: "Owner search failed", description: (error as Error).message, variant: "destructive" }); },
   });
   const reviewMutation = useMutation({
     mutationFn: ({ candidateId: id, decision }: { candidateId: string; decision: "approved" | "rejected" }) =>
@@ -88,13 +94,16 @@ export function OwnerNameReview({
     enabled: previewOpen && Boolean(previewSequenceId),
   });
   const candidates = ownerName?.candidates ?? [];
+  const lookupError = ownerName?.error && /timeout|timed out|aborted.*time\s*out/i.test(ownerName.error)
+    ? "The owner lookup timed out before completing. Your reviewed email is unchanged. Retry later; a retry may use another lookup credit."
+    : ownerName?.error;
   const selectedCandidate = candidates.find(candidate => candidate.id === candidateId);
   const canApprove = Boolean(selectedCandidate?.roleConfirmed && selectedCandidate.businessMatched &&
     selectedCandidate.sources.some(source => /^(website|organic)_(homepage|about|team|page)$/.test(source.kind) && source.url && source.excerpt.trim()));
   const approved = Boolean(ownerName?.approvedAt && ownerName.selectedCandidateId && ownerName.selectedCandidateId === candidateId);
 
   return (
-    <section className="mt-4 rounded-lg border bg-muted/20 p-3 sm:p-4" aria-label={`Owner name review for ${businessName}`}>
+    <section className="mt-4 rounded-lg border-2 border-slate-400 bg-muted/20 p-3 dark:border-slate-600 sm:p-4" aria-label={`Owner name review for ${businessName}`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-start gap-2">
           <span className="mt-0.5 rounded-md bg-primary/10 p-1.5 text-primary"><UserRound className="h-4 w-4" /></span>
@@ -117,7 +126,8 @@ export function OwnerNameReview({
         </div>
       </div>
       {canSearch && ownerName && ownerName.status !== "not_searched" && <p className="mt-2 text-[11px] leading-5 text-muted-foreground">Retrying resets owner approval. If a name previously applied by this search is still unchanged, it may revert; manually edited contact names are preserved. Email review status is unaffected.</p>}
-      {ownerName?.error && <Alert variant="destructive" className="mt-3"><AlertTriangle className="h-4 w-4" /><AlertDescription>{ownerName.error}</AlertDescription></Alert>}
+      {searchMutation.isPending && <p role="status" className="mt-3 rounded-md border-2 border-slate-400 bg-background p-3 text-sm dark:border-slate-600">Checking business pages and, if needed, the search provider. Please wait for this lookup to finish before retrying.</p>}
+      {!searchMutation.isPending && lookupError && <Alert variant="destructive" className="mt-3 border-2 border-red-400 dark:border-red-600"><AlertTriangle className="h-4 w-4" /><AlertDescription>{lookupError}</AlertDescription></Alert>}
       {ownerName && <p className="mt-2 text-[11px] text-muted-foreground">Lookup usage · {ownerName.providerCalls} provider call{ownerName.providerCalls === 1 ? "" : "s"} · {ownerName.pagesFetched} pages{ownerName.lookedUpAt ? ` · ${new Date(ownerName.lookedUpAt).toLocaleString()}` : ""}</p>}
 
       {candidates.length > 0 ? (
@@ -125,7 +135,7 @@ export function OwnerNameReview({
           {candidates.map(candidate => {
             const eligible = candidate.roleConfirmed && candidate.businessMatched && candidate.sources.length > 0;
             const isChosen = candidateId === candidate.id;
-            return <article key={candidate.id} className={`rounded-md border bg-background p-3 ${isChosen ? "border-primary/50" : ""}`}>
+            return <article key={candidate.id} className={`rounded-md border-2 bg-background p-3 ${isChosen ? "border-primary" : "border-slate-400 dark:border-slate-600"}`}>
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <label className="flex min-w-0 cursor-pointer items-start gap-2">
                   <input type="radio" name={`owner-${rowId}`} className="mt-1 accent-primary" checked={isChosen} onChange={() => setCandidateId(candidate.id)} />
@@ -137,7 +147,7 @@ export function OwnerNameReview({
                   <Badge variant={candidate.businessMatched ? "secondary" : "outline"}>{candidate.businessMatched ? "Business matched" : "Business unconfirmed"}</Badge>
                 </div>
               </div>
-              {candidate.sources.map((source, index) => <div key={`${source.url}-${index}`} className="mt-2 border-l-2 border-primary/20 pl-3 text-xs">
+              {candidate.sources.map((source, index) => <div key={`${source.url}-${index}`} className="mt-2 border-l-2 border-primary/60 pl-3 text-xs">
                 <p className="leading-5 text-foreground/85">{source.excerpt || "No excerpt provided."}</p>
                 <a className="mt-1 inline-flex items-center gap-1 text-primary underline-offset-2 hover:underline" href={source.url} target="_blank" rel="noopener noreferrer">{source.kind || "Evidence source"} <ExternalLink className="h-3 w-3" /></a>
               </div>)}
@@ -145,9 +155,9 @@ export function OwnerNameReview({
             </article>;
           })}
         </div>
-      ) : <p className="mt-3 rounded-md border border-dashed p-3 text-xs text-muted-foreground">{ownerName?.status === "not_found" ? "No owner candidate was found. Emails should use the business-name fallback." : ownerName?.status === "excluded" ? "This row is excluded from owner lookup." : ownerName?.status === "failed" ? "Search failed. Retry to try again." : "No candidates yet. Search is always an explicit, budget-confirmed action."}</p>}
+      ) : <p className="mt-3 rounded-md border-2 border-dashed border-slate-400 p-3 text-xs text-muted-foreground dark:border-slate-600">{ownerName?.status === "not_found" ? "No owner candidate was found. Emails should use the business-name fallback." : ownerName?.status === "excluded" ? "This row is excluded from owner lookup." : ownerName?.status === "failed" ? "Search did not finish. Your reviewed email is unchanged; retry is optional and may use another lookup credit." : "No candidates yet. Search is always an explicit, budget-confirmed action."}</p>}
 
-      {candidates.length > 0 && <div className="mt-3 flex flex-col gap-3 border-t pt-3">
+      {candidates.length > 0 && <div className="mt-3 flex flex-col gap-3 border-t-2 border-slate-400 pt-3 dark:border-slate-600">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <span className="text-xs font-medium">Preferred email salutation:</span>
           <label className="inline-flex cursor-pointer items-center gap-2 text-xs"><input type="radio" name={`salutation-${rowId}`} checked={!usePersonalName} onChange={() => setUsePersonalName(false)} className="accent-primary" />Business name</label>
@@ -170,14 +180,14 @@ export function OwnerNameReview({
         <p className="mt-1 text-xs leading-5">Applying this approved owner will overwrite the linked contact’s existing first and last names. The salutation choice selected above will be applied.</p>
         <div className="mt-2 flex gap-2"><Button size="sm" variant="destructive" onClick={() => applyMutation.mutate(true)} disabled={applyMutation.isPending}>{applyMutation.isPending ? "Applying…" : "Overwrite existing names"}</Button><Button size="sm" variant="outline" onClick={() => setOverwriteDialog(false)}>Keep current names</Button></div>
       </div>}
-      {sequences.length > 0 && <div className="mt-3 flex flex-wrap items-center gap-2 border-t pt-3">
+      {sequences.length > 0 && <div className="mt-3 flex flex-wrap items-center gap-2 border-t-2 border-slate-400 pt-3 dark:border-slate-600">
         <span className="text-xs font-medium">Email preview</span>
         <Select value={previewSequenceId} onValueChange={value => { setPreviewSequenceId(value); setPreviewOpen(false); }}>
           <SelectTrigger className="h-8 w-full sm:w-[240px]" aria-label="Choose directory email template"><SelectValue placeholder="Preview a directory email" /></SelectTrigger>
           <SelectContent>{sequences.map(sequence => <SelectItem key={sequence.id} value={sequence.id}>{sequence.subject || "Directory step 1"}</SelectItem>)}</SelectContent>
         </Select>
         <Button size="sm" variant="outline" disabled={!previewSequenceId} onClick={() => setPreviewOpen(true)}>Render preview</Button>
-        {previewOpen && <div className="basis-full rounded-md border bg-background p-3 text-sm">
+        {previewOpen && <div className="basis-full rounded-md border-2 border-slate-400 bg-background p-3 text-sm dark:border-slate-600">
           {previewQuery.isLoading ? <p className="text-muted-foreground">Rendering with the current approved-name rules…</p> : previewQuery.isError ? <p className="text-destructive">{(previewQuery.error as Error).message}</p> : previewQuery.data && <>
             <div className="flex flex-wrap gap-2 text-xs"><Badge variant="outline">{previewQuery.data.mode}</Badge><span className="text-muted-foreground">Source: {previewQuery.data.previewSource}</span></div>
             <p className="mt-2 font-medium">Subject: {previewQuery.data.subject}</p><p className="mt-1 text-xs text-muted-foreground">{previewQuery.data.salutation}</p>
@@ -186,8 +196,8 @@ export function OwnerNameReview({
         </div>}
       </div>}
       {confirmSearch && estimate && <div className="mt-3 rounded-md border border-amber-300/70 bg-amber-50 p-3 text-sm text-amber-950">
-        <p className="font-semibold">Confirm paid owner lookup</p>
-        <p className="mt-1 text-xs leading-5">Up to {estimate.maxProviderCalls} provider call and {estimate.maxPages} page fetch{estimate.maxPages === 1 ? "" : "es"} for this salon. {estimate.remainingCredits} credits remain{estimate.reason ? ` · ${estimate.reason}` : ""}.</p>
+        <p className="font-semibold">Confirm owner lookup</p>
+        <p className="mt-1 text-xs leading-5">Checks known business pages first. Up to {estimate.maxProviderCalls} provider call and {estimate.maxPages} page fetch{estimate.maxPages === 1 ? "" : "es"} for this salon. {estimate.maxProviderCalls === 0 ? "Public-page lookup only; no paid request will be made." : "No automatic paid retries."} {estimate.remainingCredits} credits remain{estimate.reason ? ` · ${estimate.reason}` : ""}.</p>
         <div className="mt-2 flex gap-2"><Button size="sm" onClick={() => searchMutation.mutate()} disabled={!estimate.allowed || searchMutation.isPending}>{searchMutation.isPending ? "Searching…" : "Confirm & search"}</Button><Button size="sm" variant="outline" onClick={() => { setConfirmSearch(false); setEstimate(null); }}>Cancel</Button></div>
       </div>}
       {contactName && <p className="mt-2 text-[11px] text-muted-foreground">Current contact: {[contactName.firstName, contactName.lastName].filter(Boolean).join(" ") || "no personal name"} · {contactName.useBusinessNameForEmail === "Yes" ? "business-name salutation" : contactName.useBusinessNameForEmail === "No" ? "personal-name salutation" : "salutation preference unavailable"}</p>}

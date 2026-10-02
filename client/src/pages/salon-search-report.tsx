@@ -315,8 +315,9 @@ export default function SalonSearchReport() {
       });
       return response.json();
     },
-    onSuccess: () => {
-      toast({ title: "Owner searches complete", description: "Review source-backed candidates in each row." });
+    onSuccess: data => {
+      const failed = (data.results as { ownerName: { status: string } }[]).filter(result => result.ownerName.status === "failed").length;
+      toast({ title: failed ? "Some owner searches could not finish" : "Owner searches complete", description: failed ? `${failed} lookup${failed === 1 ? "" : "s"} did not finish. Review each row’s error before choosing to retry.` : "Review source-backed candidates in each row.", ...(failed ? { variant: "destructive" as const } : {}) });
       setOwnerSelectedIds([]); setOwnerEstimate(null); setConfirmOwnerBatch(false); refresh();
     },
     onError: (error: Error) => toast({ title: "Owner search failed", description: error.message, variant: "destructive" }),
@@ -475,7 +476,7 @@ export default function SalonSearchReport() {
                 const isImported = Boolean(row.importedContactId);
                 const isApproved = row.reviewStatus === "approved";
                 const categoryIsRestricted = inaccessible.has(categoryKey(row.category));
-                return <article key={row.id} className="overflow-hidden rounded-xl border bg-card transition-colors hover:border-primary/25">
+                return <article key={row.id} className="overflow-hidden rounded-xl border-2 border-slate-400 bg-card transition-colors hover:border-primary/60 dark:border-slate-600">
                   <div className="flex flex-col gap-4 p-4 sm:p-5 lg:flex-row lg:items-start lg:justify-between">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">

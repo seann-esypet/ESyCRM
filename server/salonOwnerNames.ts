@@ -18,6 +18,7 @@ const MAX_ROWS_PER_REQUEST = 5;
 const MAX_PAGES_PER_ROW = 4;
 const MAX_PAGE_BYTES = 1_500_000;
 const FETCH_TIMEOUT_MS = 9_000;
+const PROVIDER_TIMEOUT_MS = 30_000;
 const MAX_REDIRECTS = 3;
 const ownerSearchLocks = new Map<string, Promise<void>>();
 
@@ -580,6 +581,7 @@ export type SalonOwnerNameDependencies = {
   getUsageStatus: typeof getSerpUsageStatus;
   fetchPage: typeof fetchPublicPage;
   fetchProvider: typeof fetch;
+  providerTimeoutMs?: number;
 };
 
 let runtime: SalonOwnerNameDependencies = {
@@ -691,7 +693,8 @@ function hasContradictoryLocation(row: SalonIdentity, text: string): boolean {
 function sourceKindForPath(path: string, homepage = false, organic = false): string {
   if (organic) return "organic_page";
   if (homepage) return "website_homepage";
-  return /team|staff|meet/i.test(path) ? "website_team" : "website_about";
+  if (/team|staff|meet/i.test(path)) return "website_team";
+  return /about|owner|our-story/i.test(path) ? "website_about" : "website_page";
 }
 
 function mergeCandidates(target: SalonOwnerNameCandidate[], incoming: SalonOwnerNameCandidate[]): void {
@@ -771,6 +774,8 @@ async function organicSearch(row: SalonEnrichmentRow, allowProviderCall: boolean
   const reservationId = await runtime.storage.reserveSerpCall(monthYear, maxCallsPerHour);
   if (!reservationId) return { results: [], calls: 0, error: "SERP quota or hourly limit reached" };
   let requestAttempted = false;
+  const controller = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     const params = new URLSearchParams({
       engine: "google",
@@ -779,14 +784,23 @@ async function organicSearch(row: SalonEnrichmentRow, allowProviderCall: boolean
       api_key: apiKey,
     });
     requestAttempted = true;
-    const response = await runtime.fetchProvider(`https://serpapi.com/search?${params}`, {
-      signal: AbortSignal.timeout(12_000),
-    });
-    if (!response.ok) throw new Error(`SerpAPI returned HTTP ${response.status}`);
-    const payload = await response.json() as {
-      error?: string;
-      organic_results?: OrganicResult[];
+    // Cover both response headers and body parsing with one bounded deadline.
+    // No automatic retry: a timed-out initiated request may still be billed.
+    const request = async () => {
+      const response = await runtime.fetchProvider(`https://serpapi.com/search?${params}`, {
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new Error(`SerpAPI returned HTTP ${response.status}`);
+      return response.json() as Promise<{ error?: string; organic_results?: OrganicResult[] }>;
     };
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timeout = setTimeout(() => {
+        const error = new DOMException("Owner search provider timed out", "TimeoutError");
+        reject(error);
+        controller.abort(error);
+      }, runtime.providerTimeoutMs ?? PROVIDER_TIMEOUT_MS);
+    });
+    const payload = await Promise.race([request(), deadline]);
     if (payload.error) throw new Error(`SerpAPI: ${String(payload.error).slice(0, 240)}`);
     const results = Array.isArray(payload.organic_results)
       ? payload.organic_results.slice(0, 10).filter(item => item && typeof item === "object")
@@ -804,8 +818,13 @@ async function organicSearch(row: SalonEnrichmentRow, allowProviderCall: boolean
     return {
       results: [],
       calls: requestAttempted ? 1 : 0,
-      error: error instanceof Error ? error.message : "Organic owner search failed",
+      error: controller.signal.aborted || (error instanceof Error &&
+        (/timeout|timed out/i.test(error.message) || ["TimeoutError", "AbortError"].includes(error.name)))
+        ? "The owner-search provider did not respond within the time limit. Your email review is unchanged. You can retry later; a retry may use another lookup credit."
+        : error instanceof Error ? error.message : "Organic owner search failed",
     };
+  } finally {
+    if (timeout) clearTimeout(timeout);
   }
 }
 
@@ -863,6 +882,28 @@ async function inspectPage(
   }
 }
 
+export function ownerLookupWebsiteUrl(row: SalonEnrichmentRow): string | null {
+  if (row.websiteUrl?.trim()) {
+    return /^https?:\/\//i.test(row.websiteUrl) ? row.websiteUrl : `https://${row.websiteUrl}`;
+  }
+  // Reviewed report rows deliberately have websiteUrl=null. Only a matching,
+  // first-party email source may seed a free website inspection. Directory and
+  // social sources must not be mistaken for salon-owned websites.
+  const sourceData = row.sourceData as Record<string, unknown> | null;
+  const evidence = row.evidence as Record<string, unknown> | null;
+  const email = evidence?.email as Record<string, unknown> | undefined;
+  if (sourceData?.Outcome !== "verified_first_party_email" || !row.email ||
+      typeof email?.value !== "string" ||
+      email.value.trim().toLowerCase() !== row.email.trim().toLowerCase() ||
+      email.purpose !== "general" || typeof email.sourceUrl !== "string") return null;
+  try {
+    const url = new URL(email.sourceUrl);
+    return url.protocol === "https:" && safeOrganicPage(url.href) ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
 async function performLookup(
   row: SalonEnrichmentRow,
   allowProviderCall: boolean,
@@ -891,9 +932,10 @@ async function performLookup(
   let homepage: { html: string; url: string; matched: boolean } | null = null;
 
   // Existing matched business site gets first priority, before paid search.
-  if (row.websiteUrl && safeOrganicPage(/^https?:\/\//i.test(row.websiteUrl) ? row.websiteUrl : `https://${row.websiteUrl}`)) {
-    const baseUrl = /^https?:\/\//i.test(row.websiteUrl) ? row.websiteUrl : `https://${row.websiteUrl}`;
-    homepage = await inspectPage(row, baseUrl, candidates, pages, errors, true);
+  const websiteUrl = ownerLookupWebsiteUrl(row);
+  if (websiteUrl && safeOrganicPage(websiteUrl)) {
+    const baseUrl = websiteUrl;
+    homepage = await inspectPage(row, baseUrl, candidates, pages, errors, new URL(baseUrl).pathname === "/");
     if (homepage && pages.attempted < MAX_PAGES_PER_ROW &&
         !candidates.some(candidate => candidate.roleConfirmed && candidate.businessMatched)) {
       const base = new URL(homepage.url);
@@ -1078,8 +1120,10 @@ export async function estimateSalonOwnerNameSearch(rows: SalonEnrichmentRow[]): 
   const remainingCredits = Math.min(monthlyRemaining, hourlyRemaining);
   const uncachedCount = misses.filter(Boolean).length;
   const maxProviderCalls = keyConfigured ? Math.min(uncachedCount, remainingCredits, eligibleRows.length) : 0;
-  const hasWebsite = eligibleRows.some(row => !!row.websiteUrl &&
-    safeOrganicPage(/^https?:\/\//i.test(row.websiteUrl) ? row.websiteUrl : `https://${row.websiteUrl}`));
+  const hasWebsite = eligibleRows.some(row => {
+    const url = ownerLookupWebsiteUrl(row);
+    return !!url && safeOrganicPage(url);
+  });
   const allowed = !!(uncachedCount === 0 || maxProviderCalls > 0 || hasWebsite);
   const reason = allowed
     ? undefined

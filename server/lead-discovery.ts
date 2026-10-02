@@ -1,6 +1,7 @@
 import { storage } from "./storage";
 import type { LeadDiscoveryJob, LeadDiscoveryResult, InsertLeadDiscoveryResult, SerpUsage, LeadDiscoveryConfig } from "@shared/schema";
 import { parseAddressString } from "@shared/utils";
+import { fetchPublicPage, type SalonFetchRuntime } from "./salonPublicFetch";
 
 // New reduced query set for budget management
 const DEFAULT_QUERIES = [
@@ -312,32 +313,185 @@ export async function searchWithSerpApi(
   }
 }
 
-async function fetchPage(url: string): Promise<string | null> {
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    const response = await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      },
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
-    if (!response.ok) return null;
-    return await response.text();
-  } catch {
-    return null;
-  }
+const SALON_CRAWL_MAX_PAGES = 8;
+const SALON_CRAWL_MAX_REQUESTS = 12;
+const SALON_CRAWL_TOTAL_MS = 25_000;
+const BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+const PLAIN_UA = "curl/8.14.1";
+
+function siteHost(hostname: string): string {
+  return hostname.toLowerCase().replace(/^www\./, "");
 }
 
-export async function crawlWebsite(url: string): Promise<{
+function sameSite(left: URL, right: URL): boolean {
+  return siteHost(left.hostname) === siteHost(right.hostname);
+}
+
+function siteVariants(url: URL): URL[] {
+  const hosts = [url.hostname, url.hostname.startsWith("www.") ? url.hostname.slice(4) : `www.${url.hostname}`];
+  const variants: URL[] = [];
+  for (const protocol of ["https:", "http:"]) {
+    for (const hostname of hosts) {
+      const variant = new URL(url.href);
+      variant.protocol = protocol;
+      variant.hostname = hostname;
+      variant.hash = "";
+      if (!variants.some(existing => existing.href === variant.href)) variants.push(variant);
+    }
+  }
+  return variants;
+}
+
+function decodeHtml(value: string): string {
+  return value.replace(/&amp;/gi, "&")
+    .replace(/(&#x([0-9a-f]+);?)/gi, (entity: string, _full: string, code: string) => {
+      const point = parseInt(code, 16);
+      return Number.isInteger(point) && point >= 0 && point <= 0x10ffff && !(point >= 0xd800 && point <= 0xdfff)
+        ? String.fromCodePoint(point) : entity;
+    })
+    .replace(/(&#(\d+);?)/g, (entity: string, _full: string, code: string) => {
+      const point = Number(code);
+      return Number.isInteger(point) && point >= 0 && point <= 0x10ffff && !(point >= 0xd800 && point <= 0xdfff)
+        ? String.fromCodePoint(point) : entity;
+    })
+    .replace(/&commat;/gi, "@").replace(/&period;/gi, ".")
+    .replace(/&quot;/gi, '"').replace(/&#39;|&apos;/gi, "'")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\s*\[at\]\s*|\s*\(at\)\s*/gi, "@")
+    .replace(/\s*\[dot\]\s*|\s*\(dot\)\s*/gi, ".");
+}
+
+function extractMailtoEmails(html: string): string[] {
+  const emailRe = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+  const emails: string[] = [];
+  const decoded = decodeHtml(html);
+  for (const match of Array.from(decoded.matchAll(/\bhref\s*=\s*["']mailto:([^"'?#]*)/gi))) {
+    let addressList = match[1];
+    try { addressList = decodeURIComponent(addressList); } catch {}
+    emails.push(...(addressList.match(emailRe) ?? []));
+  }
+  return emails;
+}
+
+function decodeCloudflareEmails(html: string): string[] {
+  const emails: string[] = [];
+  for (const match of Array.from(html.matchAll(/data-cfemail=["']([a-f\d]+)["']/gi))) {
+    const encoded = match[1];
+    if (encoded.length < 4 || encoded.length % 2) continue;
+    const key = parseInt(encoded.slice(0, 2), 16);
+    let decoded = "";
+    for (let index = 2; index < encoded.length; index += 2) {
+      decoded += String.fromCharCode(parseInt(encoded.slice(index, index + 2), 16) ^ key);
+    }
+    emails.push(decoded);
+  }
+  return emails;
+}
+
+function emailCandidates(html: string): { visible: string[]; metadata: string[] } {
+  const noise = ["example.com", "sentry.io", "w3.org", "schema.org", "cloudflare.com", "wixpress.com"];
+  const emailRe = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+  const valid = (values: string[]) => Array.from(new Set(values.map(email => email.trim().toLowerCase())))
+    .filter(email => !noise.some(domain => email.endsWith(`@${domain}`) || email.endsWith(`.${domain}`)) &&
+      !/\.(?:png|jpe?g|gif|svg)$/i.test(email));
+  const decoded = decodeHtml(html);
+  const visibleHtml = decoded.replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, " ")
+    .replace(/<head\b[^>]*>[\s\S]*?<\/head\s*>/gi, " ")
+    .replace(/<meta\b[^>]*>/gi, " ");
+  const visible: string[] = (visibleHtml.match(emailRe) || []) as string[];
+  visible.push(...extractMailtoEmails(visibleHtml));
+  visible.push(...decodeCloudflareEmails(visibleHtml));
+  const metadataText = [
+    ...Array.from(decoded.matchAll(/<meta\b[^>]*>/gi), m => m[0]),
+    ...Array.from(decoded.matchAll(/["'](?:email|emailaddress|contactemail)["']\s*:\s*["']([^"']+@[^"']+)["']/gi), m => m[1]),
+  ];
+  const metadata = [
+    ...(metadataText.join(" ").match(new RegExp(emailRe.source, "gi")) ?? []),
+    ...extractMailtoEmails(decoded),
+  ];
+  return { visible: valid(visible), metadata: valid(metadata).filter(email => !valid(visible).includes(email)) };
+}
+
+function emailSourceType(html: string, email: string): "visible" | "mailto" | "cloudflare" {
+  const visibleHtml = decodeHtml(html)
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, " ")
+    .replace(/<head\b[^>]*>[\s\S]*?<\/head\s*>/gi, " ")
+    .replace(/<meta\b[^>]*>/gi, " ");
+  if (extractMailtoEmails(visibleHtml).some(candidate => candidate.toLowerCase() === email.toLowerCase())) return "mailto";
+  if (decodeCloudflareEmails(visibleHtml).some(candidate => candidate.toLowerCase() === email.toLowerCase())) return "cloudflare";
+  return "visible";
+}
+
+function isRestrictedSalonEmail(email: string, html: string): boolean {
+  const [local, domain] = email.split("@");
+  const vendorDomains = ["wix.com", "wixpress.com", "squarespace.com", "wordpress.com", "weebly.com", "godaddy.com", "google.com"];
+  if (vendorDomains.some(vendor => domain === vendor || domain.endsWith(`.${vendor}`)) &&
+      /^(support|help|billing|abuse|noreply|no-reply|contact)$/i.test(local)) return true;
+  let decodedMarkup = decodeHtml(html);
+  for (const match of Array.from(html.matchAll(/\bhref\s*=\s*["']mailto:([^"'?#]*)/gi))) {
+    let addressList = decodeHtml(match[1]);
+    try { addressList = decodeURIComponent(addressList); } catch {}
+    const addresses = addressList.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) ?? [];
+    if (addresses.length) decodedMarkup = decodedMarkup.replace(match[0], `${match[0]} ${addresses.join(" ")}`);
+  }
+  for (const match of Array.from(html.matchAll(/data-cfemail=["']([a-f\d]+)["']/gi))) {
+    const decodedAddress = decodeCloudflareEmails(match[0])[0];
+    if (decodedAddress) decodedMarkup = decodedMarkup.replace(match[0], `${match[0]} ${decodedAddress}`);
+  }
+  const searchable = decodedMarkup.toLowerCase();
+  const index = searchable.indexOf(email.toLowerCase());
+  let context = "";
+  if (index >= 0) {
+    const boundaries = Array.from(searchable.matchAll(/<\/?(?:p|div|li|td|section|article|address|blockquote|h[1-6])\b[^>]*>/gi));
+    const before = boundaries.filter(match => (match.index ?? -1) <= index).pop();
+    const after = boundaries.find(match => (match.index ?? -1) > index);
+    if (before || after) {
+      const start = before ? (before.index ?? 0) + before[0].length : 0;
+      const end = after ? after.index ?? searchable.length : searchable.length;
+      context = searchable.slice(start, end);
+    } else {
+      context = searchable.slice(Math.max(0, index - 80), index + email.length + 80);
+    }
+  }
+  return /\b(?:vaccination|vaccine|rabies|immunization)\b/i.test(context) &&
+    /\b(?:records?|proof|paperwork|submit|send|upload)\b/i.test(context);
+}
+
+function contactLinks(html: string, base: URL): URL[] {
+  const links: URL[] = [];
+  for (const match of Array.from(html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi))) {
+    const href = match[1].match(/\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+    if (!href) continue;
+    const value = decodeHtml(href[1] ?? href[2] ?? href[3] ?? "").trim();
+    const label = decodeHtml(match[2].replace(/<[^>]*>/g, " "));
+    const context = `${value} ${label}`;
+    if (!/\b(contact|about|reach|inquir|message|team|staff)\b/i.test(context) ||
+        /\b(book(?:ing)?|appointment|schedule|reservation)\b/i.test(context)) continue;
+    try {
+      const target = new URL(value, base);
+      if (!["http:", "https:"].includes(target.protocol) || !sameSite(target, base) || target.username || target.password) continue;
+      target.hash = "";
+      if (!links.some(link => link.href === target.href)) links.push(target);
+    } catch {}
+  }
+  return links;
+}
+
+export async function crawlWebsite(url: string, options: { runtime?: SalonFetchRuntime } = {}): Promise<{
   html: string;
   bookingUrl?: string;
   softwareName?: string;
   email?: string;
+  emailSourceUrl?: string;
+  emailSourceType?: "visible" | "mailto" | "cloudflare";
+  metadataEmail?: string;
+  metadataEmailSourceUrl?: string;
   phone?: string;
   contactFormUrl?: string;
+  resolvedWebsiteUrl?: string;
+  partialFailures: string[];
   ownerName?: string;
   jobTitle?: string;
 }> {
@@ -345,45 +499,136 @@ export async function crawlWebsite(url: string): Promise<{
     let base: URL;
     try { base = new URL(url.startsWith("http") ? url : `https://${url}`); }
     catch { throw new Error(`Invalid URL: ${url}`); }
+    if (!["http:", "https:"].includes(base.protocol) || base.username || base.password) {
+      throw new Error("Only public HTTP(S) pages can be fetched");
+    }
+    const host = base.hostname.toLowerCase().replace(/^www\./, "");
+    const socialHosts = ["facebook.com", "instagram.com", "twitter.com", "x.com", "linkedin.com", "yelp.com", "tiktok.com"];
+    const bookingHosts = Object.keys(BOOKING_SOFTWARE_PATTERNS).filter(domain => domain !== "wix.com");
+    if ([...socialHosts, ...bookingHosts].some(domain => host === domain || host.endsWith(`.${domain}`))) {
+      throw new Error("Submitted URL is a booking or social platform, not a salon website");
+    }
+    base.hash = "";
+    const deadline = Date.now() + SALON_CRAWL_TOTAL_MS;
+    const requestBudget = { used: 0, max: SALON_CRAWL_MAX_REQUESTS };
+    const partialFailures: string[] = [];
+    const pages: Array<{ url: string; html: string }> = [];
+    const visited = new Set<string>();
+    const fetch = async (target: URL): Promise<void> => {
+      if (pages.length >= SALON_CRAWL_MAX_PAGES || Date.now() >= deadline) return;
+      const key = target.href;
+      if (visited.has(key) || requestBudget.used >= requestBudget.max) return;
+      visited.add(key);
+      let error: unknown;
+      for (const userAgent of [BROWSER_UA, PLAIN_UA]) {
+        if (requestBudget.used >= requestBudget.max || Date.now() >= deadline) break;
+        try {
+          const response = await fetchPublicPage(key, {
+            timeoutMs: Math.max(250, Math.min(5_000, deadline - Date.now())),
+            deadlineAt: deadline,
+            maxRedirects: 2,
+            userAgent,
+            runtime: options.runtime,
+            requestBudget,
+            allowedHosts: [base.hostname, base.hostname.replace(/^www\./, ""), `www.${base.hostname.replace(/^www\./, "")}`],
+          });
+          pages.push({ url: response.finalUrl, html: response.body });
+          visited.add(response.finalUrl);
+          return;
+        } catch (caught) {
+          error = caught;
+        }
+      }
+      const detail = error instanceof Error ? error.message : "Request failed";
+      partialFailures.push(`${key}: ${detail}`);
+    };
 
-    const html = await fetchPage(base.href);
-    if (!html) throw new Error(`HTTP error fetching ${base.href}`);
+    let homepage: { url: string; html: string } | undefined;
+    for (const variant of siteVariants(base)) {
+      await fetch(variant);
+      if (pages.length) {
+        homepage = pages[0];
+        break;
+      }
+      if (requestBudget.used >= requestBudget.max || Date.now() >= deadline) break;
+    }
+    if (!homepage) {
+      throw new Error(`Unable to fetch website after bounded protocol/host retries: ${partialFailures.join("; ") || "request or time limit reached"}`);
+    }
+    const resolvedBase = new URL(homepage.url);
+    const html = homepage.html;
+    const result: Awaited<ReturnType<typeof crawlWebsite>> = {
+      html, resolvedWebsiteUrl: homepage.url, partialFailures,
+    };
 
-    const result: ReturnType<typeof crawlWebsite> extends Promise<infer T> ? T : never = { html };
-
-    const bookingInfo = detectBookingSoftware(html, url);
+    const bookingInfo = detectBookingSoftware(html, resolvedBase.href);
     if (bookingInfo) {
       result.bookingUrl = bookingInfo.url;
       result.softwareName = bookingInfo.software;
     }
 
-    // Scan homepage first
-    result.email = extractEmail(html) ?? undefined;
+    const firstCandidates = emailCandidates(html);
+    for (const email of firstCandidates.visible) {
+      if (isRestrictedSalonEmail(email, html)) continue;
+      result.email = email;
+      result.emailSourceUrl = homepage.url;
+      result.emailSourceType = emailSourceType(html, email);
+      break;
+    }
+    if (firstCandidates.metadata.length) {
+      result.metadataEmail = firstCandidates.metadata.find(email => !isRestrictedSalonEmail(email, html));
+      if (result.metadataEmail) result.metadataEmailSourceUrl = homepage.url;
+    }
     result.phone = extractPhone(html) ?? undefined;
-    result.contactFormUrl = await detectContactForm(html, base) ?? undefined;
-
-    // If email or phone still missing, scan common sub-pages in parallel
-    const subPaths = ["/contact", "/contact-us", "/about", "/about-us", "/reach-us", "/get-in-touch"];
-    const needsMore = !result.email || !result.phone;
-    if (needsMore) {
-      const subPages = await Promise.allSettled(
-        subPaths.map(path => fetchPage(`${base.origin}${path}`))
-      );
-      for (const settled of subPages) {
-        if (settled.status !== "fulfilled" || !settled.value) continue;
-        const subHtml = settled.value;
-        if (!result.email) {
-          const found = extractEmail(subHtml);
-          if (found) result.email = found;
-        }
-        if (!result.phone) {
-          const found = extractPhone(subHtml);
-          if (found) result.phone = found;
-        }
-        if (result.email && result.phone) break;
+    let formSource: string | undefined = hasPublicGeneralInquiryForm(html) ? homepage.url : undefined;
+    const discovered = contactLinks(html, resolvedBase);
+    discovered.sort((left, right) => {
+      const priority = (url: URL) => /\b(contact|inquir|reach|message)\b/i.test(url.href) ? 0 :
+        /\b(about|team|staff)\b/i.test(url.href) ? 1 : 2;
+      return priority(left) - priority(right);
+    });
+    const usual = ["/contact", "/contact-us", "/about", "/about-us", "/reach-us", "/get-in-touch"];
+    const pagesToVisit = discovered.flatMap(link => {
+      const slash = new URL(link.href);
+      slash.pathname = slash.pathname.replace(/\/+$/, "") || "/";
+      const withSlash = new URL(slash.href);
+      if (withSlash.pathname !== "/") withSlash.pathname += "/";
+      return [slash, withSlash];
+    });
+    if (!discovered.length || !result.email || !result.phone) {
+      for (const path of usual) {
+        pagesToVisit.push(new URL(path, resolvedBase.origin));
+        pagesToVisit.push(new URL(`${path}/`, resolvedBase.origin));
       }
     }
-
+    for (const target of pagesToVisit) {
+      if (result.email && result.phone && formSource) break;
+      if (pages.length >= SALON_CRAWL_MAX_PAGES || requestBudget.used >= requestBudget.max || Date.now() >= deadline) break;
+      const previousPageCount = pages.length;
+      await fetch(target);
+      const page = pages.length > previousPageCount ? pages.at(-1) : undefined;
+      if (!page || !sameSite(new URL(page.url), resolvedBase)) continue;
+      if (!result.email) {
+        const candidates = emailCandidates(page.html);
+        for (const email of candidates.visible) {
+          if (isRestrictedSalonEmail(email, page.html)) continue;
+          result.email = email;
+          result.emailSourceUrl = page.url;
+          result.emailSourceType = emailSourceType(page.html, email);
+          break;
+        }
+        if (!result.metadataEmail) {
+          result.metadataEmail = candidates.metadata.find(email => !isRestrictedSalonEmail(email, page.html));
+          if (result.metadataEmail) result.metadataEmailSourceUrl = page.url;
+        }
+      }
+      if (!result.phone) result.phone = extractPhone(page.html) ?? undefined;
+      if (!formSource && hasPublicGeneralInquiryForm(page.html)) formSource = page.url;
+    }
+    if (formSource) result.contactFormUrl = formSource;
+    if (pages.length >= SALON_CRAWL_MAX_PAGES || requestBudget.used >= requestBudget.max || Date.now() >= deadline) {
+      partialFailures.push("Crawl stopped at its page, request, or total-time bound");
+    }
     return result;
   } catch (error) {
     console.error(`Failed to crawl ${url}:`, error);
@@ -464,41 +709,6 @@ function detectBookingSoftware(html: string, baseUrl: string): { url: string; so
   return null;
 }
 
-function extractEmail(html: string): string | null {
-  const NOISE_DOMAINS = ["example.com", "sentry.io", "wixpress.com", "w3.org", "schema.org", "cloudflare.com"];
-  const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
-
-  function pickValid(matches: RegExpMatchArray | null): string | null {
-    if (!matches) return null;
-    const valid = matches.filter(e =>
-      NOISE_DOMAINS.every(d => !e.includes(d)) &&
-      !e.endsWith(".png") &&
-      !e.endsWith(".jpg") &&
-      !e.endsWith(".gif") &&
-      !e.endsWith(".svg")
-    );
-    return valid[0] || null;
-  }
-
-  // 1. Decode HTML entities that sites use to hide @ from scrapers (e.g. Wix: &#64;)
-  const decoded = html
-    .replace(/&#64;|&commat;/gi, "@")
-    .replace(/&#46;/gi, ".")
-    .replace(/&amp;/gi, "&");
-
-  const direct = pickValid(decoded.match(EMAIL_RE));
-  if (direct) return direct;
-
-  // 2. Handle text obfuscation patterns: [at], (at), " at ", [dot], (dot)
-  const deobfuscated = decoded
-    .replace(/\s*\[at\]\s*/gi, "@")
-    .replace(/\s*\(at\)\s*/gi, "@")
-    .replace(/\s*\[dot\]\s*/gi, ".")
-    .replace(/\s*\(dot\)\s*/gi, ".");
-
-  return pickValid(deobfuscated.match(EMAIL_RE));
-}
-
 function extractPhone(html: string): string | null {
   // Separators are REQUIRED between groups (not optional) so we don't accidentally
   // match 10-digit tracking IDs, Unix timestamps, or URL parameters.
@@ -516,44 +726,6 @@ function extractPhone(html: string): string | null {
   // Prefer matches that look like formatted phone numbers (have non-digit separators)
   const formatted = matches.find(m => /[().\s-]/.test(m));
   return formatted ?? matches[0];
-}
-
-async function detectContactForm(html: string, base: URL): Promise<string | null> {
-  if (hasPublicGeneralInquiryForm(html)) return base.href;
-  const links: string[] = [];
-  const decodeAttribute = (value: string) => value
-    .replace(/&amp;/gi, "&")
-    .replace(/&#(?:39|x27);/gi, "'")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#(\d+);/g, (_, code: string) => String.fromCharCode(Number(code)));
-
-  for (const match of Array.from(html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi))) {
-    const attributes = match[1];
-    const hrefMatch = attributes.match(/\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
-    if (!hrefMatch) continue;
-    const href = decodeAttribute(hrefMatch[1] ?? hrefMatch[2] ?? hrefMatch[3] ?? "").trim();
-    const linkText = `${match[2].replace(/<[^>]*>/g, " ")} ${attributes}`.toLowerCase();
-    if (!/\b(contact|contact-us|get-in-touch|reach-us|inquir(?:y|ies)|message-us)\b/i.test(`${href} ${linkText}`) ||
-        /\b(book(?:ing)?|appointment|schedule|reservation)\b/i.test(`${href} ${linkText}`)) continue;
-
-    try {
-      const target = new URL(href, base);
-      if ((target.protocol !== "http:" && target.protocol !== "https:") ||
-          target.origin !== base.origin) continue;
-      target.hash = "";
-      const normalizedUrl = target.href;
-      if (!links.includes(normalizedUrl)) links.push(normalizedUrl);
-    } catch {
-      // Ignore malformed and unsupported contact links.
-    }
-  }
-
-  // Avoid unbounded crawling on homepages with many contact-related links.
-  for (const contactUrl of links.slice(0, 8)) {
-    const page = await fetchPage(contactUrl);
-    if (page && hasPublicGeneralInquiryForm(page)) return contactUrl;
-  }
-  return null;
 }
 
 function hasPublicGeneralInquiryForm(html: string): boolean {
@@ -1000,7 +1172,7 @@ export async function runNationalSearchJob(nationalJobId: string, userId: string
             if (businessData.websiteUrl) {
               try {
                 crawlData = await crawlWebsite(businessData.websiteUrl);
-                crawlStatus = "completed";
+                crawlStatus = crawlData.partialFailures.length ? "partial" : "completed";
               } catch (err) {
                 crawlStatus = "failed";
                 crawlError = err instanceof Error ? err.message : "Unknown error";
@@ -1040,13 +1212,20 @@ export async function runNationalSearchJob(nationalJobId: string, userId: string
               lastName: crawlData?.ownerName?.split(" ").slice(1).join(" ") || null,
               jobTitle: crawlData?.jobTitle || null,
               hasWebsite: businessData.websiteUrl ? "Yes" : "No",
-              websiteUrl: businessData.websiteUrl || null,
+              websiteUrl: crawlData?.resolvedWebsiteUrl || businessData.websiteUrl || null,
               bookingSoftwareUrl: crawlData?.bookingUrl || null,
               currentSoftware,
               usesSoftware,
               contactRequestFormUrl: crawlData?.contactFormUrl || null,
               leadSource: "Google Maps",
-              notes: crawlError ? `Crawl failed: ${crawlError}` : null,
+              notes: (() => {
+                const notes: string[] = [];
+                if (crawlError) notes.push(`Crawl failed: ${crawlError}`);
+                if (crawlData?.email && crawlData.emailSourceUrl) notes.push(`Email source: ${crawlData.emailSourceUrl} (${crawlData.emailSourceType || "visible"})`);
+                if (crawlData?.metadataEmail && crawlData.metadataEmailSourceUrl) notes.push(`Metadata-only email candidate (review only): ${crawlData.metadataEmail} — ${crawlData.metadataEmailSourceUrl}`);
+                if (crawlData?.partialFailures.length) notes.push(`Partial crawl failures: ${crawlData.partialFailures.join("; ")}`);
+                return notes.length ? notes.join(" | ") : null;
+              })(),
               zipCode: zip,
               searchQuery: query,
               isDuplicate: "false",
@@ -1227,7 +1406,7 @@ export async function runLeadDiscoveryJob(jobId: string, userId: string): Promis
               if (businessData.websiteUrl) {
                 try {
                   crawlData = await crawlWebsite(businessData.websiteUrl);
-                  crawlStatus = "completed";
+                  crawlStatus = crawlData.partialFailures.length ? "partial" : "completed";
                 } catch (err) {
                   crawlStatus = "failed";
                   crawlError = err instanceof Error ? err.message : "Unknown error";
@@ -1290,7 +1469,7 @@ export async function runLeadDiscoveryJob(jobId: string, userId: string): Promis
                 lastName: crawlData?.ownerName?.split(" ").slice(1).join(" ") || null,
                 jobTitle: crawlData?.jobTitle || null,
                 hasWebsite: businessData.websiteUrl ? "Yes" : "No",
-                websiteUrl: businessData.websiteUrl || null,
+                websiteUrl: crawlData?.resolvedWebsiteUrl || businessData.websiteUrl || null,
                 bookingSoftwareUrl: crawlData?.bookingUrl || null,
                 currentSoftware,
                 usesSoftware,
@@ -1302,6 +1481,11 @@ export async function runLeadDiscoveryJob(jobId: string, userId: string): Promis
                   else if (classificationNote) parts.push(classificationNote);
                   else if (crawlData?.softwareName === "Unknown") parts.push("Booking link detected but software unclear");
                   if (gapFillEmail && gapFillEmailSource) parts.push(`Email found via ${gapFillEmailSource}`);
+                  if (crawlData?.email && crawlData.emailSourceUrl) parts.push(`Email source: ${crawlData.emailSourceUrl} (${crawlData.emailSourceType || "visible"})`);
+                  if (crawlData?.metadataEmail && crawlData.metadataEmailSourceUrl) {
+                    parts.push(`Metadata-only email candidate (review only): ${crawlData.metadataEmail} — ${crawlData.metadataEmailSourceUrl}`);
+                  }
+                  if (crawlData?.partialFailures.length) parts.push(`Partial crawl failures: ${crawlData.partialFailures.join("; ")}`);
                   if (gapFillPhone && gapFillPhoneSource) parts.push(`Phone found via ${gapFillPhoneSource}`);
                   return parts.length ? parts.join(" | ") : null;
                 })(),

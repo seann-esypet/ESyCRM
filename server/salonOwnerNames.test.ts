@@ -10,6 +10,7 @@ import {
   extractSalonOwnerSummaryCandidates,
   isSalonOwnerNameEligible,
   lookupSalonOwnerName,
+  ownerLookupWebsiteUrl,
   salonOwnerNameLimits,
   stripHtml,
   validatePublicHttpUrl,
@@ -231,6 +232,7 @@ function mockDependencies(
     cached?: Array<{ title?: string; link?: string; snippet?: string }>;
     fetchPage?: SalonOwnerNameDependencies["fetchPage"];
     fetchProvider?: SalonOwnerNameDependencies["fetchProvider"];
+    providerTimeoutMs?: number;
     reserve?: string | null;
     usage?: unknown;
     complete?: boolean;
@@ -293,6 +295,7 @@ function mockDependencies(
       if (options.fetchProvider) return options.fetchProvider(...args);
       throw new Error("mock provider timeout");
     },
+    providerTimeoutMs: options.providerTimeoutMs,
   });
   return { observed, restore };
 }
@@ -323,6 +326,81 @@ test("real lookup orchestration finds first-name-only owner on long official pag
     assert.equal(deps.observed.complete, 1);
   } finally {
     deps.restore();
+  }
+});
+
+test("reviewed first-party email pages seed free owner lookup even without a saved website", async () => {
+  const row = orchestrationRow({
+    websiteUrl: null,
+    email: "hello@example.test",
+    sourceData: { category: "Pet Grooming", Outcome: "verified_first_party_email" },
+    evidence: { email: { value: "hello@example.test", purpose: "general", sourceUrl: "https://example.test/contact/" } },
+  });
+  const seen: string[] = [];
+  const deps = mockDependencies(row, {
+    usage: { config: { maxSerpCallsPerHour: 0 }, usage: { monthlyQuota: 0, usedCredits: 0, hardStopAt: 0 } },
+    fetchPage: async url => {
+      seen.push(url);
+      return { url, html: "<p>Curly Tails, 5651 Tourist Dr, North Richland Hills, TX 76117.</p><p>Owner: Jane Smith.</p>" };
+    },
+  });
+  try {
+    const estimate = await estimateSalonOwnerNameSearch([row]);
+    assert.equal(estimate.allowed, true);
+    assert.equal(estimate.maxProviderCalls, 0);
+    const result = await lookupSalonOwnerName(row.id, row.userId, false);
+    assert.deepEqual(seen, ["https://example.test/contact/"]);
+    assert.equal(result?.candidates[0]?.firstName, "Jane");
+    assert.equal(result?.candidates[0]?.roleConfirmed, true);
+    assert.equal(result?.candidates[0]?.sources[0]?.kind, "website_page");
+    assert.equal(result?.providerCalls, 0);
+    assert.equal(deps.observed.cacheReads, 1);
+    assert.equal(deps.observed.providerAttempts, 0);
+  } finally { deps.restore(); }
+});
+
+test("directory, changed email, social and purpose-restricted evidence never seed a salon-owned page", () => {
+  const row = orchestrationRow({
+    websiteUrl: null,
+    email: "hello@example.test",
+    sourceData: { category: "Pet Grooming", Outcome: "verified_first_party_email" },
+    evidence: { email: { value: "hello@example.test", purpose: "general", sourceUrl: "https://example.test/contact/" } },
+  });
+  assert.equal(ownerLookupWebsiteUrl(row), "https://example.test/contact/");
+  assert.equal(ownerLookupWebsiteUrl({ ...row, sourceData: { Outcome: "verified_independent_directory_email" } }), null);
+  assert.equal(ownerLookupWebsiteUrl({ ...row, email: "changed@example.test" }), null);
+  assert.equal(ownerLookupWebsiteUrl({ ...row, evidence: { email: { value: row.email, purpose: "vaccination_records", sourceUrl: "https://example.test/contact/" } } }), null);
+  assert.equal(ownerLookupWebsiteUrl({ ...row, evidence: { email: { value: row.email, purpose: "general", sourceUrl: "https://www.facebook.com/example" } } }), null);
+});
+
+test("provider body timeout is bounded, clear and counted once without automatic retry", async () => {
+  const row = orchestrationRow({ websiteUrl: null });
+  const oldKey = process.env.SERPAPI_API_KEY;
+  process.env.SERPAPI_API_KEY = "test-only-key";
+  let signal: AbortSignal | undefined;
+  const deps = mockDependencies(row, {
+    providerTimeoutMs: 20,
+    fetchProvider: async (_url, init) => {
+      signal = init?.signal || undefined;
+      const response = new Response("{}", { status: 200 });
+      Object.defineProperty(response, "json", { value: () => new Promise(() => {}) });
+      return response;
+    },
+  });
+  try {
+    const result = await lookupSalonOwnerName(row.id, row.userId, true);
+    assert.equal(result?.status, "failed");
+    assert.match(result?.error || "", /provider did not respond within the time limit/);
+    assert.match(result?.error || "", /email review is unchanged/);
+    assert.equal(signal?.aborted, true);
+    assert.equal(result?.providerCalls, 1);
+    assert.equal(deps.observed.providerAttempts, 1);
+    assert.equal(deps.observed.reservations, 1);
+    assert.equal(deps.observed.releases, 0);
+  } finally {
+    deps.restore();
+    if (oldKey === undefined) delete process.env.SERPAPI_API_KEY;
+    else process.env.SERPAPI_API_KEY = oldKey;
   }
 });
 

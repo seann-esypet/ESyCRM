@@ -1,5 +1,6 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
+import type { SalonFetchRuntime } from "./salonPublicFetch";
 import salonSearchPilot from "../reports/salon-next-100-summary.json" with { type: "json" };
 import { buildGoogleMapsParams, crawlWebsite, parseGoogleMapsResults } from "./lead-discovery";
 import { strongMatch } from "./salonEnrichment";
@@ -15,6 +16,20 @@ const row = {
   state: "TX",
   zipCode: "78701",
 };
+
+function mockedSalonRuntime(): SalonFetchRuntime {
+  return {
+    resolve: async () => [{ address: "8.8.8.8", family: 4 }],
+    request: async url => {
+      const response = await globalThis.fetch(url.href, { redirect: "manual" });
+      return {
+        status: response.status,
+        headers: { ...Object.fromEntries(response.headers.entries()), "content-type": "text/html" },
+        body: await response.text(),
+      };
+    },
+  };
+}
 
 test("Place ID lookup uses the exact ID without a broad search query", () => {
   const params = buildGoogleMapsParams("test-key", '"Paws Grooming"', "78701", row.placeId);
@@ -404,7 +419,7 @@ test("a site-builder image beside grooming copy is not a booking link", async ()
       <p>felixdoggrooming@gmail.com</p></body>`, {
       headers: { "content-type": "text/html" },
     });
-    const result = await crawlWebsite("https://sites.google.com/view/felixspetgrooming/home");
+    const result = await crawlWebsite("https://sites.google.com/view/felixspetgrooming/home", { runtime: mockedSalonRuntime() });
     assert.equal(result.email, "felixdoggrooming@gmail.com");
     assert.equal(result.bookingUrl, undefined);
   } finally {
@@ -419,7 +434,7 @@ test("a Google Sites redirect to a salon booking page keeps the destination", as
     globalThis.fetch = async () => new Response(`<body><h1>Felix's Pet Grooming</h1>
       <a href="https://www.google.com/url?q=https%3A%2F%2Fbook.cuddlesapp.com%2Ffelix-s-pet-grooming&amp;sa=D">Book now</a>
       <p>felixdoggrooming@gmail.com — 323-585-2670</p></body>`);
-    const result = await crawlWebsite("https://sites.google.com/view/felixspetgrooming/home");
+    const result = await crawlWebsite("https://sites.google.com/view/felixspetgrooming/home", { runtime: mockedSalonRuntime() });
     assert.equal(result.bookingUrl, destination);
     assert.equal(result.softwareName, "CuddlesApp");
     assert.equal(bookingPlatformForUrl(destination), "CuddlesApp");
@@ -442,9 +457,9 @@ test("a contact link without a message form is not a contact-form candidate", as
       }
       return new Response(`<h1>Contact us</h1><p>Call us at (512) 555-0134</p>`);
     };
-    const result = await crawlWebsite("https://paws.example/");
+    const result = await crawlWebsite("https://paws.example/", { runtime: mockedSalonRuntime() });
     assert.equal(result.contactFormUrl, undefined);
-    assert.deepEqual(visited, ["https://paws.example/", "https://paws.example/contact"]);
+    assert.deepEqual(visited, ["https://paws.example/", "https://paws.example/contact", "https://paws.example/contact/"]);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -460,7 +475,7 @@ test("a same-origin contact page with a message field and submit is a candidate"
           <label for="message">Message</label><textarea id="message" name="message"></textarea>
           <button type="submit">Send message</button>
         </form>`);
-    const result = await crawlWebsite("https://paws.example/");
+    const result = await crawlWebsite("https://paws.example/", { runtime: mockedSalonRuntime() });
     assert.equal(result.contactFormUrl, "https://paws.example/contact-us");
   } finally {
     globalThis.fetch = originalFetch;
@@ -473,7 +488,7 @@ test("a general inquiry form on the salon homepage is a candidate", async () => 
     globalThis.fetch = async () => new Response(`<h1>Welcome to Paws Grooming</h1>
       <form><label>Your message <textarea name="message"></textarea></label>
       <button type="submit">Send</button></form>`);
-    const result = await crawlWebsite("https://paws.example/");
+    const result = await crawlWebsite("https://paws.example/", { runtime: mockedSalonRuntime() });
     assert.equal(result.contactFormUrl, "https://paws.example/");
   } finally {
     globalThis.fetch = originalFetch;
@@ -491,7 +506,7 @@ test("an appointment request form with a message field is not a general inquiry 
           <textarea name="message" placeholder="Notes for your appointment"></textarea>
           <button type="submit">Request appointment</button>
         </form>`);
-    const result = await crawlWebsite("https://paws.example/");
+    const result = await crawlWebsite("https://paws.example/", { runtime: mockedSalonRuntime() });
     assert.equal(result.contactFormUrl, undefined);
   } finally {
     globalThis.fetch = originalFetch;
