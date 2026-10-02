@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { InsertSalonEnrichmentRow } from "@shared/schema";
 import type { OwnerNameResult } from "@shared/salonOwnerName";
-import { importableSalonEmail, importableSalonEmailCandidate } from "./bookingPageEmail";
+import { bookingPlatformForUrl, importableSalonEmail, importableSalonEmailCandidate } from "./bookingPageEmail";
 
 const reviewedSalonSchema = z.object({
   State: z.string().trim().min(1),
@@ -193,6 +193,75 @@ export function canApproveSalonReportRow(row: Parameters<typeof importableSalonE
   return sourceData?.category === "verified_public_email" &&
     row.status === "enriched" &&
     importableSalonEmailCandidate(row) !== null;
+}
+
+/**
+ * A raw list row becomes a reviewed-report candidate only when ordinary
+ * enrichment actually found a visible general email on a strongly matched
+ * business website. The uploaded email suggestion itself is never promoted.
+ */
+export function promoteVerifiedStagedReportEmail(
+  row: { sourceData: unknown; websiteUrl?: string | null; bookingUrl?: string | null } & {
+    status?: string | null;
+    identityMatchStatus?: string | null;
+    email?: string | null;
+  },
+  enrichment: {
+    status?: string;
+    identityMatchStatus?: string | null;
+    email?: string | null;
+    websiteUrl?: string | null;
+    bookingUrl?: string | null;
+    evidence?: unknown;
+  },
+): Pick<InsertSalonEnrichmentRow, "sourceData" | "evidence"> | null {
+  const rawData = row.sourceData as Record<string, unknown> | null;
+  if (!["staged_unverified", "verification_attempted"].includes(String(rawData?.stagingState)) ||
+      enrichment.status !== "enriched" ||
+      enrichment.identityMatchStatus !== "strong" ||
+      !enrichment.email?.trim() ||
+      !z.string().email().safeParse(enrichment.email.trim()).success) return null;
+  const evidence = enrichment.evidence && typeof enrichment.evidence === "object" && !Array.isArray(enrichment.evidence)
+    ? enrichment.evidence as Record<string, unknown>
+    : {};
+  const emailEvidence = evidence.email && typeof evidence.email === "object"
+    ? evidence.email as Record<string, unknown>
+    : null;
+  if (!emailEvidence ||
+      !["website", "serp_fallback_website"].includes(String(emailEvidence.source)) ||
+      !["visible", "mailto", "cloudflare"].includes(String(emailEvidence.sourceType)) ||
+      !["high", "medium"].includes(String(emailEvidence.confidence)) ||
+      String(emailEvidence.value || "").trim().toLowerCase() !== enrichment.email.trim().toLowerCase()) return null;
+  let sourceUrl: URL;
+  try {
+    sourceUrl = new URL(String(emailEvidence.sourceUrl || ""));
+  } catch {
+    return null;
+  }
+  if (sourceUrl.protocol !== "https:" || sourceUrl.username || sourceUrl.password) return null;
+  const source = String(emailEvidence.source);
+  const websiteUrl = enrichment.websiteUrl || row.websiteUrl;
+  if (source === "website") {
+    if (!websiteUrl || emailEvidence.sourceUrl !== websiteUrl || bookingPlatformForUrl(websiteUrl)) return null;
+  } else if (bookingPlatformForUrl(sourceUrl.href)) {
+    return null;
+  }
+
+  const email = enrichment.email.trim();
+  const verifiedEvidence = { ...emailEvidence, value: email, purpose: "general" };
+  return {
+    sourceData: {
+      ...rawData,
+      category: "verified_public_email",
+      stagingState: "verified_by_enrichment",
+      Outcome: "verified_first_party_email",
+      "Public email (review-only when marked)": email,
+      "Email evidence URL": sourceUrl.href,
+      "Email use": "Public business contact",
+      "Evidence and exceptions": "Visible general-contact email found during deliberate business-site verification.",
+    },
+    evidence: { ...evidence, email: verifiedEvidence },
+  };
 }
 
 export function salonReportScheduleRejection(input: {

@@ -73,6 +73,7 @@ import { eq, desc, and, sql, gte, lte, or, ne, inArray, isNull } from "drizzle-o
 import { DIRECTORY_FIRST_STRATEGY, DIRECTORY_TRACKS, directoryEmailSequenceTemplates } from "./directoryEmailSequences";
 import { importableSalonEmail } from "./bookingPageEmail";
 import { salonReportSendRejection } from "./salonSearchReport";
+import { isRetryableStagedSalonRow } from "./salonListStaging";
 import {
   EMPTY_OWNER_NAME_RESULT,
   hasStrongOwnerNameEvidence,
@@ -338,11 +339,17 @@ export interface IStorage {
   // Uploaded salon enrichment
   getSalonEnrichmentBatches(userId: string | null): Promise<SalonEnrichmentBatch[]>;
   getSalonEnrichmentBatch(id: string, userId: string | null): Promise<SalonEnrichmentBatch | undefined>;
+  prepareSalonReportBatchForVerification(id: string, userId: string, callsPerRow: number, retryUnverified?: boolean, expectedEligibleRows?: number): Promise<{
+    batch: SalonEnrichmentBatch;
+    eligibleRows: number;
+    estimatedSerpCalls: number;
+  } | null>;
   createSalonEnrichmentBatch(data: InsertSalonEnrichmentBatch, rows: InsertSalonEnrichmentRow[], userId: string): Promise<SalonEnrichmentBatch>;
-  createSalonSearchReportBatch(data: InsertSalonEnrichmentBatch, rows: InsertSalonEnrichmentRow[], userId: string, allowExisting: boolean): Promise<{
+  createSalonSearchReportBatch(data: InsertSalonEnrichmentBatch, rows: InsertSalonEnrichmentRow[], userId: string, allowExisting: boolean, deduplicateBusinessPhone?: boolean): Promise<{
     batch: SalonEnrichmentBatch | null;
     existingBatches: SalonEnrichmentBatch[];
     duplicatePlaceIds: string[];
+    duplicateNaturalKeys: string[];
     existing: boolean;
   }>;
   updateSalonEnrichmentBatch(id: string, data: Partial<SalonEnrichmentBatch>, userId: string | null): Promise<SalonEnrichmentBatch | undefined>;
@@ -1882,6 +1889,73 @@ export class DatabaseStorage implements IStorage {
     return batch;
   }
 
+  async prepareSalonReportBatchForVerification(
+    id: string,
+    userId: string,
+    callsPerRow: number,
+    retryUnverified = false,
+    expectedEligibleRows?: number,
+  ): Promise<{ batch: SalonEnrichmentBatch; eligibleRows: number; estimatedSerpCalls: number } | null> {
+    return db.transaction(async tx => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`salon-verify:${id}`}))`);
+      const [batch] = await tx.select().from(salonEnrichmentBatches).where(and(
+        eq(salonEnrichmentBatches.id, id),
+        eq(salonEnrichmentBatches.userId, userId),
+      ));
+      if (!batch || batch.fileName !== "salon-public-web-review" ||
+          (retryUnverified ? !["completed", "paused"].includes(batch.status) : batch.status !== "completed")) return null;
+      const rows = await tx.select().from(salonEnrichmentRows).where(and(
+        eq(salonEnrichmentRows.batchId, id),
+        eq(salonEnrichmentRows.userId, userId),
+      ));
+      const eligible = retryUnverified
+        ? rows.filter(isRetryableStagedSalonRow)
+        : rows.every(row => {
+          const data = row.sourceData as Record<string, unknown> | null;
+          return data?.stagingState === "staged_unverified" &&
+            row.email === null && row.importedContactId === null &&
+            row.reviewStatus !== "approved" && row.reviewStatus !== "rejected";
+        }) ? rows : [];
+      if (!eligible.length || rows.some(row => row.status === "processing")) return null;
+      if (retryUnverified && expectedEligibleRows !== eligible.length) return null;
+      const eligibleIds = new Set(eligible.map(row => row.id));
+      for (const row of eligible) {
+        const sourceData = row.sourceData as Record<string, unknown>;
+        await tx.update(salonEnrichmentRows).set({
+          status: "pending",
+          reviewStatus: "needs_review",
+          identityMatchStatus: "unmatched",
+          email: null,
+          sourceData: { ...sourceData, stagingState: "verification_attempted" },
+          processedAt: null,
+          lastError: null,
+          updatedAt: new Date(),
+        }).where(and(eq(salonEnrichmentRows.id, row.id), eq(salonEnrichmentRows.userId, userId)));
+      }
+      const eligibleRows = eligible.length;
+      const estimatedSerpCalls = eligibleRows * callsPerRow;
+      const [updated] = await tx.update(salonEnrichmentBatches).set({
+        status: "running",
+        processedRows: rows.filter(row => !eligibleIds.has(row.id) && ["enriched", "failed", "rejected", "imported"].includes(row.status)).length,
+        enrichedRows: rows.filter(row => !eligibleIds.has(row.id) && ["enriched", "imported"].includes(row.status)).length,
+        needsReviewRows: rows.filter(row => row.reviewStatus === "needs_review").length,
+        approvedRows: rows.filter(row => row.reviewStatus === "approved").length,
+        importedRows: rows.filter(row => row.importedContactId !== null).length,
+        estimatedSerpCalls: batch.estimatedSerpCalls + estimatedSerpCalls,
+        usedSerpCalls: rows.reduce((total, row) => total + row.serpCallsUsed, 0),
+        startedAt: new Date(),
+        pausedAt: null,
+        completedAt: null,
+        errorMessage: null,
+        updatedAt: new Date(),
+      }).where(and(
+        eq(salonEnrichmentBatches.id, id),
+        eq(salonEnrichmentBatches.userId, userId),
+      )).returning();
+      return updated ? { batch: updated, eligibleRows, estimatedSerpCalls } : null;
+    });
+  }
+
   async createSalonEnrichmentBatch(data: InsertSalonEnrichmentBatch, rows: InsertSalonEnrichmentRow[], userId: string): Promise<SalonEnrichmentBatch> {
     return await db.transaction(async (tx) => {
       const [batch] = await tx.insert(salonEnrichmentBatches).values({
@@ -1912,10 +1986,12 @@ export class DatabaseStorage implements IStorage {
     rows: InsertSalonEnrichmentRow[],
     userId: string,
     allowExisting: boolean,
+    deduplicateBusinessPhone = false,
   ): Promise<{
     batch: SalonEnrichmentBatch | null;
     existingBatches: SalonEnrichmentBatch[];
     duplicatePlaceIds: string[];
+    duplicateNaturalKeys: string[];
     existing: boolean;
   }> {
     return await db.transaction(async tx => {
@@ -1937,6 +2013,20 @@ export class DatabaseStorage implements IStorage {
       const existingSet = new Set(existingPlaceIds);
       const incomingPlaceIds = rows.map(row => row.placeId?.trim().toLowerCase()).filter((id): id is string => !!id);
       const duplicatePlaceIds = Array.from(new Set(incomingPlaceIds.filter(id => existingSet.has(id))));
+      const naturalKey = (businessName: string, phone: string | null | undefined) => {
+        const name = businessName.normalize("NFKD").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, " ");
+        const digits = (phone || "").replace(/\D/g, "");
+        const normalizedPhone = digits.length > 10 && digits.startsWith("1") ? digits.slice(1) : digits;
+        return name && normalizedPhone.length >= 7 ? `${name}:${normalizedPhone}` : null;
+      };
+      const duplicateNaturalKeys = deduplicateBusinessPhone
+        ? Array.from(new Set(rows.map(row => naturalKey(row.businessName, row.phone))
+          .filter((key): key is string => !!key)
+          .filter(key => priorRows.some(row => naturalKey(row.businessName, row.phone) === key))))
+        : [];
+      if (duplicateNaturalKeys.length) {
+        return { batch: null, existingBatches: [], duplicatePlaceIds: [], duplicateNaturalKeys, existing: false };
+      }
       if (duplicatePlaceIds.length) {
         const allExist = incomingPlaceIds.length > 0 && incomingPlaceIds.every(id => existingSet.has(id));
         if (allowExisting && allExist) {
@@ -1950,9 +2040,9 @@ export class DatabaseStorage implements IStorage {
             const uniqueIds = new Set(ids);
             return uniqueIds.size === incomingSet.size && Array.from(incomingSet).every(id => uniqueIds.has(id));
           }) || null;
-          return { batch: exactBatch, existingBatches, duplicatePlaceIds: [], existing: true };
+          return { batch: exactBatch, existingBatches, duplicatePlaceIds: [], duplicateNaturalKeys: [], existing: true };
         }
-        return { batch: null, existingBatches: [], duplicatePlaceIds, existing: false };
+        return { batch: null, existingBatches: [], duplicatePlaceIds, duplicateNaturalKeys: [], existing: false };
       }
 
       const [batch] = await tx.insert(salonEnrichmentBatches).values({
@@ -1973,7 +2063,7 @@ export class DatabaseStorage implements IStorage {
           })));
         }
       }
-      return { batch, existingBatches: [], duplicatePlaceIds: [], existing: false };
+      return { batch, existingBatches: [], duplicatePlaceIds: [], duplicateNaturalKeys: [], existing: false };
     });
   }
 

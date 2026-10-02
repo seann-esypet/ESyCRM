@@ -2,6 +2,8 @@ import { storage } from "./storage";
 import { crawlWebsite, searchWithSerpApi } from "./lead-discovery";
 import { bookingPlatformForUrl, findSalonEmailOnBookingPage } from "./bookingPageEmail";
 import { lookupSalonOwnerName } from "./salonOwnerNames";
+import { promoteVerifiedStagedReportEmail } from "./salonSearchReport";
+import { cumulativeStagedSalonSerpCallsUsed } from "./salonListStaging";
 import type { SalonEnrichmentBatch, SalonEnrichmentRow } from "@shared/schema";
 
 type Evidence = Record<string, {
@@ -372,13 +374,38 @@ async function processBatch(batch: SalonEnrichmentBatch): Promise<void> {
               usesSoftware: (result.usesSoftware as string | null | undefined) || "Unknown",
             } as any;
             const duplicates = await storage.findDuplicateContacts(candidateContact, processingRow.userId);
+            let rowUpdate: Partial<SalonEnrichmentRow> = {
+              ...result,
+              ...(typeof result.serpCallsUsed === "number" ? {
+                serpCallsUsed: cumulativeStagedSalonSerpCallsUsed(
+                  processingRow.sourceData,
+                  processingRow.serpCallsUsed,
+                  result.serpCallsUsed,
+                ),
+              } : {}),
+            };
             if (duplicates.length) {
-              result.duplicateMetadata = { contactIds: duplicates.map(contact => contact.id), reason: "Existing contact match" };
-              result.reviewStatus = "needs_review";
+              rowUpdate = {
+                ...rowUpdate,
+                duplicateMetadata: { contactIds: duplicates.map(contact => contact.id), reason: "Existing contact match" },
+                reviewStatus: "needs_review",
+              };
             }
-            await storage.updateSalonEnrichmentRow(processingRow.id, result, batch.userId);
+            const promoted = promoteVerifiedStagedReportEmail(processingRow, rowUpdate);
+            if (promoted) rowUpdate = { ...rowUpdate, ...promoted };
+            else {
+              const rawSource = processingRow.sourceData as Record<string, unknown> | null;
+              if (rawSource?.stagingState === "staged_unverified") {
+                rowUpdate = {
+                  ...rowUpdate,
+                  sourceData: { ...rawSource, stagingState: "verification_attempted" },
+                };
+              }
+            }
+            await storage.updateSalonEnrichmentRow(processingRow.id, rowUpdate, batch.userId);
             const sourceData = processingRow.sourceData as { includeOwnerNames?: boolean } | null;
-            if (sourceData?.includeOwnerNames === true &&
+            if (batch.fileName !== "salon-public-web-review" &&
+                sourceData?.includeOwnerNames === true &&
                 result.status === "enriched" &&
                 result.identityMatchStatus === "strong") {
               await lookupSalonOwnerName(processingRow.id, processingRow.userId, true);
@@ -396,6 +423,14 @@ async function processBatch(batch: SalonEnrichmentBatch): Promise<void> {
             }
             await storage.updateSalonEnrichmentRow(processingRow.id, {
               status: "failed", lastError: message, processedAt: new Date(),
+              ...((
+                processingRow.sourceData as Record<string, unknown> | null
+              )?.stagingState === "staged_unverified" ? {
+                sourceData: {
+                  ...(processingRow.sourceData as Record<string, unknown>),
+                  stagingState: "verification_attempted",
+                },
+              } : {}),
             }, batch.userId);
           }
         }));
@@ -416,6 +451,10 @@ export function startSalonEnrichment(batch: SalonEnrichmentBatch): void {
       status: "failed", errorMessage: error instanceof Error ? error.message : "Batch failed", completedAt: new Date(),
     }, batch.userId);
   });
+}
+
+export function salonEnrichmentIsActive(batchId: string): boolean {
+  return activeProcessors.has(batchId);
 }
 
 export { enrichRow };

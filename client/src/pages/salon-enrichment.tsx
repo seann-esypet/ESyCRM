@@ -22,6 +22,12 @@ import { Upload, ArrowLeft, Play, Pause, Square, Search, RefreshCw, Check, X, Ro
 
 type Batch = { id: string; name: string; fileName: string; status: string; totalRows: number; pilotLimit: number; processedRows: number; enrichedRows: number; needsReviewRows: number; reviewRows?: number; approvedRows: number; importedRows: number; estimatedSerpCalls: number; usedSerpCalls: number; concurrency: number; errorMessage?: string; createdAt: string };
 type Row = { id: string; rowNumber: number; businessName: string; placeId?: string; address?: string; address1?: string; city?: string; state?: string; zipCode?: string; latitude?: number; longitude?: number; businessStatus?: string; status?: string; identityMatchStatus?: string; reviewStatus?: string; websiteUrl?: string; email?: string; phone?: string; contactRequestFormUrl?: string; contactFormStatus?: string; bookingUrl?: string; currentSoftware?: string; usesSoftware?: string; audienceTrack?: string; category?: string; ownerName?: OwnerNameResult | null; contactName?: { firstName?: string | null; lastName?: string | null; useBusinessNameForEmail?: "Yes" | "No" | null } | null; emailVerified?: boolean; evidence?: unknown; confidence?: unknown; duplicateMetadata?: { contactIds?: string[] }; lastError?: string; importedContactId?: string; sourceData?: Record<string, unknown> };
+type VerificationEstimate = {
+  mode: "initial" | "retry" | "running" | "none";
+  eligibleRows: number;
+  estimatedSerpCalls: number;
+  active: boolean;
+};
 
 const columns = ["businessName", "placeId", "address", "address1", "city", "state", "zipCode", "latitude", "longitude", "businessStatus"];
 const aliases: Record<string, string[]> = {
@@ -108,6 +114,7 @@ export default function SalonEnrichment() {
   const [ownerSelectedIds, setOwnerSelectedIds] = useState<string[]>([]);
   const [ownerEstimate, setOwnerEstimate] = useState<OwnerSearchEstimate | null>(null);
   const [confirmOwnerBatch, setConfirmOwnerBatch] = useState(false);
+  const [confirmRawVerification, setConfirmRawVerification] = useState(false);
   const [editing, setEditing] = useState<Row | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const isDetail = Boolean(id);
@@ -131,6 +138,13 @@ export default function SalonEnrichment() {
     refetchInterval: batchQuery.data?.status === "running" ? 4000 : false,
   });
   const batch = batchQuery.data ? ({ ...batchQuery.data, reviewRows: batchQuery.data.needsReviewRows } as Batch & { reviewRows: number }) : undefined;
+  const isStagedReportBatch = batch?.fileName === "salon-public-web-review";
+  const verificationEstimateQuery = useQuery<VerificationEstimate>({
+    queryKey: ["/api/salon-enrichment/batches", id, "verification-estimate"],
+    enabled: isDetail && isStagedReportBatch,
+    queryFn: async () => (await apiRequest("GET", `/api/salon-enrichment/batches/${id}/verification-estimate`)).json(),
+    refetchInterval: query => query.state.data?.active || batch?.status === "running" ? 3000 : false,
+  });
   const rows = rowsQuery.data ?? [];
   const headers = useMemo(() => Object.keys(rawRows[0] ?? {}), [rawRows]);
   const rejectedCount = useMemo(() => rawRows.filter(row => !String(row[mapping.businessName] ?? "").trim()).length, [rawRows, mapping.businessName]);
@@ -152,6 +166,14 @@ export default function SalonEnrichment() {
     const timer = window.setInterval(() => { batchQuery.refetch(); rowsQuery.refetch(); }, 4000);
     return () => window.clearInterval(timer);
   }, [batch?.status, batchQuery.refetch, rowsQuery.refetch]);
+  useEffect(() => {
+    setConfirmRawVerification(false);
+  }, [
+    verificationEstimateQuery.data?.mode,
+    verificationEstimateQuery.data?.eligibleRows,
+    verificationEstimateQuery.data?.estimatedSerpCalls,
+    verificationEstimateQuery.data?.active,
+  ]);
 
   useEffect(() => {
     if (!file || rawRows.length) return;
@@ -173,6 +195,22 @@ export default function SalonEnrichment() {
     mutationFn: async ({ action: actionName, body }: { action: string; body?: unknown }) => (await apiRequest("POST", `/api/salon-enrichment/batches/${id}/${actionName}`, body)).json(),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/salon-enrichment/batches", id] }); queryClient.invalidateQueries({ queryKey: ["/api/salon-enrichment/batches", id, "rows"] }); },
     onError: (e: Error) => toast({ title: "Action failed", description: e.message, variant: "destructive" }),
+  });
+  const verifyRawBatch = useMutation({
+    mutationFn: async ({ retryUnverified, expectedEligibleRows }: { retryUnverified: boolean; expectedEligibleRows: number }) =>
+      (await apiRequest("POST", `/api/salon-enrichment/batches/${id}/verify`, {
+        confirmed: true,
+        ...(retryUnverified ? { retryUnverified: true, expectedEligibleRows } : {}),
+      })).json(),
+    onSuccess: () => {
+      setConfirmRawVerification(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/salon-enrichment/batches", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/salon-enrichment/batches", id, "rows"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/salon-enrichment/batches", id, "verification-estimate"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/salon-enrichment/batches"] });
+      toast({ title: "Verification started", description: "Public business-site verification is running. Review any sourced email before approving it." });
+    },
+    onError: (e: Error) => toast({ title: "Could not start verification", description: e.message, variant: "destructive" }),
   });
   const patch = useMutation({
     mutationFn: async (row: Row) => (await apiRequest("PATCH", `/api/salon-enrichment/rows/${row.id}`, Object.fromEntries(["email", "phone", "websiteUrl", "contactRequestFormUrl", "bookingUrl", "currentSoftware", "usesSoftware", "audienceTrack"].map(key => [key, row[key as keyof Row]])))).json(),
@@ -223,12 +261,50 @@ export default function SalonEnrichment() {
   });
   return <div className="flex-1 overflow-y-auto"><Header title="Salon Enrichment" /><main className="p-6 max-w-[1600px] mx-auto space-y-5">
     <button className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1" onClick={() => setLocation("/salon-enrichment")}><ArrowLeft className="h-4 w-4" />All batches</button>
-      {batch && <><div className="flex flex-wrap justify-between gap-4"><div><div className="flex items-center gap-3"><h1 className="text-2xl font-semibold">{batch.name}</h1><Badge className={statusTone[batch.status] ?? ""}>{batch.status}</Badge></div><p className="text-sm text-muted-foreground mt-1">{batch.fileName} · pilot cap {batch.pilotLimit} · concurrency {batch.concurrency}</p></div><div className="flex gap-2">{["pending", "paused"].includes(batch.status) && <Button onClick={() => run(batch.status === "paused" ? "resume" : "start")}><Play className="h-4 w-4 mr-1.5" />{batch.status === "paused" && batch.processedRows >= batch.pilotLimit && batch.pilotLimit < batch.totalRows ? "Run next 100" : batch.status === "paused" ? "Resume" : "Start pilot"}</Button>}{batch.status === "running" && <Button variant="outline" onClick={() => run("pause")}><Pause className="h-4 w-4 mr-1.5" />Pause</Button>}{["running", "paused"].includes(batch.status) && <Button variant="outline" onClick={() => run("cancel")}><Square className="h-4 w-4 mr-1.5" />Cancel</Button>}</div></div>
-      <Card><CardContent className="p-4"><div className="flex justify-between text-sm mb-2"><span className="font-medium">Processing progress</span><span>{batch.processedRows ?? 0} / {batch.totalRows} rows</span></div><Progress value={progress} className="h-2" /><div className="grid grid-cols-2 md:grid-cols-5 gap-4 mt-4 text-xs"><span><b className="text-foreground">{batch.enrichedRows ?? 0}</b> enriched</span><span><b className="text-foreground">{batch.reviewRows ?? 0}</b> need review</span><span><b className="text-foreground">{batch.approvedRows ?? 0}</b> approved</span><span><b className="text-foreground">{batch.estimatedSerpCalls ?? 0}</b> SERP est. / <b>{batch.usedSerpCalls ?? 0}</b> used</span><span><b className="text-foreground">{batch.importedRows ?? 0}</b> imported</span></div>{batch.errorMessage && <p className="text-sm text-red-700 mt-3 flex gap-2"><AlertTriangle className="h-4 w-4" />{batch.errorMessage}</p>}</CardContent></Card>
+       {batch && <><div className="flex flex-wrap justify-between gap-4"><div><div className="flex items-center gap-3"><h1 className="text-2xl font-semibold">{batch.name}</h1><Badge className={statusTone[batch.status] ?? ""}>{batch.status}</Badge></div><p className="text-sm text-muted-foreground mt-1">{batch.fileName} · pilot cap {batch.pilotLimit} · concurrency {batch.concurrency}</p></div><div className="flex gap-2">{!isStagedReportBatch && ["pending", "paused"].includes(batch.status) && <Button onClick={() => run(batch.status === "paused" ? "resume" : "start")}><Play className="h-4 w-4 mr-1.5" />{batch.status === "paused" && batch.processedRows >= batch.pilotLimit && batch.pilotLimit < batch.totalRows ? "Run next 100" : batch.status === "paused" ? "Resume" : "Start pilot"}</Button>}{batch.status === "running" && <Button variant="outline" onClick={() => run("pause")}><Pause className="h-4 w-4 mr-1.5" />Pause</Button>}{!isStagedReportBatch && ["running", "paused"].includes(batch.status) && <Button variant="outline" onClick={() => run("cancel")}><Square className="h-4 w-4 mr-1.5" />Cancel</Button>}</div></div>
+      <Card><CardContent className="p-4"><div className="flex justify-between text-sm mb-2"><span className="font-medium">Processing progress</span><span>{batch.processedRows ?? 0} / {batch.totalRows} rows</span></div><Progress value={progress} className="h-2" /><div className="grid grid-cols-2 md:grid-cols-5 gap-4 mt-4 text-xs"><span><b className="text-foreground">{batch.enrichedRows ?? 0}</b> enriched</span><span><b className="text-foreground">{batch.reviewRows ?? 0}</b> need review</span><span><b className="text-foreground">{batch.approvedRows ?? 0}</b> approved</span><span><b className="text-foreground">{batch.estimatedSerpCalls ?? 0}</b> estimated paid search lookups / <b>{batch.usedSerpCalls ?? 0}</b> used</span><span><b className="text-foreground">{batch.importedRows ?? 0}</b> imported</span></div>{batch.errorMessage && <p className="text-sm text-red-700 mt-3 flex gap-2"><AlertTriangle className="h-4 w-4" />{batch.errorMessage}</p>}</CardContent></Card>
        <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950 flex gap-2"><ShieldCheck className="h-4 w-4 mt-0.5 shrink-0" /><span><b>Email-first lookup:</b> a phone number or booking link does not end the email search. A missing email may require one extra provider lookup, subject to the hourly and monthly limits. Emails found on a salon website, a matched alternate website, or a salon-matched booking page need your review and approval before import. Booking-service support addresses are excluded; importing never auto-enrolls contacts.</span></div>
+        {isStagedReportBatch && <section className="rounded-md border border-primary/30 bg-primary/[0.03] p-4 space-y-3" aria-label="Verify uploaded list">
+          <div>
+             <h2 className="font-semibold">{verificationEstimateQuery.data?.mode === "retry" ? "Retry verification for remaining rows" : "Verify this staged list"}</h2>
+             <p className="mt-1 text-sm text-muted-foreground">Uploaded email and name suggestions remain unverified until independently supported by public business-site evidence. Verification may use provider calls and website requests; owner-name searches, approval, contact imports, and sequence enrollment will not run automatically.</p>
+          </div>
+           {verificationEstimateQuery.isLoading && <p className="text-sm text-muted-foreground">Loading current verification budget…</p>}
+           {verificationEstimateQuery.isError && <div role="alert" className="text-sm text-destructive">Could not load the current verification estimate. Refresh this section before starting or retrying.</div>}
+           {verificationEstimateQuery.data && <div className="rounded border bg-background p-3 text-sm">
+             <p><span className="font-medium">Mode:</span> {verificationEstimateQuery.data.mode === "initial" ? "First verification" : verificationEstimateQuery.data.mode === "retry" ? "Explicit retry" : verificationEstimateQuery.data.mode === "running" ? "Verification running" : "No eligible verification rows"}</p>
+             <p><span className="font-medium">Eligible rows:</span> {verificationEstimateQuery.data.eligibleRows.toLocaleString()}</p>
+             <p><span className="font-medium">Estimated paid search lookups:</span> {verificationEstimateQuery.data.estimatedSerpCalls.toLocaleString()}</p>
+             <p><span className="font-medium">Active:</span> {verificationEstimateQuery.data.active ? "Yes" : "No"}</p>
+           </div>}
+           {verificationEstimateQuery.data?.active && <p className="text-sm text-muted-foreground">Verification is active. This estimate refreshes until the current run completes.</p>}
+           {verificationEstimateQuery.data && !verificationEstimateQuery.data.active &&
+             (verificationEstimateQuery.data.mode === "initial" || verificationEstimateQuery.data.mode === "retry") &&
+             verificationEstimateQuery.data.eligibleRows > 0 && <>
+               <label className="flex items-start gap-2 text-sm">
+                 <Checkbox checked={confirmRawVerification} onCheckedChange={checked => setConfirmRawVerification(checked === true)} disabled={verifyRawBatch.isPending} />
+                 <span>I confirm the displayed provider budget for this {verificationEstimateQuery.data.mode === "retry" ? "retry" : "verification"}.</span>
+               </label>
+             </>}
+           {verificationEstimateQuery.data && <Button disabled={
+             !confirmRawVerification ||
+             verifyRawBatch.isPending ||
+             verificationEstimateQuery.data.active ||
+             verificationEstimateQuery.data.eligibleRows === 0 ||
+             !["initial", "retry"].includes(verificationEstimateQuery.data.mode)
+           } onClick={() => verifyRawBatch.mutate({
+                 retryUnverified: verificationEstimateQuery.data?.mode === "retry",
+                 expectedEligibleRows: verificationEstimateQuery.data?.eligibleRows ?? 0,
+               })}>
+                 {verifyRawBatch.isPending ? "Starting verification…" :
+                   verificationEstimateQuery.data.mode === "retry" ? "Confirm and retry unverified rows" :
+                     verificationEstimateQuery.data.mode === "initial" ? "Confirm and verify this list" :
+                       verificationEstimateQuery.data.active ? "Verification running" : "No eligible rows to verify"}
+             </Button>}
+        </section>}
        <SalonFormOutreachPanel batchId={id!} rows={rows} />
-       <div className="flex flex-wrap gap-2 items-center"><div className="relative flex-1 min-w-[220px] max-w-sm"><Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" /><Input className="pl-8" placeholder="Search business, city, email…" value={search} onChange={e => setSearch(e.target.value)} /></div><Select value={rowStatus} onValueChange={setRowStatus}><SelectTrigger className="w-36"><SelectValue /></SelectTrigger><SelectContent>{["all", "pending", "processing", "enriched", "failed"].map(v => <SelectItem key={v} value={v}>{v === "all" ? "All statuses" : v}</SelectItem>)}</SelectContent></Select><Select value={reviewStatus} onValueChange={setReviewStatus}><SelectTrigger className="w-36"><SelectValue /></SelectTrigger><SelectContent>{["all", "pending", "needs_review", "approved", "rejected"].map(v => <SelectItem key={v} value={v}>{v === "all" ? "All review" : v}</SelectItem>)}</SelectContent></Select><Button variant="ghost" size="icon" onClick={() => { batchQuery.refetch(); rowsQuery.refetch(); }}><RefreshCw className="h-4 w-4" /></Button><div className="ml-auto flex items-center gap-2"><Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage(value => value - 1)}>Previous</Button><span className="text-xs text-muted-foreground">Page {page + 1}</span><Button variant="outline" size="sm" disabled={rows.length < 100} onClick={() => setPage(value => value + 1)}>Next</Button></div></div>
-       <div className="flex flex-wrap items-center gap-2 border-y py-3"><Checkbox checked={selected.length > 0 && selected.length === canSelect.length} onCheckedChange={checked => setSelected(checked ? canSelect : [])} /><span className="text-sm text-muted-foreground">{selected.length} selected</span><Button size="sm" variant="outline" disabled={!canApprove} onClick={() => review("approved")}><Check className="h-3.5 w-3.5 mr-1" />Approve matched</Button><Button size="sm" variant="outline" disabled={!selected.length} onClick={() => review("rejected")}><X className="h-3.5 w-3.5 mr-1" />Reject</Button><Button size="sm" variant="outline" disabled={!selected.length} onClick={() => action.mutate({ action: "rows/retry", body: { rowIds: selected } })}><RotateCcw className="h-3.5 w-3.5 mr-1" />Retry</Button><Button size="sm" className="ml-auto" disabled={!canApprove || selected.some(rowId => rows.find(r => r.id === rowId)?.reviewStatus !== "approved")} onClick={() => action.mutate({ action: "import", body: { rowIds: selected } })}>Import approved</Button></div>
+        <div className="flex flex-wrap gap-2 items-center"><div className="relative flex-1 min-w-[220px] max-w-sm"><Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" /><Input className="pl-8" placeholder="Search business, city, email…" value={search} onChange={e => setSearch(e.target.value)} /></div><Select value={rowStatus} onValueChange={setRowStatus}><SelectTrigger className="w-36"><SelectValue /></SelectTrigger><SelectContent>{["all", "pending", "processing", "enriched", "failed"].map(v => <SelectItem key={v} value={v}>{v === "all" ? "All statuses" : v}</SelectItem>)}</SelectContent></Select><Select value={reviewStatus} onValueChange={setReviewStatus}><SelectTrigger className="w-36"><SelectValue /></SelectTrigger><SelectContent>{["all", "pending", "needs_review", "approved", "rejected"].map(v => <SelectItem key={v} value={v}>{v === "all" ? "All review" : v}</SelectItem>)}</SelectContent></Select><Button variant="ghost" size="icon" onClick={() => { batchQuery.refetch(); rowsQuery.refetch(); if (isStagedReportBatch) verificationEstimateQuery.refetch(); }}><RefreshCw className="h-4 w-4" /></Button><div className="ml-auto flex items-center gap-2"><Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage(value => value - 1)}>Previous</Button><span className="text-xs text-muted-foreground">Page {page + 1}</span><Button variant="outline" size="sm" disabled={rows.length < 100} onClick={() => setPage(value => value + 1)}>Next</Button></div></div>
+        <div className="flex flex-wrap items-center gap-2 border-y py-3"><Checkbox checked={selected.length > 0 && selected.length === canSelect.length} onCheckedChange={checked => setSelected(checked ? canSelect : [])} /><span className="text-sm text-muted-foreground">{selected.length} selected</span><Button size="sm" variant="outline" disabled={!canApprove} onClick={() => review("approved")}><Check className="h-3.5 w-3.5 mr-1" />Approve matched</Button><Button size="sm" variant="outline" disabled={!selected.length} onClick={() => review("rejected")}><X className="h-3.5 w-3.5 mr-1" />Reject</Button>{!isStagedReportBatch && <Button size="sm" variant="outline" disabled={!selected.length} onClick={() => action.mutate({ action: "rows/retry", body: { rowIds: selected } })}><RotateCcw className="h-3.5 w-3.5 mr-1" />Retry</Button>}<Button size="sm" className="ml-auto" disabled={!canApprove || selected.some(rowId => rows.find(r => r.id === rowId)?.reviewStatus !== "approved")} onClick={() => action.mutate({ action: "import", body: { rowIds: selected } })}>Import approved</Button></div>
         <div className="flex flex-wrap items-center gap-2 rounded-md border bg-card p-3">
           <span className="text-sm font-medium">Owner-name batch</span><span className="text-xs text-muted-foreground">{ownerSelectedIds.length}/5 selected</span>
           <Button size="sm" variant="outline" className="ml-auto" disabled={!ownerSelectedIds.length || estimateOwnerBatch.isPending} onClick={() => estimateOwnerBatch.mutate()}>{estimateOwnerBatch.isPending ? "Estimating…" : "Estimate selected search"}</Button>

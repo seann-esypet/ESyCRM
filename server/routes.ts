@@ -18,7 +18,7 @@ import { getCommissionAmounts } from "@shared/utils";
 import { z } from "zod";
 import Papa from "papaparse";
 import { runLeadDiscoveryJob, importResultsToCRM, runNationalSearchJob } from "./lead-discovery";
-import { startSalonEnrichment } from "./salonEnrichment";
+import { salonEnrichmentIsActive, startSalonEnrichment } from "./salonEnrichment";
 import {
   estimateSalonOwnerNameSearch,
   getSalonOwnerNameResult,
@@ -33,6 +33,7 @@ import { sendDailyReport } from "./dailyReportScheduler";
 import { sendReplyNotificationEmail, sendEmail, replaceTemplateVariables } from "./sendgrid";
 import { format as fmtDate } from "date-fns";
 import { canApproveSalonReportRow, convertSalonSearchReportEntry, reportPlaceIdsAreDistinct, salonReportScheduleRejection, salonSearchReportBatchSchema } from "./salonSearchReport";
+import { isRetryableStagedSalonRow, MAX_SALON_LIST_JSON_BYTES, MAX_SALON_LIST_ROWS, stageSalonListRows } from "./salonListStaging";
 import salonSearchPilot from "../reports/salon-next-100-summary.json" with { type: "json" };
 
 // ─── Sequence Test Runner (in-memory) ────────────────────────────────────────
@@ -2751,6 +2752,90 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Raw CRM spreadsheets are staged as review-only report rows. This path does
+  // not invoke enrichment, contact import, owner lookup, or sequence code.
+  app.post("/api/salon-search-report/stage-list", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub as string;
+      const payload = req.body;
+      if (!payload || typeof payload !== "object" || !Array.isArray(payload.rows)) {
+        return res.status(400).json({ message: "Upload must contain a rows array" });
+      }
+      if (Buffer.byteLength(JSON.stringify(payload.rows), "utf8") > MAX_SALON_LIST_JSON_BYTES) {
+        return res.status(413).json({ message: "List is too large (2 MB maximum)" });
+      }
+      if (payload.rows.length < 1 || payload.rows.length > MAX_SALON_LIST_ROWS) {
+        return res.status(400).json({ message: `List must contain 1–${MAX_SALON_LIST_ROWS} rows` });
+      }
+      const name = typeof payload.name === "string" ? payload.name.trim().slice(0, 200) : "Uploaded sales lead list";
+      if (!name) return res.status(400).json({ message: "List name is required" });
+
+      const existingBatches = (await storage.getSalonEnrichmentBatches(userId))
+        .filter(batch => batch.fileName === "salon-public-web-review");
+      const existingReportRows = (await Promise.all(existingBatches.map(batch =>
+        storage.getSalonEnrichmentRows(batch.id, userId),
+      ))).flat();
+      const ownedNationwideRows = await storage.getAllLeadDiscoveryResults(userId);
+      const staged = stageSalonListRows(
+        payload.rows,
+        userId,
+        "pending",
+        existingReportRows,
+        ownedNationwideRows,
+      );
+      if (!staged.rows.length) {
+        return res.status(422).json({
+          message: "No new rows with a business name were available to stage",
+          ...staged,
+        });
+      }
+      const rows = staged.rows;
+      const batchData = insertSalonEnrichmentBatchSchema.parse({
+        name,
+        fileName: "salon-public-web-review",
+        status: "completed",
+        pilotLimit: rows.length,
+        concurrency: 1,
+        estimatedSerpCalls: 0,
+        usedSerpCalls: 0,
+        processedRows: 0,
+        enrichedRows: 0,
+        needsReviewRows: rows.length,
+        approvedRows: 0,
+        importedRows: 0,
+      });
+      const result = await storage.createSalonSearchReportBatch(batchData, rows, userId, false, true);
+      if (result.duplicatePlaceIds.length) {
+        return res.status(409).json({
+          message: "Some Google Place IDs were staged by another upload. Refresh the report and retry.",
+          duplicateCount: result.duplicatePlaceIds.length,
+        });
+      }
+      if (result.duplicateNaturalKeys.length) {
+        return res.status(409).json({
+          message: "Matching business and phone rows were staged by another upload. Refresh the report and retry.",
+          duplicateCount: result.duplicateNaturalKeys.length,
+        });
+      }
+      if (!result.batch) return res.status(500).json({ message: "Could not create the staged list batch" });
+      return res.status(201).json({
+        batch: result.batch,
+        ...staged,
+        stagedCount: rows.length,
+        duplicateSummary: `${staged.duplicateCount} duplicate row${staged.duplicateCount === 1 ? "" : "s"} skipped`,
+        externalSearches: 0,
+        estimatedSerpCalls: 0,
+        usedSerpCalls: 0,
+        state: "staged_unverified",
+      });
+    } catch (error) {
+      console.error("Failed to stage uploaded salon list:", error);
+      return res.status(error instanceof z.ZodError ? 400 : 500).json({
+        message: error instanceof Error ? error.message : "Failed to stage uploaded salon list",
+      });
+    }
+  });
+
   app.post("/api/salon-search-report/load-pilot", isAuthenticated, async (req: any, res) => {
     try {
       const result = await saveSalonSearchReport(req.user.claims.sub as string, {
@@ -2834,7 +2919,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const source = row.sourceData as Record<string, unknown>;
         if (category && source.category !== category && reportCategoryForRow(row) !== category) return false;
         if (!search) return true;
-        return [row.businessName, row.address, row.state, row.email, source["Evidence and exceptions"]]
+        return [
+          row.businessName, row.address, row.state, row.email,
+          source["Public email (review-only when marked)"], source.uploadedEmailCandidate,
+          source.uploadedFirstNameSuggestion, source.uploadedLastNameSuggestion,
+          source["Evidence and exceptions"],
+        ]
           .some(value => typeof value === "string" && value.toLowerCase().includes(search));
       });
       const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 100));
@@ -2857,9 +2947,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           state: row.state,
           placeId: row.placeId,
           email: row.email,
-          candidateEmail: typeof sourceData["Public email (review-only when marked)"] === "string"
-            ? sourceData["Public email (review-only when marked)"] as string
-            : null,
+          candidateEmail: typeof sourceData.uploadedEmailCandidate === "string"
+            ? sourceData.uploadedEmailCandidate as string
+            : typeof sourceData["Public email (review-only when marked)"] === "string"
+              ? sourceData["Public email (review-only when marked)"] as string
+              : null,
+          suggestedFirstName: typeof sourceData.uploadedFirstNameSuggestion === "string"
+            ? sourceData.uploadedFirstNameSuggestion as string : null,
+          suggestedLastName: typeof sourceData.uploadedLastNameSuggestion === "string"
+            ? sourceData.uploadedLastNameSuggestion as string : null,
           sourceUrl: evidence?.sourceUrl || (typeof sourceData["Email evidence URL"] === "string" ? sourceData["Email evidence URL"] as string : null),
           evidenceNote: evidence?.note || (typeof sourceData["Evidence and exceptions"] === "string" ? sourceData["Evidence and exceptions"] as string : null),
           category: reportCategoryForRow(row),
@@ -2996,6 +3092,62 @@ export async function registerRoutes(app: Express): Promise<Server> {
     })));
   });
 
+  app.get("/api/salon-enrichment/batches/:id/verification-estimate", isAuthenticated, async (req: any, res) => {
+    const userId = req.user.claims.sub as string;
+    const batch = await storage.getSalonEnrichmentBatch(req.params.id, userId);
+    if (!batch || batch.fileName !== "salon-public-web-review") return res.status(404).json({ message: "Staged list batch not found" });
+    const active = salonEnrichmentIsActive(batch.id);
+    const rows = await storage.getSalonEnrichmentRows(batch.id, userId);
+    const initial = !active && batch.status === "completed" && rows.length > 0 && rows.every(row => {
+      const source = row.sourceData as Record<string, unknown> | null;
+      return source?.stagingState === "staged_unverified" && row.email === null &&
+        !row.importedContactId && row.reviewStatus !== "approved" && row.reviewStatus !== "rejected";
+    });
+    const retryCount = !active && !initial && ["completed", "paused"].includes(batch.status)
+      ? rows.filter(isRetryableStagedSalonRow).length
+      : 0;
+    const eligibleRows = initial ? rows.length : retryCount;
+    const mode = active ? "running" : initial ? "initial" : retryCount ? "retry" : "none";
+    return res.json({
+      mode,
+      eligibleRows,
+      estimatedSerpCalls: eligibleRows * 2,
+      active,
+    });
+  });
+
+  app.post("/api/salon-enrichment/batches/:id/verify", isAuthenticated, async (req: any, res) => {
+    if (req.body?.confirmed !== true) {
+      return res.status(400).json({ message: "Confirm the estimated provider usage before starting list verification" });
+    }
+    const userId = req.user.claims.sub as string;
+    const batch = await storage.getSalonEnrichmentBatch(req.params.id, userId);
+    if (!batch) return res.status(404).json({ message: "Batch not found" });
+    const retryUnverified = req.body?.retryUnverified === true;
+    if (retryUnverified &&
+        (!Number.isInteger(req.body?.expectedEligibleRows) || req.body.expectedEligibleRows < 1)) {
+      return res.status(400).json({ message: "Retry verification requires the eligible-row count from the current budget estimate" });
+    }
+    if (salonEnrichmentIsActive(batch.id)) return res.status(409).json({ message: "Verification is already running for this batch" });
+    const started = await storage.prepareSalonReportBatchForVerification(
+      batch.id,
+      userId,
+      2,
+      retryUnverified,
+      req.body?.expectedEligibleRows,
+    );
+    if (!started) {
+      return res.status(409).json({ message: "This batch is not an unverified staged list, or verification has already started" });
+    }
+    startSalonEnrichment(started.batch);
+    return res.status(202).json({
+      batch: started.batch,
+      eligibleRows: started.eligibleRows,
+      estimatedSerpCalls: started.estimatedSerpCalls,
+      started: true,
+    });
+  });
+
   app.post("/api/salon-enrichment/batches", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
@@ -3043,7 +3195,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.post("/api/salon-enrichment/batches/:id/start", isAuthenticated, async (req: any, res) => {
-    const userId = req.user.claims.sub;
+    const userId = req.user.claims.sub as string;
+    const current = await storage.getSalonEnrichmentBatch(req.params.id, userId);
+    if (!current) return res.status(404).json({ message: "Batch not found" });
+    if (current.fileName === "salon-public-web-review") {
+      const rows = await storage.getSalonEnrichmentRows(current.id, userId);
+      if (rows.some(row => ["staged_unverified", "verification_attempted"].includes(
+        String((row.sourceData as Record<string, unknown> | null)?.stagingState),
+      ))) {
+        return res.status(409).json({ message: "Confirm the provider budget in Salon Enrichment before verifying this staged list" });
+      }
+    }
     const batch = await storage.updateSalonEnrichmentBatch(req.params.id, { status: "running", startedAt: new Date(), errorMessage: null }, userId);
     if (!batch) return res.status(404).json({ message: "Batch not found" });
     startSalonEnrichment(batch);
@@ -3059,6 +3221,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/salon-enrichment/batches/:id/resume", isAuthenticated, async (req: any, res) => {
     const current = await storage.getSalonEnrichmentBatch(req.params.id, req.user.claims.sub);
     if (!current) return res.status(404).json({ message: "Batch not found" });
+    if (current.fileName === "salon-public-web-review" && ["completed", "paused"].includes(current.status)) {
+      const rows = await storage.getSalonEnrichmentRows(current.id, req.user.claims.sub);
+      if (rows.some(isRetryableStagedSalonRow)) {
+        return res.status(409).json({ message: "Confirm the provider budget through the staged-list verification step before retrying" });
+      }
+    }
     const requestedLimit = Number(req.body?.pilotLimit);
     const pilotLimit = Number.isInteger(requestedLimit) && requestedLimit > current.pilotLimit
       ? Math.min(requestedLimit, current.totalRows)
@@ -3099,6 +3267,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const rows = batch ? await storage.getSalonEnrichmentRows(req.params.id, batch.userId) : [];
     const rowIds = Array.isArray(req.body?.rowIds) ? req.body.rowIds : [];
     if (!batch || rowIds.some((id: unknown) => !rows.some(row => row.id === id))) return res.status(404).json({ message: "Batch or row not found" });
+    if (batch.fileName === "salon-public-web-review" && rows.some(row =>
+      rowIds.includes(row.id) && ["staged_unverified", "verification_attempted"].includes(
+        String((row.sourceData as Record<string, unknown> | null)?.stagingState),
+      )
+    )) {
+      return res.status(409).json({ message: "Start this staged list through the confirmed verification step before retrying enrichment" });
+    }
     try {
       const count = await storage.resetSalonRowsForRetry(rowIds, actorScope);
       if (count && batch.status === "completed") {

@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { OwnerNameReview, OwnerSearchEstimate, OwnerPreview } from "@/components/owner-name-review";
+import SalesLeadListUpload from "@/components/sales-lead-list-upload";
 import type { OwnerNameResult } from "@shared/salonOwnerName";
 import {
   AlertCircle, ArrowLeft, ArrowRight, BriefcaseBusiness, CalendarClock,
@@ -29,6 +30,8 @@ type SearchRow = {
   placeId?: string | null;
   email?: string | null;
   candidateEmail?: string | null;
+  suggestedFirstName?: string | null;
+  suggestedLastName?: string | null;
   sourceUrl?: string | null;
   evidenceNote?: string | null;
   category?: string | null;
@@ -242,7 +245,7 @@ export default function SalonSearchReport() {
         demoScheduledDate: null,
         demoCompletedDate: null,
         wonDate: null,
-        description: `Salon search report · ${row.category || "Unclassified"}${row.sourceUrl ? ` · Source: ${row.sourceUrl}` : ""}`,
+        description: `Sales lead review · ${row.category || "Unclassified"}${row.sourceUrl ? ` · Source: ${row.sourceUrl}` : ""}`,
       });
       if (!response.ok) throw new Error((await response.json().catch(() => ({}))).message || "Deal creation failed");
       return response.json();
@@ -254,30 +257,30 @@ export default function SalonSearchReport() {
     mutationFn: async (file: File) => {
       const parsed: unknown = JSON.parse(await file.text());
       if (!parsed || typeof parsed !== "object" || !Array.isArray((parsed as { reviewed?: unknown }).reviewed)) {
-        throw new Error("The JSON file must contain a reviewed array.");
+        throw new Error("This option needs a pre-checked lead report. For your ordinary CSV or Excel file, use Upload a Lead List.");
       }
       const response = await apiRequest("POST", "/api/salon-search-report/batches", {
-        name: file.name.replace(/\.json$/i, "") || "Salon search report",
+        name: file.name.replace(/\.json$/i, "") || "Sales lead review",
         reviewed: (parsed as { reviewed: unknown[] }).reviewed,
       });
       if (!response.ok) throw new Error((await response.json().catch(() => ({}))).message || "Upload failed");
       return response.json();
     },
-    onSuccess: () => { toast({ title: "Search report added", description: "The report batch is ready to review." }); setPage(0); refresh(); },
+    onSuccess: () => { toast({ title: "Lead report added", description: "The list is ready for email-source and contact-name review." }); setPage(0); refresh(); },
     onError: (error: Error) => toast({ title: "Could not upload report", description: error.message, variant: "destructive" }),
   });
   const loadPilot = useMutation({
     mutationFn: async () => {
       const response = await apiRequest("POST", "/api/salon-search-report/load-pilot", {});
-      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).message || "Could not load the reviewed pilot");
+      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).message || "Could not load the sample leads");
       return response.json();
     },
     onSuccess: () => {
-      toast({ title: "Reviewed pilot is ready", description: "The historical 100-row pilot was loaded. Any existing pilot batch was reused." });
+      toast({ title: "Sample leads are ready", description: "The built-in 100-lead example is available for review. It uses the existing sample list if already added." });
       setPage(0);
       refresh();
     },
-    onError: (error: Error) => toast({ title: "Could not load reviewed pilot", description: error.message, variant: "destructive" }),
+    onError: (error: Error) => toast({ title: "Could not load sample leads", description: error.message, variant: "destructive" }),
   });
   const schedule = useMutation({
     mutationFn: async () => {
@@ -332,41 +335,60 @@ export default function SalonSearchReport() {
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto">
-      <Header title="Salon Search Report" />
+    <Header title="Sales Lead Review" />
       <main className="mx-auto max-w-[1500px] space-y-6 p-4 sm:p-6">
         <section className="relative overflow-hidden rounded-2xl border border-border bg-card px-5 py-6 sm:px-8 sm:py-8">
           <div className="absolute -right-8 -top-14 h-52 w-52 rounded-full border-[28px] border-primary/5" aria-hidden="true" />
           <div className="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
             <div className="max-w-2xl">
               <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/5 px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-primary">
-                <Search className="h-3.5 w-3.5" /> Search intelligence
+                <Search className="h-3.5 w-3.5" /> Public Database · Review before outreach
               </div>
-              <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Salon search report</h1>
+              <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Sales Lead Review</h1>
               <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">
-                Review source-backed discoveries across every batch. Approval, contact import, pipeline creation and email scheduling are separate, deliberate steps.
+                Review public leads, verify emails and contact names, then add approved contacts to Directory First outreach sequences. Uploading a list does not import contacts or send emails.
               </p>
             </div>
             <div>
-              <input ref={uploadRef} className="sr-only" type="file" accept=".json,application/json" aria-label="Upload salon search JSON report" onChange={event => {
+              <Button className="w-full sm:w-auto" onClick={() => {
+                document.getElementById("sales-lead-list-file")?.click();
+                document.getElementById("sales-lead-list-upload")?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }}>
+                <Upload className="mr-2 h-4 w-4" />Upload a Lead List
+              </Button>
+              <p className="mt-2 text-right text-xs text-muted-foreground">CSV or Excel · preview before adding</p>
+              <details className="mt-3 rounded-lg border-2 border-slate-400 p-3 dark:border-slate-600">
+                <summary className="cursor-pointer text-sm font-medium">Other List Options</summary>
+                <p className="mt-2 text-xs text-muted-foreground">These options are not for your ordinary CSV or Excel list.</p>
+              <input ref={uploadRef} className="sr-only" type="file" accept=".json,application/json" aria-label="Upload source-reviewed JSON report" onChange={event => {
                 const file = event.target.files?.[0];
                 if (file) upload.mutate(file);
                 event.currentTarget.value = "";
               }} />
-              <Button onClick={() => uploadRef.current?.click()} disabled={upload.isPending} className="w-full sm:w-auto">
-                <FileJson2 className="mr-2 h-4 w-4" />{upload.isPending ? "Uploading report…" : "Upload JSON report"}
+              <Button variant="outline" onClick={() => uploadRef.current?.click()} disabled={upload.isPending} className="mt-3 w-full">
+                <FileJson2 className="mr-2 h-4 w-4" />{upload.isPending ? "Adding report…" : "Import a Pre-Checked Report"}
               </Button>
-              <p className="mt-2 text-right text-xs text-muted-foreground">Accepts a <code>reviewed</code> array</p>
-              <Button variant="outline" onClick={() => loadPilot.mutate()} disabled={loadPilot.isPending} className="mt-3 w-full sm:w-auto">
-                <Users className="mr-2 h-4 w-4" />{loadPilot.isPending ? "Loading pilot…" : "Load reviewed pilot"}
+              <p className="mt-2 text-xs text-muted-foreground">For a checked lead report with email-source links, saved as JSON. Leads still need your approval before outreach.</p>
+              <Button variant="outline" onClick={() => loadPilot.mutate()} disabled={loadPilot.isPending} className="mt-3 w-full">
+                <Users className="mr-2 h-4 w-4" />{loadPilot.isPending ? "Loading sample leads…" : "Load Sample Leads"}
               </Button>
+              <p className="mt-2 text-xs text-muted-foreground">Adds the built-in example list for review. It does not upload your file or run a search.</p>
+              </details>
             </div>
           </div>
         </section>
 
+        <SalesLeadListUpload onSuccess={result => {
+          setBatchId(result.batch.id);
+          setPage(0);
+          refresh();
+          queryClient.invalidateQueries({ queryKey: ["/api/salon-enrichment/batches"] });
+        }} />
+
         {reportQuery.isError && (
           <Alert variant="destructive">
             <AlertCircle className="h-4 w-4" />
-            <AlertTitle>Search report could not load</AlertTitle>
+            <AlertTitle>Sales leads could not load</AlertTitle>
             <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
               <span>{(reportQuery.error as Error).message || "Check your connection and try again."}</span>
               <Button size="sm" variant="outline" onClick={() => reportQuery.refetch()}><RefreshCw className="mr-2 h-3.5 w-3.5" />Retry</Button>
@@ -490,6 +512,7 @@ export default function SalonSearchReport() {
                         {!row.email && row.candidateEmail && <span className="inline-flex items-center gap-1 rounded-md border border-amber-300/70 bg-amber-50 px-2 py-1 text-amber-900"><Mail className="h-3.5 w-3.5" /><span>{row.candidateEmail}</span><span className="font-semibold">Unverified / restricted · not actionable</span></span>}
                         {row.placeId && <span className="font-mono">Place ID · {row.placeId}</span>}
                       </div>
+                      {(row.suggestedFirstName || row.suggestedLastName) && <p className="mt-3 text-sm text-muted-foreground">Uploaded contact-name suggestion: <span className="font-medium text-foreground">{[row.suggestedFirstName, row.suggestedLastName].filter(Boolean).join(" ")}</span> · not confirmed. Review owner evidence below before using a personal greeting.</p>}
                       {row.evidenceNote && <p className="mt-3 max-w-3xl text-sm leading-5 text-foreground/80">{row.evidenceNote}</p>}
                       <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
                         {row.sourceUrl ? <a className="inline-flex items-center gap-1 font-medium text-primary underline-offset-4 hover:underline" href={row.sourceUrl} target="_blank" rel="noopener noreferrer">Open source <ExternalLink className="h-3 w-3" /></a> : <span className="text-muted-foreground">No source link provided</span>}
