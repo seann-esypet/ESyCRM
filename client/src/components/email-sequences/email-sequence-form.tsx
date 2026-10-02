@@ -77,7 +77,7 @@ export default function EmailSequenceForm({ sequence, onSuccess, onCancel }: Ema
       sequenceNumber: sequence?.sequenceNumber || 1,
       sequenceTrack: sequenceTrack,
       subject: sequence?.subject || "",
-      body: sequence?.body || `Hi [Contact_First_Name],\n\n\n\nBest regards,\n[Sales_Person]`,
+      body: sequence?.body || `[Contact_Greeting]\n\n\n\nBest regards,\n[Sales_Person]`,
       scheduledDate: sequence?.scheduledDate ? new Date(sequence.scheduledDate).toISOString().split('T')[0] : "",
       scheduledTime: sequence?.scheduledTime || "09:00",
       daysAfterNoReply: sequence?.daysAfterNoReply || (sequenceNumber > 1 ? 3 : null),
@@ -223,7 +223,7 @@ export default function EmailSequenceForm({ sequence, onSuccess, onCancel }: Ema
                   />
                 </FormControl>
                 <FormDescription>
-                  Use [Contact_First_Name], [Sales_Person], [Business_Name], and [City] as placeholders. They will be replaced automatically.
+                  Use [Contact_Greeting] for “Hi first name,” or “Hi business name team,” automatically. [Contact_First_Name], [Sales_Person], [Business_Name], and [City] also work.
                 </FormDescription>
                 <FormMessage />
               </FormItem>

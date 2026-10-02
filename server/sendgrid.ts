@@ -33,7 +33,8 @@ if (BREVO_API_KEY) {
 /**
  * Replace template variables in email content
  * Supported variables:
- * - [Contact_First_Name] - Contact's first name
+ * - [Contact_Greeting] - Full greeting: Hi Jane, or Hi Example Salon team,
+ * - [Contact_First_Name] - Contact's first name (business-name fallback outside greetings)
  * - [Sales_Person] - Salesperson's first name
  * - [Business_Name] - Contact's company/business name
  * - [City] - Contact's city
@@ -53,10 +54,25 @@ export function replaceTemplateVariables(
     (contact.useBusinessNameForEmail === "Yes" || !contact.firstName)
       ? (contact.company || businessName)
       : contact.firstName;
+  const personalName = contact.firstName?.trim();
+  const companyName = contact.company?.trim();
+  const greetingName = personalName && contact.useBusinessNameForEmail !== "Yes"
+    ? personalName
+    : companyName ? `${companyName} team` : "there";
+  const greeting = `Hi ${greetingName},`;
+
+  // Existing saved templates already begin with Hi [Contact_First_Name].
+  // Adapt that opening at render time, without rewriting stored templates or
+  // changing first-name tokens used in subjects or the rest of the message.
+  const greetingContent = content.replace(
+    /^((?:\s|<[^>]*>)*Hi(?:\s|&nbsp;)+(?:<(?:span|strong|b|em|i)\b[^>]*>\s*)*)\[Contact_First_Name\]/i,
+    (_match, opening: string) => `${opening}${greetingName}`,
+  );
 
   console.log(`[replaceTemplateVariables] contact: ${contact.firstName} ${contact.lastName}, company: "${contact.company}", businessName: "${businessName}", city: "${city}", useBusinessName: ${contact.useBusinessNameForEmail}`);
 
-  return content
+  return greetingContent
+    .replace(/\[Contact_Greeting\]/g, () => greeting)
     .replace(/\[Contact_First_Name\]/g, contactFirstName)
     .replace(/\[Sales_Person\]/g, salespersonName)
     .replace(/\[Business_Name\]/g, businessName)

@@ -57,7 +57,7 @@ test("approved contact names and business-name email preference stay independent
   assert.equal(imported.useBusinessNameForEmail, "Yes");
   assert.equal(
     replaceTemplateVariables("Hi [Contact_First_Name]", { ...companyContact, ...imported }, salesperson),
-    "Hi Example Salon",
+    "Hi Example Salon team",
   );
 });
 
@@ -69,7 +69,7 @@ test("unapproved team mentions never supply sequence first names", () => {
   assert.equal(imported.firstName, null);
   assert.equal(
     replaceTemplateVariables("Hi [Contact_First_Name]", { ...companyContact, ...imported }, salesperson),
-    "Hi Example Salon",
+    "Hi Example Salon team",
   );
 });
 

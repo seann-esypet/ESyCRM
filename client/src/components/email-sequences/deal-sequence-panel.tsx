@@ -326,7 +326,8 @@ function UpdateSequenceDialog({ log, open, onOpenChange, onSuccess }: UpdateDial
               </TooltipProvider>
             </div>
             <p className="text-xs text-muted-foreground">
-              Tokens: <code className="bg-muted px-1 rounded text-xs">[Contact_First_Name]</code>{" "}
+              Tokens: <code className="bg-muted px-1 rounded text-xs">[Contact_Greeting]</code>{" "}
+              <code className="bg-muted px-1 rounded text-xs">[Contact_First_Name]</code>{" "}
               <code className="bg-muted px-1 rounded text-xs">[Sales_Person]</code>{" "}
               <code className="bg-muted px-1 rounded text-xs">[Business_Name]</code>
             </p>
@@ -376,7 +377,7 @@ function SequenceComposerDialog({ contact, open, onOpenChange, onSuccess }: Comp
   const [sendTime, setSendTime] = useState("09:00");
   const [customSubject, setCustomSubject] = useState("");
   const [customBody, setCustomBody] = useState(
-    `Hi ${contact.firstName || "[Contact_First_Name]"},\n\n\n\nBest regards,\n[Sales_Person]`
+    `[Contact_Greeting]\n\n\n\nBest regards,\n[Sales_Person]`
   );
   const customBodyRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -414,7 +415,7 @@ function SequenceComposerDialog({ contact, open, onOpenChange, onSuccess }: Comp
     setSendDate("");
     setSendTime("09:00");
     setCustomSubject("");
-    setCustomBody(`Hi ${contact.firstName || "[Contact_First_Name]"},\n\n\n\nBest regards,\n[Sales_Person]`);
+    setCustomBody(`[Contact_Greeting]\n\n\n\nBest regards,\n[Sales_Person]`);
   };
 
   const handleOpenChange = (val: boolean) => {
@@ -615,7 +616,8 @@ function SequenceComposerDialog({ contact, open, onOpenChange, onSuccess }: Comp
                   </p>
                 </div>
                 <p className="text-xs text-purple-700 dark:text-purple-300">
-                  Tokens: <code className="bg-purple-100 dark:bg-purple-900 px-1 rounded text-xs">[Contact_First_Name]</code>{" "}
+                  Tokens: <code className="bg-purple-100 dark:bg-purple-900 px-1 rounded text-xs">[Contact_Greeting]</code>{" "}
+                  <code className="bg-purple-100 dark:bg-purple-900 px-1 rounded text-xs">[Contact_First_Name]</code>{" "}
                   <code className="bg-purple-100 dark:bg-purple-900 px-1 rounded text-xs">[Sales_Person]</code>{" "}
                   <code className="bg-purple-100 dark:bg-purple-900 px-1 rounded text-xs">[Business_Name]</code>
                 </p>

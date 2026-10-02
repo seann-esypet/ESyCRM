@@ -404,7 +404,7 @@ export default function EmailSequences() {
               <li>• When a deal is marked "Qualified Lead", the system automatically selects the right track based on software status</li>
               <li>• Sequence 1 sends on your chosen date and time (Eastern Time)</li>
               <li>• Sequences 2-5 send automatically after specified days if no reply received</li>
-              <li>• Use placeholders: [Contact_First_Name], [Sales_Person], [Business_Name], and [City] in your email content</li>
+              <li>• Use [Contact_Greeting] for an automatic personal or business-team greeting. Other placeholders: [Contact_First_Name], [Sales_Person], [Business_Name], and [City]</li>
               <li>• Requires Reserved VM deployment for 24/7 automation</li>
             </ul>
           </div>

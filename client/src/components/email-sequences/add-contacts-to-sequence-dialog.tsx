@@ -30,7 +30,7 @@ const SOFTWARE_FILTERS: { value: SoftwareFilter; label: string }[] = [
   { value: "unknown", label: "? Unknown" },
 ];
 
-const PLACEHOLDERS_HELP = "[Contact_First_Name], [Sales_Person], [Business_Name], [City]";
+const PLACEHOLDERS_HELP = "[Contact_Greeting] (automatic personal/team greeting), [Contact_First_Name], [Sales_Person], [Business_Name], [City]";
 
 export default function AddContactsToSequenceDialog({
   sequence,
@@ -323,7 +323,7 @@ export default function AddContactsToSequenceDialog({
                 <Label htmlFor="custom-body" className="text-xs">Body <span className="text-destructive">*</span></Label>
                 <Textarea
                   id="custom-body"
-                  placeholder={`Hi [Contact_First_Name],\n\nWrite your personalized message here…`}
+                  placeholder={`[Contact_Greeting]\n\nWrite your personalized message here…`}
                   value={customBody}
                   onChange={e => setCustomBody(e.target.value)}
                   rows={6}
