@@ -32,3 +32,9 @@ For a source-reviewed salon contact, approval and email attribution must still b
 **Why:** CRM contact emails and review decisions can change after a send is queued. Otherwise a queued message or later follow-up can go to an address that was never verified for that salon.
 
 **How to apply:** Before each scheduled send, compare the contact's current address with the approved source-backed address and block delivery when attribution or approval has changed. Keep this check on chained follow-ups as well as the first message.
+
+Keep first-party metadata-only email findings separate from visibly published general-contact addresses during source review. Structured business data or social metadata can corroborate an address even when rendered-text extraction omits it, but that distinction must remain visible to the reviewer.
+
+**Why:** A spreadsheet recheck found addresses in current business-page metadata that were absent from visible contact text. Calling them “not found” lost real evidence; counting them as visibly confirmed overstated what had been reviewed.
+
+**How to apply:** Inspect bounded raw HTML as well as extracted text when findings disagree. Record metadata-only candidates with the exact source and matching business/location evidence, keep them review-only, and do not claim deliverability or a specific mailbox addressee.

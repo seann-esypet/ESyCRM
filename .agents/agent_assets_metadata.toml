@@ -168,3 +168,17 @@ mtime_ms = 1790560851093
 storage_uri = "gcs://replit-rams-assets-picard/rams/assets/repl:1910afef-1072-4e99-9487-9737d06762ee/40722568-d29d-4974-baae-1d4c9a535405/5e250828-afb5-4328-8164-df1cf963bd5f"
 storage_version_token = "1790560864648196"
 content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+[[outputs]]
+id = "uSVgveS5PMXTkJ4DolQW0"
+uri = "file://reports/state-export-email-review.xlsx"
+type = "table"
+title = "State Lead Discovery — Email & Contact Review"
+description = "All 36 businesses checked: 6 new confirmed published emails, 1 corrected existing email, 11 review-only candidates, and 6 general contact forms. Includes source evidence, owner-name findings, and the unchanged original export."
+logical_id = "c6b570e0-5e43-4baa-af99-660d5f7e122b"
+content_hash = "sha256:d16d9ab8d00985d1fcbe959246b85fd88e307a517a54b7739ffce66fe45c4036"
+size = 220922
+mtime_ms = 1790906140446
+storage_uri = "gcs://replit-rams-assets-picard/rams/assets/repl:1910afef-1072-4e99-9487-9737d06762ee/c6b570e0-5e43-4baa-af99-660d5f7e122b/fcea0e39-4d44-419c-88f6-2329b5ac5d98"
+storage_version_token = "1790906249713847"
+content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
