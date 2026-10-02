@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import React, { useState, type ReactNode } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Edit, Mail, Phone, Users, Building, MapPin, Globe, User, Briefcase, FileText, Archive, ArchiveRestore, ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react";
 import type { Contact, Deal, User as UserType } from "@shared/schema";
+import { getContactDisplay } from "@/lib/contact-display";
 
 interface ContactListProps {
   contacts: Contact[];
@@ -176,7 +177,7 @@ export default function ContactList({ contacts, deals, isLoading, isAdmin, admin
                   <TableCell className="font-medium">
                     <div className="flex items-center space-x-3">
                       <div className="w-8 h-8 bg-primary text-primary-foreground rounded-full flex items-center justify-center text-sm font-medium">
-                        {contact.firstName.charAt(0)}{contact.lastName.charAt(0)}
+                        {getContactDisplay(contact).initials}
                       </div>
                       <div>
                         <button
@@ -184,7 +185,7 @@ export default function ContactList({ contacts, deals, isLoading, isAdmin, admin
                           onClick={() => setViewContact(contact)}
                           data-testid={`link-contact-details-${contact.id}`}
                         >
-                          {contact.firstName} {contact.lastName}
+                          {getContactDisplay(contact).name}
                         </button>
                         {contact.jobTitle && (
                           <p className="text-sm text-muted-foreground">{contact.jobTitle}</p>
@@ -306,9 +307,9 @@ export default function ContactList({ contacts, deals, isLoading, isAdmin, admin
                 <DialogHeader>
                   <DialogTitle className="flex items-center gap-3">
                     <div className="w-10 h-10 bg-primary text-primary-foreground rounded-full flex items-center justify-center text-sm font-medium">
-                      {viewContact.firstName.charAt(0)}{viewContact.lastName.charAt(0)}
+                      {getContactDisplay(viewContact).initials}
                     </div>
-                    {viewContact.firstName} {viewContact.lastName}
+                    {getContactDisplay(viewContact).name}
                   </DialogTitle>
                 </DialogHeader>
 
