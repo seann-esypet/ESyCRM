@@ -39,3 +39,68 @@ export function salonEmailContextRestriction(context: string): string | null {
   }
   return null;
 }
+
+/**
+ * Include a mailbox's containing-section labels, not other sections' inboxes.
+ * Flattening or splitting at every block tag loses labels such as:
+ * <div>For bookings only<p><a href="mailto:...">Email</a></p></div>.
+ */
+export function salonEmailHtmlContextRestriction(email: string, html: string): string | null {
+  type Node = { tag: string; own: string; children: Node[]; parent?: Node };
+  const root: Node = { tag: "", own: "", children: [] };
+  const stack: Node[] = [root];
+  const nodes: Node[] = [];
+  const blocks = new Set(["p", "div", "li", "td", "section", "article", "address",
+    "blockquote", "fieldset", "form", "footer", "header", "aside", "h1", "h2", "h3", "h4", "h5", "h6"]);
+  const voids = new Set(["area", "base", "br", "col", "embed", "hr", "img",
+    "input", "link", "meta", "param", "source", "track", "wbr"]);
+  const markup = html.replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<(script|style|head|template|noscript|svg|textarea)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ");
+  for (const token of markup.match(/<\/?[a-z][\w:-]*\b[^>]*>|[^<]+|</gi) ?? []) {
+    const tag = token.match(/^<\/?([a-z][\w:-]*)\b/i)?.[1]?.toLowerCase();
+    if (!tag) {
+      stack[stack.length - 1].own += ` ${token}`;
+    } else if (token.startsWith("</")) {
+      for (let index = stack.length - 1; index > 0; index--) {
+        if (stack[index].tag === tag) {
+          stack.length = index;
+          break;
+        }
+      }
+    } else {
+      const parent = stack[stack.length - 1];
+      const node: Node = { tag, own: token, children: [], parent };
+      parent.children.push(node);
+      nodes.push(node);
+      if (!voids.has(tag) && !/\/\s*>$/.test(token)) stack.push(node);
+      if (stack.length > 128) return "Mailbox context is too deeply nested to verify safely";
+    }
+  }
+  const flatten = (node: Node, includeBlocks: boolean): string => [
+    node.own,
+    ...node.children.filter(child => includeBlocks || !blocks.has(child.tag))
+      .map(child => flatten(child, includeBlocks)),
+  ].join(" ");
+  const needle = email.toLowerCase();
+  for (const node of [root, ...nodes].filter(node => node.own.toLowerCase().includes(needle))) {
+    // Preserve inline labels around mailto links as well as visible addresses.
+    let current: Node = node;
+    while (!blocks.has(current.tag) && current.parent) current = current.parent;
+    let context = flatten(current, false);
+    let reason = salonEmailContextRestriction(context);
+    if (reason) return reason;
+    for (let parent = current.parent; parent; parent = parent.parent) {
+      // Document-level containers do not make one section's restrictions global.
+      if (!blocks.has(parent.tag)) continue;
+      const labels = parent.children.filter(child => {
+        const text = flatten(child, true);
+        return !/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i.test(text) &&
+          (/^(?:h[1-6]|label|legend)$/.test(child.tag) || Boolean(salonEmailContextRestriction(text)));
+      }).map(child => flatten(child, true));
+      context += ` ${flatten(parent, false)} ${labels.join(" ")}`;
+      reason = salonEmailContextRestriction(context);
+      if (reason) return reason;
+    }
+  }
+  return null;
+}

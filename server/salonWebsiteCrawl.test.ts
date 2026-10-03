@@ -106,6 +106,65 @@ test("historical provider emails cannot pass import eligibility even with appare
   ), null);
 });
 
+test("purpose-restricted booking-page mailboxes cannot become salon contact emails", () => {
+  const page = `<body><h1>Paws Grooming</h1>
+    <p>For bookings only: <a href="mailto:appointments@paws.test">Book</a></p>
+    <p>Send vaccination records to records@paws.test</p>
+    <p>Existing clients only: clients@paws.test</p></body>`;
+  assert.equal(extractSalonEmailFromBookingHtml(page, "Paws Grooming", "https://vagaro.com/paws"), null);
+  assert.equal(extractSalonEmailFromBookingHtml(page.replace("</body>",
+    "<p>General contact: support@paws.test</p></body>"),
+    "Paws Grooming", "https://vagaro.com/paws"), "support@paws.test");
+});
+
+const nestedRestrictedSections = [
+  `<div>For bookings only<p><a href="mailto:appointments@paws.test">Email us</a></p></div>`,
+  `<section><h2>Vaccination records</h2><div><p>Send proof to records@paws.test</p></div></section>`,
+  `<div><p>Existing clients only</p><p><span>clients@paws.test</span></p></div>`,
+  `<div><strong>Website designed by</strong><p>designer@agency.test</p></div>`,
+  `<footer>Website built by<div><p>studio@gmail.com</p></div></footer>`,
+];
+
+test("booking-page restrictions survive nested labels without suppressing a separate general-contact section", () => {
+  for (const restricted of nestedRestrictedSections) {
+    const page = `<body><h1>Paws Grooming</h1>${restricted}</body>`;
+    assert.equal(extractSalonEmailFromBookingHtml(page, "Paws Grooming", "https://vagaro.com/paws"), null);
+    assert.equal(extractSalonEmailFromBookingHtml(page.replace("</body>",
+      "<section><h2>General contact</h2><p>support@paws.test</p></section></body>"),
+      "Paws Grooming", "https://vagaro.com/paws"), "support@paws.test");
+  }
+});
+
+test("salon websites retain nested restricted addresses as review-only and select the separate general email", async () => {
+  const mocked = runtimeFor(url => url.pathname !== "/" ? { status: 404 } : ({
+    body: `<h1>Paws Grooming</h1>${nestedRestrictedSections.join("")}
+      <section><h2>General contact</h2><p>support@paws.test</p></section>`,
+  }));
+  const result = await crawlWebsite("https://paws.test/", { runtime: mocked.runtime });
+  assert.equal(result.email, "support@paws.test");
+  assert.deepEqual(result.rejectedEmails.map(candidate => candidate.value),
+    ["records@paws.test", "clients@paws.test", "designer@agency.test", "studio@gmail.com", "appointments@paws.test"]);
+});
+
+test("a salon contact-page email requires the matched identity and same-site source", () => {
+  const row = {
+    email: "hello@paws.test", websiteUrl: "https://paws.test/", bookingUrl: null,
+    identityMatchStatus: "strong",
+    evidence: { email: {
+      value: "hello@paws.test", source: "website", confidence: "high",
+      sourceUrl: "https://www.paws.test/contact",
+    } },
+  } as Parameters<typeof importableSalonEmailCandidate>[0];
+  assert.equal(importableSalonEmailCandidate(row), "hello@paws.test");
+  assert.equal(importableSalonEmailCandidate({ ...row, identityMatchStatus: "unmatched" }), null);
+  for (const sourceUrl of ["https://another.test/contact", "https://paws.test.attacker.test/",
+    "https://wrong@paws.test/contact", "ftp://paws.test/contact"]) {
+    assert.equal(importableSalonEmailCandidate({
+      ...row, evidence: { email: { ...(row.evidence as any).email, sourceUrl } },
+    }), null);
+  }
+});
+
 test("safe page fetch blocks private literals, private DNS answers, and unsafe redirects", async () => {
   let requestCount = 0;
   const privateRuntime: SalonFetchRuntime = {

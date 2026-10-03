@@ -1,5 +1,5 @@
 import type { SalonEnrichmentRow } from "@shared/schema";
-import { salonEmailDomainRestriction } from "./salonEmailPolicy";
+import { salonEmailDomainRestriction, salonEmailHtmlContextRestriction } from "./salonEmailPolicy";
 
 const bookingProviders: Record<string, string> = {
   "book.cuddlesapp.com": "CuddlesApp",
@@ -71,6 +71,7 @@ export function extractSalonEmailFromBookingHtml(
   for (const email of [...mailtoAddresses, ...visibleAddresses]) {
     const domain = email.split("@")[1]?.toLowerCase();
     if (domain && !salonEmailDomainRestriction(email) &&
+        !salonEmailHtmlContextRestriction(email, content) &&
         excludedDomains.every(excluded => domain !== excluded && !domain.endsWith(`.${excluded}`))) {
       return email.toLowerCase();
     }
@@ -114,7 +115,17 @@ export function importableSalonEmailCandidate(
     }
   }
   if (evidence.source === "website" && evidence.confidence === "high" &&
-      evidence.sourceUrl === row.websiteUrl && row.websiteUrl && !bookingPlatformForUrl(row.websiteUrl)) return email;
+      evidence.sourceUrl && row.websiteUrl && !bookingPlatformForUrl(row.websiteUrl)) {
+    try {
+      const website = new URL(row.websiteUrl);
+      const source = new URL(evidence.sourceUrl);
+      const host = (url: URL) => url.hostname.toLowerCase().replace(/^www\./, "");
+      if ([website, source].every(url => ["http:", "https:"].includes(url.protocol) &&
+          !url.username && !url.password) && host(website) === host(source)) return email;
+    } catch {
+      // The contact page must belong to the matched salon website.
+    }
+  }
   if (evidence.source === "serp_fallback_website" && evidence.confidence === "medium" && evidence.sourceUrl) {
     try {
       const source = new URL(evidence.sourceUrl);

@@ -2,7 +2,7 @@ import { storage } from "./storage";
 import type { LeadDiscoveryJob, LeadDiscoveryResult, InsertLeadDiscoveryResult, SerpUsage, LeadDiscoveryConfig } from "@shared/schema";
 import { parseAddressString } from "@shared/utils";
 import { fetchPublicPage, type SalonFetchRuntime } from "./salonPublicFetch";
-import { salonEmailContextRestriction, salonEmailDomainRestriction } from "./salonEmailPolicy";
+import { salonEmailHtmlContextRestriction, salonEmailDomainRestriction } from "./salonEmailPolicy";
 
 // New reduced query set for budget management
 const DEFAULT_QUERIES = [
@@ -450,22 +450,7 @@ function restrictedSalonEmailReason(email: string, html: string): string | null 
     const decodedAddress = decodeCloudflareEmails(match[0])[0];
     if (decodedAddress) decodedMarkup = decodedMarkup.replace(match[0], `${match[0]} ${decodedAddress}`);
   }
-  const searchable = decodedMarkup.toLowerCase();
-  const index = searchable.indexOf(email.toLowerCase());
-  let context = "";
-  if (index >= 0) {
-    const boundaries = Array.from(searchable.matchAll(/<\/?(?:p|div|li|td|section|article|address|blockquote|h[1-6])\b[^>]*>/gi));
-    const before = boundaries.filter(match => (match.index ?? -1) <= index).pop();
-    const after = boundaries.find(match => (match.index ?? -1) > index);
-    if (before || after) {
-      const start = before ? (before.index ?? 0) + before[0].length : 0;
-      const end = after ? after.index ?? searchable.length : searchable.length;
-      context = searchable.slice(start, end);
-    } else {
-      context = searchable.slice(Math.max(0, index - 80), index + email.length + 80);
-    }
-  }
-  return salonEmailContextRestriction(context);
+  return salonEmailHtmlContextRestriction(email, decodedMarkup);
 }
 
 function contactLinks(html: string, base: URL): URL[] {

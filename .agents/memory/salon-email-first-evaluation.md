@@ -38,3 +38,9 @@ Keep first-party metadata-only email findings separate from visibly published ge
 **Why:** A spreadsheet recheck found addresses in current business-page metadata that were absent from visible contact text. Calling them “not found” lost real evidence; counting them as visibly confirmed overstated what had been reviewed.
 
 **How to apply:** Inspect bounded raw HTML as well as extracted text when findings disagree. Record metadata-only candidates with the exact source and matching business/location evidence, keep them review-only, and do not claim deliverability or a specific mailbox addressee.
+
+Flat contact-page examples are not sufficient evidence that a mailbox-purpose filter is safe.
+
+**Why:** A booking-only label outside the paragraph containing its email bypassed a filter that passed flat-markup tests. A separate general-contact address on the same page made this a false selection, not merely an extraction miss.
+
+**How to apply:** Evaluate mixed-purpose pages with restrictions in ancestor containers, headings, and sibling labels. Require the restricted inbox to stay unusable without suppressing an independently published general-contact address, across both salon websites and salon-specific booking pages.
