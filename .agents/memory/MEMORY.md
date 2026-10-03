@@ -9,3 +9,4 @@
 - [Contact deletion safety](contact-deletion-safety.md) — import cleanup must preserve sales and financial history, require confirmation, and avoid guessing which records belong to an import.
 - [Browser runtime availability](browser-runtime-availability.md) — Chromium can be available without Playwright; use isolated API fixtures without changing CRM authentication.
 - [Provider spending accounting](provider-spending-accounting.md) — count initiated requests independently of saved row results; failures and deletion must never refund a batch allowance.
+- [Post-merge data safety](post-merge-data-safety.md) — automatic setup rebuilds the app; merging code does not authorize database pushes, research, imports, or outreach.
