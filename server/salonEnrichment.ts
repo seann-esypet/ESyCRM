@@ -5,6 +5,7 @@ import { lookupSalonOwnerName } from "./salonOwnerNames";
 import { promoteVerifiedStagedReportEmail } from "./salonSearchReport";
 import { cumulativeStagedSalonSerpCallsUsed } from "./salonListStaging";
 import type { SalonEnrichmentBatch, SalonEnrichmentRow } from "@shared/schema";
+import { directoryEligibility, directoryObject } from "@shared/directoryEligibility";
 
 type Evidence = Record<string, {
   value: string | null;
@@ -73,7 +74,7 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
     ? `salon-enrichment:place:${placeId}`
     : `salon-enrichment:${normalized(row.businessName)}:${normalized(row.address)}:maps`;
   const identitySource = placeId ? "serp_place_id" : "serp_google_maps";
-  let candidate: { title: string; link: string; phone?: string; address?: string; placeId?: string } | undefined;
+  let candidate: { title: string; link: string; phone?: string; address?: string; placeId?: string; categories?: string[] } | undefined;
   let serpResult: { results: any[]; fromCache: boolean } | undefined;
   let candidateSource = identitySource;
   let phoneSource = identitySource;
@@ -200,7 +201,8 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
     serpCallsUsed,
     processedAt: new Date(),
   };
-   evidenceMap.identity = evidence(row.businessName, initialPlaceIdMatch ? identitySource : candidateSource, identityConfidence, candidate.link, identityRationale);
+  evidenceMap.identity = evidence(candidate.title, initialPlaceIdMatch ? identitySource : candidateSource, identityConfidence, candidate.link,
+    `${identityRationale}. Provider name: ${candidate.title}; address: ${candidate.address || "not supplied"}; Place ID: ${candidate.placeId || "not supplied"}. Identity matching does not confirm grooming services.`);
   if (candidate.link && !bookingPlatform) evidenceMap.website = evidence(candidate.link, candidateSource, "high", candidate.link);
   if (candidate.phone) evidenceMap.phone = evidence(candidate.phone, phoneSource, "high", phoneSourceUrl);
   if (bookingEmail && bookingEmailUrl) {
@@ -350,7 +352,16 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
     next.audienceTrack = "directory_general";
   }
   next.serpCallsUsed = serpCallsUsed;
-  next.evidence = evidenceMap;
+  next.evidence = {
+    ...evidenceMap,
+    directoryListing: {
+      categories: candidate.categories?.length ? candidate.categories : directoryEligibility(row).listing.categories,
+      name: candidate.title, address: candidate.address || null, placeId: candidate.placeId || null,
+      provider: "SerpAPI Google Maps", sourceUrl: candidate.link || null,
+    },
+    ...(directoryObject(row.evidence).groomingReview ? { groomingReview: directoryObject(row.evidence).groomingReview } : {}),
+  };
+  if (directoryEligibility({ ...row, ...next }).blocked) next.reviewStatus = "needs_review";
   return next;
 }
 

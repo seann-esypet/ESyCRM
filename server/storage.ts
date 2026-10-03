@@ -73,6 +73,7 @@ import { eq, desc, and, sql, gte, lte, or, ne, inArray, isNull } from "drizzle-o
 import { DIRECTORY_FIRST_STRATEGY, DIRECTORY_TRACKS, directoryEmailSequenceTemplates } from "./directoryEmailSequences";
 import { importableSalonEmail } from "./bookingPageEmail";
 import { salonReportSendRejection } from "./salonSearchReport";
+import { directoryEligibility } from "@shared/directoryEligibility";
 import { isRetryableStagedSalonRow } from "./salonListStaging";
 import { deleteContactSafely } from "./contactDeletion";
 import { deleteSalonReviewRowSafely } from "./salonReviewDeletion";
@@ -1340,6 +1341,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createEmailSequenceLog(insertLog: InsertEmailSequenceLog, userId: string): Promise<EmailSequenceLog> {
+    const contact = await this.getContact(insertLog.contactId, null);
+    if (!contact) throw new Error("Contact not found");
+    const rejection = await this.getSalonReportSendRejection(contact.id, userId, contact.userId, contact.email);
+    if (rejection) throw new Error(rejection);
     const [log] = await db
       .insert(emailSequenceLogs)
       .values({ ...insertLog, userId })
@@ -1376,6 +1381,11 @@ export class DatabaseStorage implements IStorage {
             contactId,
             error: "Contact not found or you don't have access to it"
           });
+          continue;
+        }
+        const rejection = await this.getSalonReportSendRejection(contact.id, sequenceOwnerId, contact.userId, contact.email);
+        if (rejection) {
+          failed.push({ contactId, error: rejection });
           continue;
         }
         
@@ -2416,21 +2426,25 @@ export class DatabaseStorage implements IStorage {
     const reportRows = await db.select({
       row: salonEnrichmentRows,
       batchUserId: salonEnrichmentBatches.userId,
+      fileName: salonEnrichmentBatches.fileName,
     }).from(salonEnrichmentRows)
       .innerJoin(salonEnrichmentBatches, eq(salonEnrichmentRows.batchId, salonEnrichmentBatches.id))
-      .where(and(
-        eq(salonEnrichmentRows.importedContactId, contactId),
-        eq(salonEnrichmentBatches.fileName, "salon-public-web-review"),
-      ));
-    if (!reportRows.length) return null;
+      .where(eq(salonEnrichmentRows.importedContactId, contactId));
     for (const result of reportRows) {
       if (result.batchUserId !== ownerId) return "Salon report batch is no longer owned by the sequence owner";
+      if (directoryEligibility(result.row).blocked) return "Grooming suitability is unconfirmed or this business was excluded";
+      if (result.fileName !== "salon-public-web-review") continue;
       const rejection = salonReportSendRejection(
         result.row,
         { userId: contactOwnerId, email: contactEmail },
         ownerId,
       );
       if (rejection) return rejection;
+    }
+    const discovered = await db.select().from(leadDiscoveryResults)
+      .where(eq(leadDiscoveryResults.importedContactId, contactId));
+    if (discovered.some(row => row.userId !== ownerId || directoryEligibility(row).blocked)) {
+      return "Source listing grooming suitability is unconfirmed or excluded";
     }
     return null;
   }
@@ -2607,6 +2621,10 @@ export class DatabaseStorage implements IStorage {
       const skipped: Array<{ rowId: string; reason: string }> = [];
 
       for (const row of selected) {
+        if (directoryEligibility(row).blocked) {
+          skipped.push({ rowId: row.id, reason: "Grooming suitability is unconfirmed or excluded" });
+          continue;
+        }
         if (row.importedContactId) {
           skipped.push({ rowId: row.id, reason: "Already imported" });
           continue;

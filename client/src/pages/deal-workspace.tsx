@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/select";
 import type { Deal, Contact } from "@shared/schema";
 import { getCommissionAmounts } from "@shared/utils";
+import { pipelineContactOwnerName } from "@shared/pipelineContactName";
 import ContactForm from "@/components/contacts/contact-form";
 import DealTaskPanel from "@/components/tasks/deal-task-panel";
 import DealSequencePanel from "@/components/email-sequences/deal-sequence-panel";
@@ -447,6 +448,7 @@ export default function DealWorkspace() {
 
                 {/* Primary Contact */}
                 <SectionHeader>Primary Contact</SectionHeader>
+                <InfoRow icon={<User className="h-3.5 w-3.5" />} label="Owner’s Name" value={pipelineContactOwnerName(contact) || "Not confirmed"} />
                 <InfoRow icon={<Phone className="h-3.5 w-3.5" />} label="Cell Phone" value={contact.phoneCell ?? contact.phone} link={(contact.phoneCell ?? contact.phone) ? `tel:${contact.phoneCell ?? contact.phone}` : undefined} />
                 <InfoRow icon={<Phone className="h-3.5 w-3.5" />} label="Work Phone" value={contact.phoneWork} link={contact.phoneWork ? `tel:${contact.phoneWork}` : undefined} />
                 <InfoRow icon={<Mail className="h-3.5 w-3.5" />} label="Email" value={contact.email} link={contact.email ? `mailto:${contact.email}` : undefined} />

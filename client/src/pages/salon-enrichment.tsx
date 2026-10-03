@@ -8,6 +8,8 @@ import { useToast } from "@/hooks/use-toast";
 import Header from "@/components/layout/header";
 import { SalonFormOutreachPanel } from "@/components/salon-form-outreach-panel";
 import { OwnerNameReview, OwnerSearchEstimate } from "@/components/owner-name-review";
+import { DirectoryEligibilityReview, EligibilitySummaryStrip, type EligibilitySummary } from "@/components/directory-eligibility";
+import { directoryEligibility } from "@shared/directoryEligibility";
 import type { OwnerNameResult } from "@shared/salonOwnerName";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,7 +23,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Upload, ArrowLeft, Play, Pause, Square, Search, RefreshCw, Check, X, RotateCcw, ShieldCheck, FileSpreadsheet, AlertTriangle, ExternalLink } from "lucide-react";
 
 type Batch = { id: string; name: string; fileName: string; status: string; totalRows: number; pilotLimit: number; processedRows: number; enrichedRows: number; needsReviewRows: number; reviewRows?: number; approvedRows: number; importedRows: number; estimatedSerpCalls: number; usedSerpCalls: number; concurrency: number; errorMessage?: string; createdAt: string };
-type Row = { id: string; rowNumber: number; businessName: string; placeId?: string; address?: string; address1?: string; city?: string; state?: string; zipCode?: string; latitude?: number; longitude?: number; businessStatus?: string; status?: string; identityMatchStatus?: string; reviewStatus?: string; websiteUrl?: string; email?: string; phone?: string; contactRequestFormUrl?: string; contactFormStatus?: string; bookingUrl?: string; currentSoftware?: string; usesSoftware?: string; audienceTrack?: string; category?: string; ownerName?: OwnerNameResult | null; contactName?: { firstName?: string | null; lastName?: string | null; useBusinessNameForEmail?: "Yes" | "No" | null } | null; emailVerified?: boolean; evidence?: unknown; confidence?: unknown; duplicateMetadata?: { contactIds?: string[] }; lastError?: string; importedContactId?: string; sourceData?: Record<string, unknown> };
+type Row = { id: string; rowNumber: number; businessName: string; placeId?: string; address?: string; address1?: string; city?: string; state?: string; zipCode?: string; latitude?: number; longitude?: number; businessStatus?: string; status?: string; identityMatchStatus?: string; reviewStatus?: string; websiteUrl?: string; email?: string; phone?: string; contactRequestFormUrl?: string; contactFormStatus?: string; bookingUrl?: string; currentSoftware?: string; usesSoftware?: string; audienceTrack?: string; category?: string; ownerName?: OwnerNameResult | null; contactName?: { firstName?: string | null; lastName?: string | null; useBusinessNameForEmail?: "Yes" | "No" | null } | null; emailVerified?: boolean; evidence?: unknown; confidence?: unknown; duplicateMetadata?: { contactIds?: string[] }; lastError?: string; importedContactId?: string; sourceData?: Record<string, unknown>; notes?: string | null };
 type VerificationEstimate = {
   mode: "initial" | "retry" | "running" | "none";
   eligibleRows: number;
@@ -126,6 +128,12 @@ export default function SalonEnrichment() {
 
   const batchesQuery = useQuery<Batch[]>({ queryKey: ["/api/salon-enrichment/batches"], enabled: !isDetail, select: data => data.map(item => ({ ...item, reviewRows: item.needsReviewRows })) });
   const batchQuery = useQuery<Batch>({ queryKey: ["/api/salon-enrichment/batches", id], enabled: isDetail });
+  const eligibilitySummaryQuery = useQuery<EligibilitySummary>({
+    queryKey: ["/api/salon-enrichment/batches", id, "eligibility-summary"],
+    queryFn: async () => (await apiRequest("GET", `/api/salon-enrichment/batches/${id}/eligibility-summary`)).json(),
+    enabled: isDetail,
+    refetchInterval: batchQuery.data?.status === "running" ? 4000 : false,
+  });
   const rowsQuery = useQuery<Row[]>({
     queryKey: ["/api/salon-enrichment/batches", id, "rows", rowStatus, reviewStatus, search, page],
     enabled: isDetail,
@@ -198,7 +206,7 @@ export default function SalonEnrichment() {
   });
   const action = useMutation({
     mutationFn: async ({ action: actionName, body }: { action: string; body?: unknown }) => (await apiRequest("POST", `/api/salon-enrichment/batches/${id}/${actionName}`, body)).json(),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/salon-enrichment/batches", id] }); queryClient.invalidateQueries({ queryKey: ["/api/salon-enrichment/batches", id, "rows"] }); },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/salon-enrichment/batches", id] }); queryClient.invalidateQueries({ queryKey: ["/api/salon-enrichment/batches", id, "rows"] }); queryClient.invalidateQueries({ queryKey: ["/api/salon-enrichment/batches", id, "eligibility-summary"] }); },
     onError: (e: Error) => toast({ title: "Action failed", description: e.message, variant: "destructive" }),
   });
   const verifyRawBatch = useMutation({
@@ -280,17 +288,29 @@ export default function SalonEnrichment() {
       : undefined;
     action.mutate({ action: actionName, body });
   };
-  const review = (decision: string) => action.mutate({ action: "rows/review", body: { rowIds: selected, decision } });
-  const canSelect = rows.filter(r => !r.importedContactId).map(r => r.id);
+  const review = (decision: string) => {
+    const safeIds = selected.filter(rowId => {
+      const row = rows.find(item => item.id === rowId);
+      return decision !== "approved" || (row && !directoryEligibility(row).blocked);
+    });
+    if (safeIds.length) action.mutate({ action: "rows/review", body: { rowIds: safeIds, decision } });
+  };
+  const canSelect = rows.filter(r => !r.importedContactId && !directoryEligibility(r).blocked).map(r => r.id);
+  const eligibleSelectedIds = selected.filter(rowId => {
+    const row = rows.find(item => item.id === rowId);
+    return !!row && !directoryEligibility(row).blocked && !row.importedContactId;
+  });
   const canApprove = selected.length > 0 && selected.every(rowId => {
     const row = rows.find(item => item.id === rowId);
-    return row?.status === "enriched" && row.identityMatchStatus === "strong";
+    return row?.status === "enriched" && row.identityMatchStatus === "strong" && !directoryEligibility(row).blocked;
   });
   return <div className="flex-1 overflow-y-auto"><Header title="Salon Enrichment" /><main className="p-6 max-w-[1600px] mx-auto space-y-5">
     <button className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1" onClick={() => setLocation("/salon-enrichment")}><ArrowLeft className="h-4 w-4" />All batches</button>
        {batch && <><div className="flex flex-wrap justify-between gap-4"><div><div className="flex items-center gap-3"><h1 className="text-2xl font-semibold">{batch.name}</h1><Badge className={statusTone[batch.status] ?? ""}>{batch.status}</Badge></div><p className="text-sm text-muted-foreground mt-1">{batch.fileName} · pilot cap {batch.pilotLimit} · concurrency {batch.concurrency}</p></div><div className="flex gap-2">{!isStagedReportBatch && ["pending", "paused"].includes(batch.status) && <Button onClick={() => run(batch.status === "paused" ? "resume" : "start")}><Play className="h-4 w-4 mr-1.5" />{batch.status === "paused" && batch.processedRows >= batch.pilotLimit && batch.pilotLimit < batch.totalRows ? "Run next 100" : batch.status === "paused" ? "Resume" : "Start pilot"}</Button>}{batch.status === "running" && <Button variant="outline" onClick={() => run("pause")}><Pause className="h-4 w-4 mr-1.5" />Pause</Button>}{!isStagedReportBatch && ["running", "paused"].includes(batch.status) && <Button variant="outline" onClick={() => run("cancel")}><Square className="h-4 w-4 mr-1.5" />Cancel</Button>}</div></div>
       <Card><CardContent className="p-4"><div className="flex justify-between text-sm mb-2"><span className="font-medium">Processing progress</span><span>{batch.processedRows ?? 0} / {batch.totalRows} rows</span></div><Progress value={progress} className="h-2" /><div className="grid grid-cols-2 md:grid-cols-5 gap-4 mt-4 text-xs"><span><b className="text-foreground">{batch.enrichedRows ?? 0}</b> enriched</span><span><b className="text-foreground">{batch.reviewRows ?? 0}</b> need review</span><span><b className="text-foreground">{batch.approvedRows ?? 0}</b> approved</span><span><b className="text-foreground">{batch.estimatedSerpCalls ?? 0}</b> estimated paid search lookups / <b>{batch.usedSerpCalls ?? 0}</b> used</span><span><b className="text-foreground">{batch.importedRows ?? 0}</b> imported</span></div>{batch.errorMessage && <p className="text-sm text-red-700 mt-3 flex gap-2"><AlertTriangle className="h-4 w-4" />{batch.errorMessage}</p>}</CardContent></Card>
-       <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950 flex gap-2"><ShieldCheck className="h-4 w-4 mt-0.5 shrink-0" /><span><b>Email-first lookup:</b> a phone number or booking link does not end the email search. A missing email may require one extra provider lookup, subject to the hourly and monthly limits. Emails found on a salon website, a matched alternate website, or a salon-matched booking page need your review and approval before import. Booking-service support addresses are excluded; importing never auto-enrolls contacts.</span></div>
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950 flex gap-2"><ShieldCheck className="h-4 w-4 mt-0.5 shrink-0" /><span><b>Email-first lookup:</b> a phone number or booking link does not end the email search. A missing email may require one extra provider lookup, subject to the hourly and monthly limits. Emails found on a salon website, a matched alternate website, or a salon-matched booking page need your review and approval before import. Booking-service support addresses are excluded; importing never auto-enrolls contacts.</span></div>
+        <EligibilitySummaryStrip summary={eligibilitySummaryQuery.data} label="Full batch grooming eligibility" />
+        {eligibilitySummaryQuery.isError && <div className="text-xs text-destructive" role="alert">Full-batch eligibility counts are unavailable. <Button size="sm" variant="ghost" onClick={() => eligibilitySummaryQuery.refetch()}>Retry</Button></div>}
         {isStagedReportBatch && <section className="rounded-md border border-primary/30 bg-primary/[0.03] p-4 space-y-3" aria-label="Verify uploaded list">
           <div>
              <h2 className="font-semibold">{verificationEstimateQuery.data?.mode === "retry" ? "Retry verification for remaining rows" : "Verify this staged list"}</h2>
@@ -331,7 +351,7 @@ export default function SalonEnrichment() {
         </section>}
        <SalonFormOutreachPanel batchId={id!} rows={rows} />
         <div className="flex flex-wrap gap-2 items-center"><div className="relative flex-1 min-w-[220px] max-w-sm"><Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" /><Input className="pl-8" placeholder="Search business, city, email…" value={search} onChange={e => setSearch(e.target.value)} /></div><Select value={rowStatus} onValueChange={setRowStatus}><SelectTrigger className="w-36"><SelectValue /></SelectTrigger><SelectContent>{["all", "pending", "processing", "enriched", "failed"].map(v => <SelectItem key={v} value={v}>{v === "all" ? "All statuses" : v}</SelectItem>)}</SelectContent></Select><Select value={reviewStatus} onValueChange={setReviewStatus}><SelectTrigger className="w-36"><SelectValue /></SelectTrigger><SelectContent>{["all", "pending", "needs_review", "approved", "rejected"].map(v => <SelectItem key={v} value={v}>{v === "all" ? "All review" : v}</SelectItem>)}</SelectContent></Select><Button variant="ghost" size="icon" onClick={() => { batchQuery.refetch(); rowsQuery.refetch(); if (isStagedReportBatch) verificationEstimateQuery.refetch(); }}><RefreshCw className="h-4 w-4" /></Button><div className="ml-auto flex items-center gap-2"><Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage(value => value - 1)}>Previous</Button><span className="text-xs text-muted-foreground">Page {page + 1}</span><Button variant="outline" size="sm" disabled={rows.length < 100} onClick={() => setPage(value => value + 1)}>Next</Button></div></div>
-        <div className="flex flex-wrap items-center gap-2 border-y py-3"><Checkbox checked={selected.length > 0 && selected.length === canSelect.length} onCheckedChange={checked => setSelected(checked ? canSelect : [])} /><span className="text-sm text-muted-foreground">{selected.length} selected</span><Button size="sm" variant="outline" disabled={!canApprove} onClick={() => review("approved")}><Check className="h-3.5 w-3.5 mr-1" />Approve matched</Button><Button size="sm" variant="outline" disabled={!selected.length} onClick={() => review("rejected")}><X className="h-3.5 w-3.5 mr-1" />Reject</Button>{!isStagedReportBatch && <Button size="sm" variant="outline" disabled={!selected.length} onClick={() => action.mutate({ action: "rows/retry", body: { rowIds: selected } })}><RotateCcw className="h-3.5 w-3.5 mr-1" />Retry</Button>}<Button size="sm" className="ml-auto" disabled={!canApprove || selected.some(rowId => rows.find(r => r.id === rowId)?.reviewStatus !== "approved")} onClick={() => action.mutate({ action: "import", body: { rowIds: selected } })}>Import approved</Button></div>
+        <div className="flex flex-wrap items-center gap-2 border-y py-3"><Checkbox checked={selected.length > 0 && selected.length === canSelect.length} onCheckedChange={checked => setSelected(checked ? canSelect : [])} /><span className="text-sm text-muted-foreground">{selected.length} selected · blocked rows are skipped</span><Button size="sm" variant="outline" disabled={!canApprove} onClick={() => review("approved")}><Check className="h-3.5 w-3.5 mr-1" />Approve matched email</Button><Button size="sm" variant="outline" disabled={!selected.length} onClick={() => review("rejected")}><X className="h-3.5 w-3.5 mr-1" />Reject</Button>{!isStagedReportBatch && <Button size="sm" variant="outline" disabled={!eligibleSelectedIds.length} onClick={() => action.mutate({ action: "rows/retry", body: { rowIds: eligibleSelectedIds } })}><RotateCcw className="h-3.5 w-3.5 mr-1" />Retry</Button>}<Button size="sm" className="ml-auto" disabled={!canApprove || selected.some(rowId => rows.find(r => r.id === rowId)?.reviewStatus !== "approved")} onClick={() => action.mutate({ action: "import", body: { rowIds: eligibleSelectedIds } })}>Import approved</Button></div>
         <div className="flex flex-wrap items-center gap-2 rounded-md border bg-card p-3">
           <span className="text-sm font-medium">Owner-name batch</span><span className="text-xs text-muted-foreground">{ownerSelectedIds.length}/5 selected</span>
           <Button size="sm" variant="outline" disabled={!ownerSelectedIds.length || estimateOwnerBatch.isPending || searchOwnerBatch.isPending} onClick={() => {
@@ -357,7 +377,7 @@ export default function SalonEnrichment() {
           <thead className="bg-muted/60"><tr>{["", "Row / business", "Location", "Contact", "Usable Contact Form", "Software", "Evidence", "Confidence", "Owner name", "Review", ""].map((h, i) => <th key={i} className="text-left font-medium p-3 whitespace-nowrap">{h}</th>)}</tr></thead>
           <tbody>{rowsQuery.isLoading ? <tr><td colSpan={11} className="p-10 text-center text-muted-foreground">Loading enrichment rows…</td></tr> : rows.map(row =>
            <tr key={row.id} className="border-t hover:bg-muted/20">
-             <td className="p-3"><Checkbox disabled={!!row.importedContactId} checked={selected.includes(row.id)} onCheckedChange={checked => setSelected(s => checked ? [...s, row.id] : s.filter(x => x !== row.id))} /></td>
+              <td className="p-3"><Checkbox disabled={!!row.importedContactId || directoryEligibility(row).blocked} checked={selected.includes(row.id)} onCheckedChange={checked => setSelected(s => checked ? [...s, row.id] : s.filter(x => x !== row.id))} /></td>
              <td className="p-3"><div className="font-medium">{row.businessName || "Unnamed business"}</div><div className="text-muted-foreground">#{row.rowNumber} {Boolean(row.duplicateMetadata && Object.keys(row.duplicateMetadata as object).length) && <span className="text-amber-700 ml-1">Duplicate warning</span>}</div></td>
              <td className="p-3">{[row.city, row.state, row.zipCode].filter(Boolean).join(", ") || "—"}<div className="text-muted-foreground max-w-[180px] truncate">{row.address || row.address1}</div></td>
              <td className="p-3"><div>{row.email || "—"} {String(row.emailVerified) === "true" && <ShieldCheck className="inline h-3 w-3 text-emerald-600" />}</div><div>{row.phone || "—"}</div>{row.websiteUrl && <a className="text-primary inline-flex gap-1" href={row.websiteUrl} target="_blank" rel="noreferrer">Website <ExternalLink className="h-3 w-3" /></a>}</td>
@@ -372,7 +392,7 @@ export default function SalonEnrichment() {
                </> : "—"}
              </td>
              <td className="p-3">{row.currentSoftware || "Unknown"}<div className="text-muted-foreground">{row.usesSoftware || "Unverified"}</div></td>
-             <td className="p-3 max-w-[200px]">{prettyObject(row.evidence)}</td><td className="p-3">{prettyObject(row.confidence)}</td>
+              <td className="p-3 max-w-[260px]"><div>{prettyObject(row.evidence)}</div><div className="mt-2"><DirectoryEligibilityReview row={row} endpoint={`/api/salon-enrichment/rows/${row.id}/eligibility`} compact invalidateKeys={[["/api/salon-enrichment/batches", id, "rows"], ["/api/salon-enrichment/batches", id, "eligibility-summary"], ["/api/salon-form-outreach", id]]} /></div></td><td className="p-3">{prettyObject(row.confidence)}</td>
               <td className="p-3 min-w-[200px]"><details>
                 <summary className="cursor-pointer text-primary underline-offset-2 hover:underline">{ownerSelectedIds.includes(row.id) ? "Selected · " : ""}{row.ownerName?.status?.replaceAll("_", " ") || "Review owner evidence"}</summary>
                 <OwnerNameReview

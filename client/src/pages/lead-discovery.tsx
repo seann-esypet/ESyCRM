@@ -20,6 +20,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { Search, Plus, Download, Upload, Trash2, Eye, AlertCircle, CheckCircle, Clock, XCircle, RefreshCw, Settings, Pencil, List, Globe } from "lucide-react";
 import type { LeadDiscoveryJob, LeadDiscoveryResult, NationalSearchJob } from "@shared/schema";
+import { DirectoryEligibilityReview, EligibilitySummaryStrip } from "@/components/directory-eligibility";
+import { directoryEligibility, directoryEligibilitySummary, type EligibilityRow } from "@shared/directoryEligibility";
 
 type NationalResultRow = LeadDiscoveryResult & { state: string };
 
@@ -139,6 +141,12 @@ export default function LeadDiscovery() {
     refetchInterval: activeNationalJob ? 6000 : false,
   });
 
+  const eligibilityFor = (result: LeadDiscoveryResult) => directoryEligibility(result as unknown as EligibilityRow);
+  const safeResults = results.filter(result => !eligibilityFor(result).blocked && result.isImported !== "true");
+  const resultEligibilitySummary = directoryEligibilitySummary(results as unknown as EligibilityRow[]);
+  const allEligibilitySummary = directoryEligibilitySummary(allResults as unknown as EligibilityRow[]);
+  const nationalEligibilitySummary = directoryEligibilitySummary(nationalResults as unknown as EligibilityRow[]);
+
   const startNationalJobMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", "/api/lead-discovery/national-job");
@@ -236,7 +244,12 @@ export default function LeadDiscovery() {
 
   const importResultsMutation = useMutation({
     mutationFn: async (resultIds: string[]) => {
-      const res = await apiRequest("POST", "/api/lead-discovery/import", { resultIds });
+      const safeIds = resultIds.filter(id => {
+        const row = results.find(result => result.id === id);
+        return row && !eligibilityFor(row).blocked && row.isImported !== "true";
+      });
+      if (!safeIds.length) throw new Error("Select at least one unblocked result. Grooming review is separate from import approval.");
+      const res = await apiRequest("POST", "/api/lead-discovery/import", { resultIds: safeIds });
       return res.json();
     },
     onSuccess: (data) => {
@@ -306,6 +319,8 @@ export default function LeadDiscovery() {
   };
 
   const toggleResultSelection = (resultId: string) => {
+    const row = results.find(result => result.id === resultId);
+    if (!row || eligibilityFor(row).blocked || row.isImported === "true") return;
     setSelectedResults(prev => 
       prev.includes(resultId) 
         ? prev.filter(id => id !== resultId)
@@ -314,7 +329,7 @@ export default function LeadDiscovery() {
   };
 
   const selectAllResults = () => {
-    const importableResults = results.filter(r => r.isImported !== "true");
+    const importableResults = safeResults;
     if (selectedResults.length === importableResults.length) {
       setSelectedResults([]);
     } else {
@@ -666,11 +681,12 @@ export default function LeadDiscovery() {
           <TabsContent value="results" className="space-y-4">
             {selectedJob && (
               <>
+                <EligibilitySummaryStrip summary={resultEligibilitySummary} label="Search results eligibility" />
                 <div className="flex justify-between items-center">
                   <div>
                     <h3 className="font-medium">Results for {selectedJob.state}</h3>
                     <p className="text-sm text-muted-foreground">
-                      {results.filter(r => r.isImported !== "true").length} available to import
+                      {safeResults.length} available to import · {results.filter(r => eligibilityFor(r).blocked).length} blocked for grooming review
                     </p>
                   </div>
                   <div className="flex gap-2">
@@ -678,17 +694,17 @@ export default function LeadDiscovery() {
                       variant="outline"
                       size="sm"
                       onClick={selectAllResults}
-                      disabled={results.length === 0}
+                      disabled={safeResults.length === 0}
                       data-testid="btn-select-all"
                     >
-                      {selectedResults.length === results.filter(r => r.isImported !== "true").length 
+                      {selectedResults.length === safeResults.length
                         ? "Deselect All" 
                         : "Select All"}
                     </Button>
                     <Button
                       size="sm"
                       onClick={() => importResultsMutation.mutate(selectedResults)}
-                      disabled={selectedResults.length === 0 || importResultsMutation.isPending}
+                      disabled={selectedResults.length === 0 || importResultsMutation.isPending || selectedResults.some(id => !results.some(row => row.id === id && !eligibilityFor(row).blocked))}
                       data-testid="btn-import-selected"
                     >
                       <Upload className="h-4 w-4 mr-1" />
@@ -727,13 +743,14 @@ export default function LeadDiscovery() {
                               <Checkbox
                                 checked={selectedResults.includes(result.id)}
                                 onCheckedChange={() => toggleResultSelection(result.id)}
-                                disabled={result.isImported === "true"}
+                                disabled={result.isImported === "true" || eligibilityFor(result).blocked}
                                 data-testid={`checkbox-result-${result.id}`}
                               />
                             </TableCell>
                             <TableCell>
                               <div className="font-medium">{result.company}</div>
                               <div className="text-sm text-muted-foreground">{result.zipCode}</div>
+                              <div className="mt-2 min-w-[290px]"><DirectoryEligibilityReview row={result as unknown as EligibilityRow} endpoint={`/api/lead-discovery/results/${encodeURIComponent(result.id)}/eligibility`} compact invalidateKeys={[["/api/lead-discovery/jobs", selectedJob?.id, "results"], ["/api/lead-discovery/jobs"], ["/api/lead-discovery/all-results"]]} /></div>
                             </TableCell>
                             <TableCell>
                               <div className="text-sm">{result.phone || "-"}</div>
@@ -763,6 +780,8 @@ export default function LeadDiscovery() {
                             <TableCell>
                               {result.isImported === "true" ? (
                                 <Badge variant="outline" className="text-green-600">Imported</Badge>
+                              ) : eligibilityFor(result).blocked ? (
+                                <Badge variant="destructive">Grooming review</Badge>
                               ) : (
                                 <Badge variant="secondary">Ready</Badge>
                               )}
@@ -821,6 +840,7 @@ export default function LeadDiscovery() {
                 </p>
               </div>
             </div>
+            <EligibilitySummaryStrip summary={allEligibilitySummary} label="All results eligibility" />
             {allResultsLoading ? (
               <div className="text-center py-8 text-muted-foreground">Loading all results…</div>
             ) : allResults.length === 0 ? (
@@ -849,6 +869,7 @@ export default function LeadDiscovery() {
                         <TableCell>
                           <div className="font-medium">{result.company}</div>
                           <div className="text-sm text-muted-foreground">{result.zipCode}</div>
+                          <div className="mt-2 min-w-[290px]"><DirectoryEligibilityReview row={result as unknown as EligibilityRow} endpoint={`/api/lead-discovery/results/${encodeURIComponent(result.id)}/eligibility`} compact invalidateKeys={[["/api/lead-discovery/all-results"], ["/api/lead-discovery/jobs"]]} /></div>
                         </TableCell>
                         <TableCell>
                           <div className="text-xs text-muted-foreground max-w-[160px] leading-relaxed">
@@ -877,6 +898,8 @@ export default function LeadDiscovery() {
                         <TableCell>
                           {result.isImported === "true" ? (
                             <Badge variant="outline" className="text-green-600">Imported</Badge>
+                          ) : eligibilityFor(result).blocked ? (
+                            <Badge variant="destructive">Grooming review</Badge>
                           ) : (
                             <Badge variant="secondary">Ready</Badge>
                           )}
@@ -1213,6 +1236,7 @@ export default function LeadDiscovery() {
                     </Select>
                   )}
                 </div>
+                <EligibilitySummaryStrip summary={nationalEligibilitySummary} label="National results eligibility" />
 
                 {nationalResultsLoading ? (
                   <div className="text-center py-8 text-muted-foreground">Loading results…</div>
@@ -1249,6 +1273,7 @@ export default function LeadDiscovery() {
                             <TableCell>
                               <div className="font-medium">{result.company}</div>
                               <div className="text-xs text-muted-foreground">{result.zipCode}</div>
+                              <div className="mt-2 min-w-[290px]"><DirectoryEligibilityReview row={result as unknown as EligibilityRow} endpoint={`/api/lead-discovery/results/${encodeURIComponent(result.id)}/eligibility`} compact invalidateKeys={[["/api/lead-discovery/national-job"], ["/api/lead-discovery/jobs"], ["/api/lead-discovery/all-results"]]} /></div>
                             </TableCell>
                             <TableCell>
                               <div className="text-sm">{result.phone || "-"}</div>
@@ -1280,6 +1305,8 @@ export default function LeadDiscovery() {
                             <TableCell>
                               {result.isImported === "true"
                                 ? <Badge variant="outline" className="text-green-600 text-xs">Imported</Badge>
+                                : eligibilityFor(result).blocked
+                                  ? <Badge variant="destructive" className="text-xs">Grooming review</Badge>
                                 : <Badge variant="secondary" className="text-xs">Ready</Badge>}
                             </TableCell>
                             <TableCell>

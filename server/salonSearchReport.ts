@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { directoryEligibility } from "@shared/directoryEligibility";
 import type { InsertSalonEnrichmentRow } from "@shared/schema";
 import type { OwnerNameResult } from "@shared/salonOwnerName";
 import { bookingPlatformForUrl, importableSalonEmail, importableSalonEmailCandidate } from "./bookingPageEmail";
@@ -189,6 +190,7 @@ export function canApproveSalonReportRow(row: Parameters<typeof importableSalonE
   sourceData?: unknown;
   status?: string;
 }): boolean {
+  if (directoryEligibility(row).blocked) return false;
   const sourceData = row.sourceData as { category?: string } | null;
   return sourceData?.category === "verified_public_email" &&
     row.status === "enriched" &&
@@ -277,6 +279,7 @@ export function salonReportScheduleRejection(input: {
   scheduledSendAt: Date;
   now?: Date;
 }): string | null {
+  if (directoryEligibility(input.row).blocked) return "Confirm grooming suitability before enrolling this business in outreach";
   if (input.row.status !== "imported" || !input.row.importedContactId) return "Import this report row as a contact first";
   if (input.contact.userId !== input.userId || !input.contact.email?.trim()) return "An owned contact with an email address is required";
   const sourceData = input.row.sourceData as {
@@ -312,6 +315,7 @@ export function salonReportSendRejection(
   contact: { userId: string; email: string | null },
   ownerId: string,
 ): string | null {
+  if (directoryEligibility(row).blocked) return "Grooming suitability is unconfirmed or this business was excluded";
   if (row.userId !== ownerId || contact.userId !== ownerId) return "Salon report row or contact is no longer owned by the sequence owner";
   if (row.status !== "imported") return "Salon report row is no longer imported";
   if (row.reviewStatus !== "approved") return "Salon report approval was revoked";

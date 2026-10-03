@@ -1,6 +1,10 @@
 import type { SalonEnrichmentRow } from "@shared/schema";
+import { directoryEligibility, isBookingOrOrderingUrl } from "@shared/directoryEligibility";
+import { bookingPlatformForUrl } from "./bookingPageEmail";
 
 export function validFormUrl(formUrl: string | null, websiteUrl: string | null): boolean {
+  if (isBookingOrOrderingUrl(formUrl) || isBookingOrOrderingUrl(websiteUrl) ||
+      bookingPlatformForUrl(formUrl || "") || bookingPlatformForUrl(websiteUrl || "")) return false;
   try {
     const form = new URL(formUrl || "");
     const site = new URL(websiteUrl || "");
@@ -15,7 +19,7 @@ export function validFormUrl(formUrl: string | null, websiteUrl: string | null):
 
 export function canEnrollFormRow(row: SalonEnrichmentRow): boolean {
   const duplicate = row.duplicateMetadata as { contactIds?: string[] } | null;
-  return row.identityMatchStatus === "strong" &&
+  return !directoryEligibility(row).blocked && row.identityMatchStatus === "strong" &&
     row.status === "enriched" &&
     row.contactFormStatus === "verified" &&
     !row.email?.trim() &&

@@ -35,6 +35,8 @@ import { sendDailyReport } from "./dailyReportScheduler";
 import { sendReplyNotificationEmail, sendEmail, replaceTemplateVariables } from "./sendgrid";
 import { format as fmtDate } from "date-fns";
 import { canApproveSalonReportRow, convertSalonSearchReportEntry, reportPlaceIdsAreDistinct, salonReportScheduleRejection, salonSearchReportBatchSchema } from "./salonSearchReport";
+import { directoryEligibility, directoryEligibilitySummary } from "@shared/directoryEligibility";
+import { registerDirectoryEligibilityRoutes } from "./directoryEligibilityRoutes";
 import { isRetryableStagedSalonRow, MAX_SALON_LIST_JSON_BYTES, MAX_SALON_LIST_ROWS, stageSalonListRows } from "./salonListStaging";
 import { pipelineEmailQueryScope } from "./pipelineEmailSummary";
 import salonSearchPilot from "../reports/salon-next-100-summary.json" with { type: "json" };
@@ -161,6 +163,7 @@ async function runSequenceTest(run: TestRun): Promise<void> {
 export async function registerRoutes(app: Express): Promise<Server> {
   // Setup auth middleware - From Replit Auth blueprint
   await setupAuth(app);
+  registerDirectoryEligibilityRoutes(app, isAuthenticated);
 
   // Helper function to get user ID or null for admin (admin sees all data)
   const getUserIdForQuery = (user: any): string | null => {
@@ -2995,6 +2998,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           sourceUrl: evidence?.sourceUrl || (typeof sourceData["Email evidence URL"] === "string" ? sourceData["Email evidence URL"] as string : null),
           evidenceNote: evidence?.note || (typeof sourceData["Evidence and exceptions"] === "string" ? sourceData["Evidence and exceptions"] as string : null),
           category: reportCategoryForRow(row),
+          eligibility: directoryEligibility(row),
           reviewStatus: row.reviewStatus,
           importedContactId: row.importedContactId,
           dealId: contactLinks?.dealId || null,
@@ -3022,6 +3026,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ...byCategory,
         },
         rows,
+        eligibilitySummary: directoryEligibilitySummary(selectedBatchRows),
         totalRows: filteredRows.length,
         pagination: { total: filteredRows.length, limit, offset },
       });
@@ -3116,6 +3121,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         : undefined;
       return {
         ...row,
+        eligibility: directoryEligibility(row),
         ownerName: getSalonOwnerNameResult(row),
         ...(contact ? {
           contactName: {
@@ -3286,11 +3292,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const selectedRows = rows.filter(row => rowIds.includes(row.id));
     if (!rowIds.length) return res.status(400).json({ message: "Select at least one row" });
     if (decision === "approved" && selectedRows.some(row =>
-      batch.fileName === "salon-public-web-review"
+      directoryEligibility(row).blocked || (batch.fileName === "salon-public-web-review"
         ? !canApproveSalonReportRow(row)
-        : row.status !== "enriched" || row.identityMatchStatus !== "strong"
+        : row.status !== "enriched" || row.identityMatchStatus !== "strong")
     )) {
-      return res.status(400).json({ message: "Only enriched rows with a strong identity match can be approved" });
+      return res.status(400).json({ message: "Confirm grooming suitability first; only enriched rows with a strong identity match can be approved" });
     }
     const count = await storage.markSalonRowsForReview(rowIds, decision, actorScope);
     await storage.refreshSalonEnrichmentBatchCounts(batch.id, batch.userId);

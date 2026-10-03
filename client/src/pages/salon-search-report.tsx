@@ -13,6 +13,8 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { OwnerNameReview, OwnerSearchEstimate, OwnerPreview } from "@/components/owner-name-review";
 import SalesLeadListUpload from "@/components/sales-lead-list-upload";
+import { DirectoryEligibilityReview, EligibilitySummaryStrip, type EligibilitySummary } from "@/components/directory-eligibility";
+import type { DirectoryEligibility } from "@shared/directoryEligibility";
 import type { OwnerNameResult } from "@shared/salonOwnerName";
 import { deleteContactBatch } from "@/lib/contact-deletion";
 import {
@@ -43,6 +45,7 @@ type SearchRow = {
   dealStage?: string | null;
   sequenceStatus?: string | null;
   audienceTrack?: string | null;
+  eligibility?: DirectoryEligibility;
   ownerName?: OwnerNameResult | null;
   contactName?: { firstName?: string | null; lastName?: string | null; useBusinessNameForEmail?: "Yes" | "No" | null } | null;
   [key: string]: unknown;
@@ -58,6 +61,7 @@ type ReportData = {
   };
   rows: SearchRow[];
   pagination: { total: number; limit: number; offset: number };
+  eligibilitySummary?: EligibilitySummary;
 };
 type Sequence = { id: string; sequenceNumber: number; sequenceTrack: string; subject?: string; isActive?: string };
 
@@ -134,6 +138,15 @@ function isBookableSuccess(row: SearchRow) {
 function formatCount(value: unknown) {
   const n = Number(value);
   return Number.isFinite(n) ? n.toLocaleString() : "—";
+}
+
+function rowEligibility(row: SearchRow): DirectoryEligibility {
+  return row.eligibility ?? {
+    listing: { categories: [], name: null, address: null, placeId: null, provider: "Provider listing", sourceUrl: null },
+    classification: "unknown", decision: "pending", flagged: false, blocked: true,
+    reason: "Provider eligibility evidence is unavailable. Review is required before outreach.",
+    reviewNote: null, identityKey: "",
+  };
 }
 
 export default function SalonSearchReport() {
@@ -259,6 +272,7 @@ export default function SalonSearchReport() {
   };
   const review = useMutation({
     mutationFn: async (row: SearchRow) => {
+      if (rowEligibility(row).blocked) throw new Error("Approve grooming suitability before reviewing this email for import.");
       const response = await apiRequest("POST", `/api/salon-enrichment/batches/${row.batchId}/rows/review`, { rowIds: [row.id], decision: "approved" });
       if (!response.ok) throw new Error((await response.json().catch(() => ({}))).message || "Approval failed");
       return response.json();
@@ -268,6 +282,7 @@ export default function SalonSearchReport() {
   });
   const importContact = useMutation({
     mutationFn: async (row: SearchRow) => {
+      if (rowEligibility(row).blocked) throw new Error("Approve grooming suitability before importing this contact.");
       const response = await apiRequest("POST", `/api/salon-enrichment/batches/${row.batchId}/import`, { rowIds: [row.id] });
       if (!response.ok) throw new Error((await response.json().catch(() => ({}))).message || "Import failed");
       return { row, result: await response.json() as Record<string, unknown> };
@@ -358,6 +373,7 @@ export default function SalonSearchReport() {
   });
   const schedule = useMutation({
     mutationFn: async () => {
+      if (!scheduleRow || rowEligibility(scheduleRow).blocked) throw new Error("Approve grooming suitability before scheduling outreach.");
       if (!scheduleRow?.importedContactId || !scheduleRow.dealId || !selectedSequence ||
         selectedSequence.sequenceTrack !== "directory_general" || selectedSequence.isActive !== "true") {
         throw new Error("Import the contact, create its pipeline deal, and select an active directory-general first step.");
@@ -415,6 +431,10 @@ export default function SalonSearchReport() {
   });
 
   const startSchedule = (row: SearchRow) => {
+    if (rowEligibility(row).blocked) {
+      toast({ title: "Grooming review required", description: "Approve grooming suitability before scheduling outreach.", variant: "destructive" });
+      return;
+    }
     setScheduleRow(row);
     setSequenceId("");
     setScheduledAt("");
@@ -527,6 +547,7 @@ export default function SalonSearchReport() {
             </div></div>
           </div>
         </section>
+        <EligibilitySummaryStrip summary={reportQuery.data?.eligibilitySummary} label={batchId === "all" ? "Full report eligibility" : "Selected batch eligibility"} />
 
         <section className="space-y-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -627,6 +648,7 @@ export default function SalonSearchReport() {
                 const isImported = Boolean(row.importedContactId);
                 const isApproved = row.reviewStatus === "approved";
                 const categoryIsRestricted = inaccessible.has(categoryKey(row.category));
+                const eligibility = rowEligibility(row);
                 return <article key={row.id} className="overflow-hidden rounded-xl border-2 border-slate-400 bg-card transition-colors hover:border-primary/60 dark:border-slate-600">
                   <div className="flex flex-col gap-4 p-4 sm:p-5 lg:flex-row lg:items-start lg:justify-between">
                     <div className="min-w-0 flex-1">
@@ -657,6 +679,9 @@ export default function SalonSearchReport() {
                       </div>
                       {(row.suggestedFirstName || row.suggestedLastName) && <p className="mt-3 text-sm text-muted-foreground">Uploaded contact-name suggestion: <span className="font-medium text-foreground">{[row.suggestedFirstName, row.suggestedLastName].filter(Boolean).join(" ")}</span> · not confirmed. Review owner evidence below before using a personal greeting.</p>}
                       {row.evidenceNote && <p className="mt-3 max-w-3xl text-sm leading-5 text-foreground/80">{row.evidenceNote}</p>}
+                      <div className="mt-3">
+                        <DirectoryEligibilityReview row={row} eligibility={eligibility} endpoint={`/api/salon-enrichment/rows/${encodeURIComponent(row.id)}/eligibility`} invalidateKeys={[["/api/salon-search-report"], ["/api/salon-enrichment/batches"]]} />
+                      </div>
                       <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
                         {row.sourceUrl ? <a className="inline-flex items-center gap-1 font-medium text-primary underline-offset-4 hover:underline" href={row.sourceUrl} target="_blank" rel="noopener noreferrer">Open source <ExternalLink className="h-3 w-3" /></a> : <span className="text-muted-foreground">No source link provided</span>}
                         <span className="text-muted-foreground">Batch: {batches.find(batch => batch.id === row.batchId)?.name || row.batchId}</span>
@@ -691,12 +716,13 @@ export default function SalonSearchReport() {
                       <Button size="sm" variant="ghost" onClick={() => openDeleteDialog([row])} disabled={isDeletingRows} className="text-destructive hover:text-destructive" aria-label={`Delete uploaded review row for ${row.businessName}`} data-testid={`delete-review-row-${row.id}`}>
                         <Trash2 className="mr-1.5 h-3.5 w-3.5" />Delete
                       </Button>
-                      {isSuccess && !categoryIsRestricted && !isApproved && !isImported && <Button size="sm" variant="outline" onClick={() => review.mutate(row)} disabled={isDeletingRows || review.isPending}><ShieldCheck className="mr-1.5 h-3.5 w-3.5" />Approve</Button>}
-                      {isSuccess && !categoryIsRestricted && isApproved && !isImported && <Button size="sm" onClick={() => importContact.mutate(row)} disabled={isDeletingRows || importContact.isPending}><Upload className="mr-1.5 h-3.5 w-3.5" />Import contact</Button>}
-                      {!isSuccess && <span className="w-full text-right text-xs text-muted-foreground">{categoryIsRestricted ? "Not eligible for approval or import" : "Manual approval is reserved for successful matches"}</span>}
+                        {isSuccess && !categoryIsRestricted && !eligibility.blocked && !isApproved && !isImported && <Button size="sm" variant="outline" onClick={() => review.mutate(row)} disabled={isDeletingRows || review.isPending}><ShieldCheck className="mr-1.5 h-3.5 w-3.5" />Approve email</Button>}
+                        {isSuccess && !categoryIsRestricted && !eligibility.blocked && isApproved && !isImported && <Button size="sm" onClick={() => importContact.mutate(row)} disabled={isDeletingRows || importContact.isPending}><Upload className="mr-1.5 h-3.5 w-3.5" />Import contact</Button>}
+                        {eligibility.blocked && <span className="w-full text-right text-xs font-medium text-amber-800">Grooming review required before approval or import</span>}
+                        {!isSuccess && !eligibility.blocked && <span className="w-full text-right text-xs text-muted-foreground">{categoryIsRestricted ? "Not eligible for approval or import" : "Manual approval is reserved for successful matches"}</span>}
                       {isImported && !row.dealId && <Button size="sm" variant="outline" onClick={() => createDeal.mutate(row)} disabled={createDeal.isPending}><BriefcaseBusiness className="mr-1.5 h-3.5 w-3.5" />Create pipeline deal</Button>}
                       {isImported && !row.dealId && !row.sequenceStatus && <span className="w-full text-right text-xs text-muted-foreground">Create a pipeline deal before scheduling a sequence.</span>}
-                      {isImported && row.dealId && !row.sequenceStatus && <Button size="sm" variant="outline" onClick={() => startSchedule(row)}><Mail className="mr-1.5 h-3.5 w-3.5" />Schedule sequence</Button>}
+                        {isImported && row.dealId && !row.sequenceStatus && !eligibility.blocked && <Button size="sm" variant="outline" onClick={() => startSchedule(row)}><Mail className="mr-1.5 h-3.5 w-3.5" />Schedule sequence</Button>}
                     </div>
                   </div>
                 </article>;

@@ -26,13 +26,13 @@ export interface SalonListStageResult {
 }
 
 const aliases: Record<keyof Omit<SalonListInput, "uploadedFields">, string[]> = {
-  businessName: ["Business Name", "Business", "company", "Company", "businessName"],
+  businessName: ["Business Name", "Business", "company", "Company", "businessName", "Source salon name", "Salon name"],
   emailCandidate: ["Email", "email", "Public email (review-only when marked)"],
   phone: ["Phone", "phone", "telephone"],
-  address: ["Address", "address", "Street Address", "Source address"],
+  address: ["Address", "address", "Street Address", "Source address", "Full address"],
   state: ["State", "state"],
   zipCode: ["ZIP Code", "Zip Code", "zipCode", "zip", "Zip"],
-  websiteUrl: ["Website URL", "Website", "Web Site Address", "websiteUrl"],
+  websiteUrl: ["Website URL", "Website", "Web Site Address", "websiteUrl", "Website URL (query removed)"],
   placeId: ["Google Place ID", "googlePlaceId", "placeId"],
   firstNameSuggestion: ["Owner First Name", "First Name", "firstName", "first_name"],
   lastNameSuggestion: ["Owner Last Name", "Last Name", "lastName", "last_name"],
@@ -42,6 +42,8 @@ const uploadedFieldNames = [
   "Currently uses software", "Software Used", "Booking Software URL",
   "Has Web Site", "Contact Request Form URL",
   "source", "notes", "jobTitle", "Job Title",
+  "Provider category", "Provider business name", "Provider address", "Provider Place ID",
+  "Provider contact URL (NOT a verified form)", "Booking URL (query removed)", "Exact Place ID match",
 ];
 const forbiddenWebHosts = [
   "facebook.com", "instagram.com", "linkedin.com", "tiktok.com", "twitter.com",

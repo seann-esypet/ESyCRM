@@ -3,6 +3,7 @@ import type { LeadDiscoveryJob, LeadDiscoveryResult, InsertLeadDiscoveryResult, 
 import { parseAddressString } from "@shared/utils";
 import { fetchPublicPage, type SalonFetchRuntime } from "./salonPublicFetch";
 import { salonEmailHtmlContextRestriction, salonEmailDomainRestriction } from "./salonEmailPolicy";
+import { directoryEligibility, isBookingOrOrderingUrl, providerCategories, withDirectoryNotes } from "@shared/directoryEligibility";
 
 // New reduced query set for budget management
 const DEFAULT_QUERIES = [
@@ -186,6 +187,7 @@ interface SerpApiResult {
   phone?: string;
   address?: string;
   placeId?: string;
+  categories?: string[];
 }
 
 interface BusinessData {
@@ -223,6 +225,7 @@ export function parseGoogleMapsResults(data: {
       phone: local.phone,
       address: local.address,
       placeId: local.place_id,
+      categories: providerCategories([local.type, ...(Array.isArray(local.types) ? local.types : []), ...(Array.isArray(local.categories) ? local.categories : [])]),
       snippet: local.description || "",
     });
   }
@@ -235,6 +238,7 @@ export function parseGoogleMapsResults(data: {
         phone: place.phone,
         address: place.address,
         placeId: place.place_id,
+        categories: providerCategories([place.type, ...(Array.isArray(place.types) ? place.types : []), ...(Array.isArray(place.categories) ? place.categories : [])]),
         snippet: place.description || "",
       });
     }
@@ -591,7 +595,7 @@ export async function crawlWebsite(url: string, options: { runtime?: SalonFetchR
       if (result.metadataEmail) result.metadataEmailSourceUrl = homepage.url;
     }
     result.phone = extractPhone(html) ?? undefined;
-    let formSource: string | undefined = hasPublicGeneralInquiryForm(html) ? homepage.url : undefined;
+    let formSource: string | undefined = hasPublicGeneralInquiryForm(html, homepage.url) ? homepage.url : undefined;
     const discovered = contactLinks(html, resolvedBase);
     discovered.sort((left, right) => {
       const priority = (url: URL) => /\b(contact|inquir|reach|message)\b/i.test(url.href) ? 0 :
@@ -633,7 +637,7 @@ export async function crawlWebsite(url: string, options: { runtime?: SalonFetchR
         }
       }
       if (!result.phone) result.phone = extractPhone(page.html) ?? undefined;
-      if (!formSource && hasPublicGeneralInquiryForm(page.html)) formSource = page.url;
+      if (!formSource && hasPublicGeneralInquiryForm(page.html, page.url)) formSource = page.url;
     }
     if (formSource) result.contactFormUrl = formSource;
     if (pages.length >= SALON_CRAWL_MAX_PAGES || requestBudget.used >= requestBudget.max || Date.now() >= deadline) {
@@ -738,13 +742,19 @@ function extractPhone(html: string): string | null {
   return formatted ?? matches[0];
 }
 
-function hasPublicGeneralInquiryForm(html: string): boolean {
+export function hasPublicGeneralInquiryForm(html: string, pageUrl?: string): boolean {
+  if (pageUrl && isBookingOrOrderingUrl(pageUrl)) return false;
   const pageContext = Array.from(html.matchAll(/<(?:title|h1|h2)\b[^>]*>([\s\S]*?)<\/(?:title|h1|h2)\s*>/gi))
     .map(match => match[1].replace(/<[^>]*>/g, " "))
     .join(" ")
     .toLowerCase();
   const forms = Array.from(html.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form\s*>/gi));
   for (const match of forms) {
+    const action = match[1].match(/\baction\s*=\s*["']([^"']+)["']/i)?.[1];
+    if (action) {
+      try { if (isBookingOrOrderingUrl(new URL(action, pageUrl || "https://form.example/").href)) continue; }
+      catch { continue; }
+    }
     const attributes = match[1];
     const body = match[2];
     if (/\bhidden\b/i.test(attributes) || /display\s*:\s*none|visibility\s*:\s*hidden/i.test(attributes)) continue;
@@ -774,7 +784,7 @@ function hasPublicGeneralInquiryForm(html: string): boolean {
     if (!hasMessageField) continue;
 
     const formText = `${attributes} ${body.replace(/<[^>]*>/g, " ")}`.replace(/&nbsp;|&#160;/gi, " ").toLowerCase();
-    const hasBookingContext = /\b(book(?:ing)?|appointment|schedule|reservation)\b/i.test(`${pageContext} ${formText}`);
+    const hasBookingContext = /\b(book(?:ing)?|appointment|schedule|reservation|order(?:ing)?|checkout|payment|cart)\b/i.test(`${pageContext} ${formText}`);
     const hasGeneralContext = /\b(general\s+inquir(?:y|ies)|contact\s+(?:us|form)|general\s+questions)\b/i.test(`${pageContext} ${formText}`);
     // Appointment and booking forms often include a notes/message field too;
     // treat those as unsupported unless the form explicitly offers general inquiries.
@@ -1235,7 +1245,10 @@ export async function runNationalSearchJob(nationalJobId: string, userId: string
                 if (crawlData?.email && crawlData.emailSourceUrl) notes.push(`Email source: ${crawlData.emailSourceUrl} (${crawlData.emailSourceType || "visible"})`);
                 if (crawlData?.metadataEmail && crawlData.metadataEmailSourceUrl) notes.push(`Metadata-only email candidate (review only): ${crawlData.metadataEmail} — ${crawlData.metadataEmailSourceUrl}`);
                 if (crawlData?.partialFailures.length) notes.push(`Partial crawl failures: ${crawlData.partialFailures.join("; ")}`);
-                return notes.length ? notes.join(" | ") : null;
+                return withDirectoryNotes(notes.join(" | "), { directoryListing: {
+                  categories: result.categories || [], name: result.title, address: result.address || null,
+                  placeId: result.placeId || null, provider: "SerpAPI Google Maps", sourceUrl: result.link || null,
+                } });
               })(),
               zipCode: zip,
               searchQuery: query,
@@ -1498,7 +1511,10 @@ export async function runLeadDiscoveryJob(jobId: string, userId: string): Promis
                   }
                   if (crawlData?.partialFailures.length) parts.push(`Partial crawl failures: ${crawlData.partialFailures.join("; ")}`);
                   if (gapFillPhone && gapFillPhoneSource) parts.push(`Phone found via ${gapFillPhoneSource}`);
-                  return parts.length ? parts.join(" | ") : null;
+                  return withDirectoryNotes(parts.join(" | "), { directoryListing: {
+                    categories: result.categories || [], name: result.title, address: result.address || null,
+                    placeId: result.placeId || null, provider: "SerpAPI Google Maps", sourceUrl: result.link || null,
+                  } });
                 })(),
                 zipCode: zip,
                 searchQuery: query,
@@ -1558,6 +1574,14 @@ export async function importResultsToCRM(
       
       if (!leadResult) {
         errors.push(`Result ${resultId} not found`);
+        continue;
+      }
+      if (leadResult.userId !== userId) {
+        errors.push(`Result ${resultId} not found`);
+        continue;
+      }
+      if (directoryEligibility(leadResult).blocked) {
+        errors.push(`${leadResult.company || resultId}: grooming suitability needs human confirmation or is excluded`);
         continue;
       }
 

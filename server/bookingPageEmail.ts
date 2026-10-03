@@ -1,5 +1,6 @@
 import type { SalonEnrichmentRow } from "@shared/schema";
 import { salonEmailDomainRestriction, salonEmailHtmlContextRestriction } from "./salonEmailPolicy";
+import { directoryEligibility } from "@shared/directoryEligibility";
 
 const bookingProviders: Record<string, string> = {
   "book.cuddlesapp.com": "CuddlesApp",
@@ -82,6 +83,7 @@ export function extractSalonEmailFromBookingHtml(
 export function importableSalonEmail(
   row: Pick<SalonEnrichmentRow, "email" | "evidence" | "bookingUrl" | "websiteUrl" | "identityMatchStatus" | "reviewStatus" | "sourceData">,
 ): string | null {
+  if (directoryEligibility(row).blocked) return null;
   const email = importableSalonEmailCandidate(row);
   if (!email || row.reviewStatus !== "approved") return null;
   return email;

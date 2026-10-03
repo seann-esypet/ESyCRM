@@ -8,11 +8,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ExternalLink } from "lucide-react";
+import { directoryEligibility } from "@shared/directoryEligibility";
 
 type EligibleRow = {
   id: string; businessName: string; contactRequestFormUrl?: string; contactFormStatus?: string;
   identityMatchStatus?: string; status?: string; email?: string; importedContactId?: string; audienceTrack?: string;
   duplicateMetadata?: { contactIds?: string[] };
+  address?: string | null; placeId?: string | null; notes?: string | null; evidence?: unknown; sourceData?: Record<string, unknown>;
 };
 type Sequence = {
   id: string; strategy: string; sequenceTrack: string; sequenceNumber: number;
@@ -48,7 +50,8 @@ export function SalonFormOutreachPanel({ batchId, rows = [] }: { batchId?: strin
     row.status === "enriched" && row.identityMatchStatus === "strong" &&
     row.contactFormStatus === "verified" && !!row.contactRequestFormUrl &&
     !row.email?.trim() && !row.importedContactId &&
-    !row.duplicateMetadata?.contactIds?.length && !enrolled.has(row.id));
+    !row.duplicateMetadata?.contactIds?.length && !enrolled.has(row.id) &&
+    !directoryEligibility(row).blocked);
   const selectedTrack = eligible.find(row => row.id === rowId)?.audienceTrack;
   const sequences = (sequencesQuery.data ?? []).filter(s =>
     s.sequenceNumber === 1 && s.isActive === "true" && !s.sequenceTrack.includes("custom") &&
