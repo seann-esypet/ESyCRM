@@ -62,6 +62,7 @@ type ReportData = {
 type Sequence = { id: string; sequenceNumber: number; sequenceTrack: string; subject?: string; isActive?: string };
 
 const PAGE_SIZE = 50;
+type SearchesPerRow = 1 | 3;
 const reportCategories = [
   "verified_public_email",
   "booking_only",
@@ -149,6 +150,10 @@ export default function SalonSearchReport() {
   const [minimumEasternTime] = useState(() => easternLocalInputValue(new Date(Date.now() + 60_000)));
   const [ownerSelectedIds, setOwnerSelectedIds] = useState<string[]>([]);
   const [ownerEstimate, setOwnerEstimate] = useState<OwnerSearchEstimate | null>(null);
+  const [ownerEstimateIds, setOwnerEstimateIds] = useState<string[]>([]);
+  const [ownerSearchesPerRow, setOwnerSearchesPerRow] = useState<SearchesPerRow>(1);
+  const [ownerEstimateSearchesPerRow, setOwnerEstimateSearchesPerRow] = useState<SearchesPerRow | null>(null);
+  const ownerSelectionVersion = useRef(0);
   const [confirmOwnerBatch, setConfirmOwnerBatch] = useState(false);
   const [selectedDeleteIds, setSelectedDeleteIds] = useState<Set<string>>(new Set());
   const [deleteTargets, setDeleteTargets] = useState<SearchRow[]>([]);
@@ -213,8 +218,9 @@ export default function SalonSearchReport() {
         id => apiRequest("DELETE", `/api/salon-search-report/rows/${encodeURIComponent(id)}`),
       );
       if (removedIds.length) {
+        ownerSelectionVersion.current += 1;
         setOwnerSelectedIds(current => current.filter(id => !removedIds.includes(id)));
-        setOwnerEstimate(null);
+        setOwnerEstimate(null); setOwnerEstimateIds([]); setOwnerEstimateSearchesPerRow(null);
         setConfirmOwnerBatch(false);
         await Promise.all([
           queryClient.invalidateQueries({ queryKey: ["/api/salon-search-report"] }),
@@ -372,24 +378,38 @@ export default function SalonSearchReport() {
     onError: (error: Error) => toast({ title: "Could not schedule sequence", description: error.message, variant: "destructive" }),
   });
   const estimateOwnerBatch = useMutation({
-    mutationFn: async () => {
-      const response = await apiRequest("POST", "/api/salon-owner-names/estimate", { rowIds: ownerSelectedIds });
+    mutationFn: async ({ rowIds, searchesPerRow }: { rowIds: string[]; searchesPerRow: SearchesPerRow; selectionVersion: number }) => {
+      const response = await apiRequest("POST", "/api/salon-owner-names/estimate", { rowIds, searchesPerRow });
       return response.json() as Promise<OwnerSearchEstimate>;
     },
-    onSuccess: data => { setOwnerEstimate(data); setConfirmOwnerBatch(true); },
+    onSuccess: (data, variables) => {
+      if (variables.selectionVersion !== ownerSelectionVersion.current) return;
+      setOwnerEstimate(data);
+      setOwnerEstimateIds([...variables.rowIds].sort());
+      setOwnerEstimateSearchesPerRow(variables.searchesPerRow);
+      setConfirmOwnerBatch(true);
+    },
     onError: (error: Error) => toast({ title: "Could not estimate owner search", description: error.message, variant: "destructive" }),
   });
   const searchOwnerBatch = useMutation({
-    mutationFn: async () => {
+    mutationFn: async ({ rowIds, searchesPerRow }: { rowIds: string[]; searchesPerRow: SearchesPerRow }) => {
+      const sameIds = [...ownerSelectedIds].sort().join("|") === [...rowIds].sort().join("|");
+      const estimateMatches = ownerEstimate && ownerEstimateIds.join("|") === [...rowIds].sort().join("|") &&
+        ownerEstimateSearchesPerRow === searchesPerRow && ownerSearchesPerRow === searchesPerRow &&
+        ownerEstimate.searchesPerRow === searchesPerRow;
+      if (!sameIds || !estimateMatches || !confirmOwnerBatch) throw new Error("The owner-search estimate is out of date. Estimate the current selection again before confirming.");
+      if (!Number.isInteger(ownerEstimate.maxProviderCalls) || ownerEstimate.maxProviderCalls < 0 || ownerEstimate.maxProviderCalls > rowIds.length * searchesPerRow) {
+        throw new Error("The estimated provider-call cap is invalid. Request a fresh estimate.");
+      }
       const response = await apiRequest("POST", "/api/salon-owner-names/search", {
-        rowIds: ownerSelectedIds, maxProviderCalls: Math.min(ownerSelectedIds.length, ownerEstimate?.maxProviderCalls ?? ownerSelectedIds.length), confirmed: true,
+        rowIds, searchesPerRow, maxProviderCalls: ownerEstimate.maxProviderCalls, confirmed: true,
       });
       return response.json();
     },
     onSuccess: data => {
-      const failed = (data.results as { ownerName: { status: string } }[]).filter(result => result.ownerName.status === "failed").length;
-      toast({ title: failed ? "Some owner searches could not finish" : "Owner searches complete", description: failed ? `${failed} lookup${failed === 1 ? "" : "s"} did not finish. Review each row’s error before choosing to retry.` : "Review source-backed candidates in each row.", ...(failed ? { variant: "destructive" as const } : {}) });
-      setOwnerSelectedIds([]); setOwnerEstimate(null); setConfirmOwnerBatch(false); refresh();
+      const failed = (data.results as { ownerName: { status: string; error?: string } }[]).filter(result => result.ownerName.status === "failed" || result.ownerName.error).length;
+      toast({ title: failed ? "Some owner searches could not finish" : "Owner searches complete", description: `${data.callsUsed ?? "Actual call count unavailable"} provider calls used. ${failed ? `${failed} lookup${failed === 1 ? "" : "s"} did not finish. Review each row’s error before choosing to retry.` : "Review source-backed candidates in each row."}`, ...(failed ? { variant: "destructive" as const } : {}) });
+      setOwnerSelectedIds([]); setOwnerEstimate(null); setOwnerEstimateIds([]); setOwnerEstimateSearchesPerRow(null); setConfirmOwnerBatch(false); refresh();
     },
     onError: (error: Error) => toast({ title: "Owner search failed", description: error.message, variant: "destructive" }),
   });
@@ -558,16 +578,28 @@ export default function SalonSearchReport() {
             <div><p className="text-sm font-medium">Owner-name lookup</p><p className="text-xs text-muted-foreground">Select up to five eligible salons below. Each search is budget-estimated and requires confirmation.</p></div>
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs text-muted-foreground">{ownerSelectedIds.length}/5 selected</span>
-              <Button size="sm" variant="outline" onClick={() => estimateOwnerBatch.mutate()} disabled={!ownerSelectedIds.length || estimateOwnerBatch.isPending || searchOwnerBatch.isPending}>
+              <Button size="sm" variant="outline" onClick={() => {
+                setOwnerEstimate(null); setOwnerEstimateIds([]); setOwnerEstimateSearchesPerRow(null); setConfirmOwnerBatch(false);
+                estimateOwnerBatch.mutate({ rowIds: [...ownerSelectedIds], searchesPerRow: ownerSearchesPerRow, selectionVersion: ownerSelectionVersion.current });
+              }} disabled={!ownerSelectedIds.length || estimateOwnerBatch.isPending || searchOwnerBatch.isPending}>
                 {estimateOwnerBatch.isPending ? "Estimating…" : "Estimate & search selected"}
               </Button>
-              {ownerSelectedIds.length > 0 && <Button size="sm" variant="ghost" onClick={() => setOwnerSelectedIds([])}>Clear selection</Button>}
+              <Select value={String(ownerSearchesPerRow)} onValueChange={value => {
+                const count = Number(value) as SearchesPerRow;
+                setOwnerSearchesPerRow(count);
+                setOwnerEstimate(null); setOwnerEstimateIds([]); setOwnerEstimateSearchesPerRow(null); setConfirmOwnerBatch(false);
+                if (ownerSelectedIds.length) estimateOwnerBatch.mutate({ rowIds: [...ownerSelectedIds], searchesPerRow: count, selectionVersion: ownerSelectionVersion.current });
+              }} disabled={estimateOwnerBatch.isPending || searchOwnerBatch.isPending}>
+                <SelectTrigger className="h-9 w-[215px]" aria-label="Owner search phrases per salon"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="1">1 phrase per salon · default</SelectItem><SelectItem value="3">Up to 3 phrases per salon</SelectItem></SelectContent>
+              </Select>
+              {ownerSelectedIds.length > 0 && <Button size="sm" variant="ghost" onClick={() => { ownerSelectionVersion.current += 1; setOwnerSelectedIds([]); setOwnerEstimate(null); setOwnerEstimateIds([]); setOwnerEstimateSearchesPerRow(null); setConfirmOwnerBatch(false); }}>Clear selection</Button>}
             </div>
           </div>}
           {confirmOwnerBatch && ownerEstimate && !isDeletingRows && <div className="rounded-lg border border-amber-300/70 bg-amber-50 p-4 text-sm text-amber-950">
             <p className="font-semibold">Confirm paid owner search for {ownerSelectedIds.length} salon{ownerSelectedIds.length === 1 ? "" : "s"}</p>
-            <p className="mt-1 text-xs leading-5">Up to {ownerEstimate.maxProviderCalls} provider calls and {ownerEstimate.maxPages} page fetches. {ownerEstimate.remainingCredits} credits remain{ownerEstimate.reason ? ` · ${ownerEstimate.reason}` : ""}. This is capped at one provider call per selected row.</p>
-            <div className="mt-3 flex gap-2"><Button size="sm" disabled={!ownerEstimate.allowed || searchOwnerBatch.isPending} onClick={() => searchOwnerBatch.mutate()}>{searchOwnerBatch.isPending ? "Searching…" : "Confirm searches"}</Button><Button size="sm" variant="outline" onClick={() => { setConfirmOwnerBatch(false); setOwnerEstimate(null); }}>Cancel</Button></div>
+            <p className="mt-1 text-xs leading-5">Searches per salon: {ownerEstimateSearchesPerRow ?? "—"}. Batch-wide cap: <strong>{ownerEstimate.maxProviderCalls} provider calls</strong> (maximum 15) and up to {ownerEstimate.maxPages} pages total; four-page cap per salon. Searches stop early when an owner is verified. Cached results are free; no paid retries. {ownerEstimate.remainingCredits} credits remain{ownerEstimate.reason ? ` · ${ownerEstimate.reason}` : ""}.</p>
+            <div className="mt-3 flex flex-wrap gap-2"><Button size="sm" disabled={!ownerEstimate.allowed || ownerEstimate.maxProviderCalls < 0 || ownerEstimate.maxProviderCalls > 15 || ownerEstimateIds.join("|") !== [...ownerSelectedIds].sort().join("|") || ownerEstimateSearchesPerRow !== ownerSearchesPerRow || estimateOwnerBatch.isPending || searchOwnerBatch.isPending} onClick={() => searchOwnerBatch.mutate({ rowIds: [...ownerSelectedIds], searchesPerRow: ownerSearchesPerRow })}>{searchOwnerBatch.isPending ? "Searching…" : "Confirm searches"}</Button><Button size="sm" variant="outline" onClick={() => { setConfirmOwnerBatch(false); setOwnerEstimate(null); setOwnerEstimateIds([]); setOwnerEstimateSearchesPerRow(null); }}>Cancel</Button></div>
           </div>}
 
           {reportQuery.isLoading ? (
@@ -644,6 +676,8 @@ export default function SalonSearchReport() {
                         canSearch={categoryKey(row.category) !== "non_grooming" && !isDeletingRows}
                         selectedForBatch={ownerSelectedIds.includes(row.id)}
                         onSelectedForBatchChange={checked => {
+                          ownerSelectionVersion.current += 1;
+                          setOwnerEstimate(null); setOwnerEstimateIds([]); setOwnerEstimateSearchesPerRow(null); setConfirmOwnerBatch(false);
                           setOwnerSelectedIds(current => {
                             if (!checked) return current.filter(id => id !== row.id);
                             if (current.includes(row.id)) return current;

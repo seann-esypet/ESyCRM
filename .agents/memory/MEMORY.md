@@ -8,3 +8,4 @@
 - [Sales-facing UI clarity](sales-ui-clarity.md) — use task-based labels salespeople understand; distinguish ordinary list uploads from pre-checked reports and samples.
 - [Contact deletion safety](contact-deletion-safety.md) — import cleanup must preserve sales and financial history, require confirmation, and avoid guessing which records belong to an import.
 - [Browser runtime availability](browser-runtime-availability.md) — Chromium can be available without Playwright; use isolated API fixtures without changing CRM authentication.
+- [Provider spending accounting](provider-spending-accounting.md) — count initiated requests independently of saved row results; failures and deletion must never refund a batch allowance.

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isStrongApprovedOwnerCandidate, type OwnerNameResult } from "@shared/salonOwnerName";
+import { EMPTY_OWNER_NAME_RESULT, isStrongApprovedOwnerCandidate, type OwnerNameResult } from "@shared/salonOwnerName";
 import type { SalonEnrichmentRow } from "@shared/schema";
 import {
   businessAndLocationMatch,
@@ -10,12 +10,15 @@ import {
   extractSalonOwnerSummaryCandidates,
   isSalonOwnerNameEligible,
   lookupSalonOwnerName,
+  lookupSalonOwnerNameBatch,
+  salonOwnerSearchQueries,
   ownerLookupWebsiteUrl,
   salonOwnerNameLimits,
   stripHtml,
   validatePublicHttpUrl,
 } from "./salonOwnerNames";
 import type { SalonOwnerNameDependencies } from "./salonOwnerNames";
+import { ownerNameRowsInput, ownerNameSearchInput } from "./salonOwnerNameSearchInput";
 
 const identity = {
   businessName: "Curly Tails",
@@ -234,9 +237,14 @@ function mockDependencies(
     fetchProvider?: SalonOwnerNameDependencies["fetchProvider"];
     providerTimeoutMs?: number;
     reserve?: string | null;
+    reserveLimit?: number;
     usage?: unknown;
     complete?: boolean;
     completeFailures?: number;
+    cacheByKey?: Record<string, Array<{ title?: string; link?: string; snippet?: string }>>;
+    rows?: SalonEnrichmentRow[];
+    fault?: { stage: "cache" | "usage" | "reservation" | "rowRead"; at: number };
+    deleteFirstRowOnCompletion?: boolean;
   } = {},
 ) {
   const observed = {
@@ -249,6 +257,11 @@ function mockDependencies(
     pageAttempts: 0,
     token: "",
     persisted: null as OwnerNameResult | null,
+    queries: [] as string[],
+    cacheKeys: [] as string[],
+    writtenKeys: [] as string[],
+    usageReads: 0,
+    rowReads: 0,
   };
   const current = { ...row };
   const usageStatus = (options.usage || {
@@ -256,10 +269,10 @@ function mockDependencies(
     usage: { monthlyQuota: 100, usedCredits: 0, hardStopAt: 100 },
   }) as Awaited<ReturnType<SalonOwnerNameDependencies["getUsageStatus"]>>;
   const fakeStorage = {
-    beginSalonOwnerNameLookup: async (_rowId: string, _userId: string, token: string) => {
+    beginSalonOwnerNameLookup: async (rowId: string, _userId: string, token: string) => {
       observed.begin++;
       observed.token = token;
-      return current;
+      return options.rows?.find(row => row.id === rowId) || current;
     },
     completeSalonOwnerNameLookup: async (_rowId: string, _userId: string, token: string, result: OwnerNameResult) => {
       observed.complete++;
@@ -268,23 +281,41 @@ function mockDependencies(
       if (observed.complete <= (options.completeFailures || 0)) throw new Error("mock persistence failure");
       return options.complete ?? true;
     },
-    getSalonEnrichmentRow: async () => current,
-    getSerpCache: async () => {
+    getSalonEnrichmentRow: async (rowId: string) => {
+      observed.rowReads++;
+      if (options.fault?.stage === "rowRead" && observed.rowReads === options.fault.at) throw new Error("mock row-read failure");
+      if (options.deleteFirstRowOnCompletion && observed.complete > 0 && rowId === row.id) return undefined;
+      return options.rows?.find(row => row.id === rowId) || current;
+    },
+    getSerpCache: async (_zip: string, key: string) => {
       observed.cacheReads++;
-      return options.cached ? { resultsJson: options.cached } : undefined;
+      observed.cacheKeys.push(key);
+      if (options.fault?.stage === "cache" && observed.cacheReads === options.fault.at) throw new Error("mock cache-read failure");
+      const cached = options.cacheByKey?.[key] ?? options.cached;
+      return cached ? { resultsJson: cached } : undefined;
     },
     reserveSerpCall: async () => {
       observed.reservations++;
+      if (options.fault?.stage === "reservation" && observed.reservations === options.fault.at) throw new Error("mock reservation failure");
+      if (observed.reservations > (options.reserveLimit ?? Infinity)) return null;
       return options.reserve === undefined ? "mock-reservation" : options.reserve;
     },
     releaseSerpCall: async () => { observed.releases++; },
-    createSerpCache: async () => ({}) as any,
+    createSerpCache: async (_zip: string, key: string, _state: string, results: any[]) => {
+      observed.writtenKeys.push(key);
+      if (options.cacheByKey) options.cacheByKey[key] = results;
+      return {} as any;
+    },
     getSerpCallsInLastHour: async () => 0,
     revokeSalonOwnerName: async () => undefined,
   };
   const restore = configureSalonOwnerNameDependencies({
     storage: fakeStorage as unknown as SalonOwnerNameDependencies["storage"],
-    getUsageStatus: async () => usageStatus,
+    getUsageStatus: async () => {
+      observed.usageReads++;
+      if (options.fault?.stage === "usage" && observed.usageReads === options.fault.at) throw new Error("mock usage-read failure");
+      return usageStatus;
+    },
     fetchPage: async url => {
       observed.pageAttempts++;
       if (options.fetchPage) return options.fetchPage(url);
@@ -292,6 +323,7 @@ function mockDependencies(
     },
     fetchProvider: async (...args) => {
       observed.providerAttempts++;
+      observed.queries.push(new URL(String(args[0])).searchParams.get("q")!);
       if (options.fetchProvider) return options.fetchProvider(...args);
       throw new Error("mock provider timeout");
     },
@@ -622,4 +654,295 @@ test("category-less fixed-list uploads can run the opted-in owner stage after st
   } finally {
     restore();
   }
+});
+
+test("ordered phrases preserve the legacy cache and omit missing location fields", () => {
+  const row = orchestrationRow();
+  const queries = salonOwnerSearchQueries(row);
+  assert.equal(queries.length, 3);
+  assert.equal(queries[0].query, '"Curly Tails" "5651 Tourist Dr, North Richland Hills, TX, 76117" owner salon');
+  assert.equal(queries[0].cacheKey, "salon-owner-organic:curly tails:5651 tourist dr north richland hills tx 76117");
+  assert.match(queries[1].query, /"Curly Tails" North Richland Hills, TX owner OR "owner-operator"/);
+  assert.equal(queries[2].query, 'Who owns "Curly Tails" in North Richland Hills, TX?');
+  assert.equal(new Set(queries.map(item => item.cacheKey)).size, 3);
+  const sparse = salonOwnerSearchQueries(orchestrationRow({ address: null, address1: null, city: null, state: null, zipCode: null }));
+  for (const item of sparse) assert.doesNotMatch(item.query, /undefined|null|""| in \?/);
+  assert.equal(new Set(sparse.map(item => item.query)).size, sparse.length);
+});
+
+test("explicit owner/operator variants confirm either direction without promoting operator-only or historical claims", () => {
+  for (const role of ["owner/operator", "owner-operator", "owner and operator", "Owner / Operator"]) {
+    for (const text of [`${role}: Jane Smith.`, `Jane Smith is the ${role}.`, `Jane Smith — ${role}.`]) {
+      const jane = extractSalonOwnerCandidates(text, source, true).find(item => item.firstName === "Jane");
+      assert.equal(jane?.roleConfirmed, true, text);
+      assert.equal(jane?.lastName, "Smith", text);
+    }
+    for (const text of [`Former ${role}: Jane Smith.`, `Reviewer says ${role}: Jane Smith.`, `Jane Smith was the ${role}.`]) {
+      assert.equal(extractSalonOwnerCandidates(text, source, true).some(item => item.roleConfirmed), false, text);
+    }
+  }
+  assert.equal(extractSalonOwnerCandidates("Operator: Jane Smith.", source, true).some(item => item.roleConfirmed), false);
+  assert.equal(extractSalonOwnerCandidates("Owned and operated by Jane Smith.", source, true)[0]?.roleConfirmed, true);
+});
+
+const providerResponse = (organic_results: Array<{ title?: string; link?: string; snippet?: string }> = []) =>
+  new Response(JSON.stringify({ organic_results }), { status: 200, headers: { "Content-Type": "application/json" } });
+const matchedPage = (url: string, evidence = "Owner/operator: Jane Smith.") => ({
+  url, html: `<main><p>Curly Tails, 5651 Tourist Dr, North Richland Hills, TX 76117. ${evidence}</p></main>`,
+});
+async function withTestProvider(fn: () => Promise<void>) {
+  const oldKey = process.env.SERPAPI_API_KEY;
+  process.env.SERPAPI_API_KEY = "test-only-key";
+  try { await fn(); } finally {
+    if (oldKey === undefined) delete process.env.SERPAPI_API_KEY;
+    else process.env.SERPAPI_API_KEY = oldKey;
+  }
+}
+
+test("expanded lookup verifies a broader or natural-language result before another paid search", async () => {
+  await withTestProvider(async () => {
+    for (const winningPhrase of [1, 2]) {
+      const row = orchestrationRow({ websiteUrl: null });
+      const queries = salonOwnerSearchQueries(row);
+      let inspected = false;
+      const deps = mockDependencies(row, {
+        fetchProvider: async url => {
+          assert.equal(inspected, false, "never spend after verified fetched evidence");
+          const index = queries.findIndex(item => item.query === new URL(String(url)).searchParams.get("q"));
+          return providerResponse(index === winningPhrase ? [{ link: "https://fixture.example/about", snippet: "Owner Jane Smith." }] : []);
+        },
+        fetchPage: async url => { inspected = true; return matchedPage(url); },
+      });
+      try {
+        const result = await lookupSalonOwnerName(row.id, row.userId, 3, 3);
+        assert.equal(result?.providerCalls, winningPhrase + 1);
+        assert.deepEqual(deps.observed.queries, queries.slice(0, winningPhrase + 1).map(item => item.query));
+        assert.equal(result?.candidates.find(item => item.firstName === "Jane")?.roleConfirmed, true);
+        assert.equal(result?.approvedAt, null);
+        assert.equal(result?.selectedCandidateId, null);
+        assert.equal(result?.usePersonalName, false);
+        assert.equal(deps.observed.pageAttempts, 1);
+        assert.equal(result?.candidates[0].sources.some(item => item.kind === "organic_summary"), true);
+        assert.equal(result?.candidates[0].sources.some(item => item.kind === "organic_page"), true);
+      } finally { deps.restore(); }
+    }
+  });
+});
+
+test("single-search defaults, zero and partial numeric budgets never silently expand paid usage", async () => {
+  await withTestProvider(async () => {
+    const row = orchestrationRow({ websiteUrl: null });
+    for (const budget of [undefined, 0, 1, 2]) {
+      const deps = mockDependencies(row, { fetchProvider: async () => providerResponse() });
+      try {
+        const result = budget === undefined
+          ? await lookupSalonOwnerName(row.id, row.userId)
+          : await lookupSalonOwnerName(row.id, row.userId, budget, 3);
+        assert.equal(result?.providerCalls, budget ?? 1);
+        assert.equal(deps.observed.providerAttempts, budget ?? 1);
+        if (budget !== undefined) assert.match(result?.error || "", /incomplete.*allowance/);
+      } finally { deps.restore(); }
+    }
+  });
+});
+
+test("phrase caches are distinct, cached empty results are free, and repeated pages/candidates are merged", async () => {
+  const row = orchestrationRow({ websiteUrl: null });
+  const queries = salonOwnerSearchQueries(row);
+  const cacheByKey = {
+    [queries[0].cacheKey]: [],
+    [queries[1].cacheKey]: [{ link: "https://fixture.example/staff", snippet: "Owner Jane Smith." }],
+    [queries[2].cacheKey]: [{ link: "https://fixture.example/staff#team", snippet: "Owner Jane Smith." }],
+  };
+  const deps = mockDependencies(row, { cacheByKey, fetchPage: async url => matchedPage(url, "Manager: Jane Smith.") });
+  try {
+    const estimate = await estimateSalonOwnerNameSearch([row], 3);
+    assert.equal(estimate.maxProviderCalls, 0);
+    assert.equal(estimate.allowed, true);
+    const result = await lookupSalonOwnerName(row.id, row.userId, 0, 3);
+    assert.equal(result?.providerCalls, 0);
+    assert.equal(result?.candidates.length, 1);
+    assert.equal(result?.candidates[0].roleConfirmed, false);
+    assert.equal(deps.observed.pageAttempts, 1);
+    assert.equal(deps.observed.reservations, 0);
+    assert.deepEqual(deps.observed.cacheKeys.slice(-3), queries.map(item => item.cacheKey));
+  } finally { deps.restore(); }
+});
+
+test("new phrase caches preserve empty responses and let future confirmed lookups run without paid requests", async () => {
+  await withTestProvider(async () => {
+    const row = orchestrationRow({ websiteUrl: null });
+    const cacheByKey = {};
+    const deps = mockDependencies(row, { cacheByKey, fetchProvider: async () => providerResponse() });
+    try {
+      assert.equal((await lookupSalonOwnerName(row.id, row.userId, 3, 3))?.providerCalls, 3);
+      assert.deepEqual(deps.observed.writtenKeys, salonOwnerSearchQueries(row).map(item => item.cacheKey));
+      assert.equal((await estimateSalonOwnerNameSearch([row], 3)).maxProviderCalls, 0);
+      assert.equal((await lookupSalonOwnerName(row.id, row.userId, 0, 3))?.providerCalls, 0);
+      assert.equal(deps.observed.providerAttempts, 3);
+    } finally { deps.restore(); }
+  });
+});
+
+test("zero remaining paid allowance can still reuse a later cached phrase without attempting missing phrases", async () => {
+  const row = orchestrationRow({ websiteUrl: null });
+  const queries = salonOwnerSearchQueries(row);
+  const deps = mockDependencies(row, {
+    cacheByKey: { [queries[2].cacheKey]: [{ link: "https://fixture.example/about" }] },
+    fetchPage: async url => matchedPage(url),
+  });
+  try {
+    const result = await lookupSalonOwnerName(row.id, row.userId, 0, 3);
+    assert.equal(result?.candidates[0]?.roleConfirmed, true);
+    assert.equal(result?.providerCalls, 0);
+    assert.equal(deps.observed.providerAttempts, 0);
+    assert.equal(deps.observed.reservations, 0);
+  } finally { deps.restore(); }
+});
+
+test("concurrent review state never inflates actual paid usage with historical request counts", async () => {
+  await withTestProvider(async () => {
+    const row = orchestrationRow({
+      websiteUrl: null, evidence: { ownerName: { ...EMPTY_OWNER_NAME_RESULT, providerCalls: 3 } },
+    });
+    const deps = mockDependencies(row, { complete: false, fetchProvider: async () => providerResponse() });
+    try {
+      const result = await lookupSalonOwnerNameBatch([row], row.userId, 1);
+      assert.equal(result.callsUsed, 1);
+      assert.equal(deps.observed.providerAttempts, 1);
+    } finally { deps.restore(); }
+  });
+});
+
+test("later cache, usage and reservation failures preserve earlier candidates and never refund batch spending", async () => {
+  await withTestProvider(async () => {
+    for (const stage of ["cache", "usage", "reservation"] as const) {
+      const rows = [orchestrationRow({ id: "fault-row", websiteUrl: null }),
+        orchestrationRow({ id: "next-row", businessName: "Next Salon", websiteUrl: null })];
+      const deps = mockDependencies(rows[0], {
+        rows, fault: { stage, at: 2 },
+        fetchProvider: async () => providerResponse([{ link: "https://www.nextdoor.com/public/", snippet: "Owner Jane Smith." }]),
+      });
+      try {
+        const batch = await lookupSalonOwnerNameBatch(rows, rows[0].userId, 2, 3);
+        assert.equal(deps.observed.providerAttempts, 2, stage);
+        assert.equal(batch.callsUsed, deps.observed.providerAttempts, stage);
+        assert.deepEqual(batch.results.map(item => item.ownerName.providerCalls), [1, 1], stage);
+        const first = batch.results[0].ownerName;
+        assert.equal(first.status, "needs_review", stage);
+        assert.equal(first.candidates[0]?.firstName, "Jane", stage);
+        assert.equal(first.candidates[0]?.roleConfirmed, false, stage);
+        assert.equal(first.approvedAt, null, stage);
+        assert.match(first.error || "", /incomplete.*mock.*failure/, stage);
+      } finally { deps.restore(); }
+    }
+  });
+});
+
+test("concurrent row deletion, post-save read errors and persistence failures cannot refund initiated calls", async () => {
+  await withTestProvider(async () => {
+    for (const failure of ["deletion", "rowRead", "persistence"] as const) {
+      const rows = [orchestrationRow({ id: "fault-row", websiteUrl: null }),
+        orchestrationRow({ id: "next-row", businessName: "Next Salon", websiteUrl: null })];
+      const deps = mockDependencies(rows[0], {
+        rows, complete: failure === "persistence", completeFailures: failure === "persistence" ? 2 : 0,
+        deleteFirstRowOnCompletion: failure === "deletion",
+        fault: failure === "rowRead" ? { stage: "rowRead", at: 2 } : undefined,
+        fetchProvider: async () => providerResponse(),
+      });
+      try {
+        const batch = await lookupSalonOwnerNameBatch(rows, rows[0].userId, 2);
+        assert.equal(deps.observed.providerAttempts, 2, failure);
+        assert.equal(batch.callsUsed, 2, failure);
+        assert.equal(batch.results[0].ownerName.providerCalls, 1, failure);
+        assert.equal(batch.results[0].ownerName.status, "failed", failure);
+        assert.ok(batch.results[0].ownerName.error, failure);
+      } finally { deps.restore(); }
+    }
+  });
+});
+
+test("wrong-location fallback pages do not confirm ownership and failed fetch attempts consume the shared page cap", async () => {
+  await withTestProvider(async () => {
+    const row = orchestrationRow({ websiteUrl: null });
+    const deps = mockDependencies(row, {
+      fetchProvider: async () => providerResponse(Array.from({ length: 6 }, (_, index) => ({
+        link: `https://fixture.example/page-${index}`, snippet: "Owner Jane Smith.",
+      }))),
+      fetchPage: async url => url.endsWith("0")
+        ? { url, html: "<main>Curly Tails, 999 Wrong St, Dallas, TX 75001. Owner/operator: Jane Smith.</main>" }
+        : Promise.reject(new Error("Mock page failure")),
+    });
+    try {
+      const result = await lookupSalonOwnerName(row.id, row.userId, 3, 3);
+      assert.equal(result?.providerCalls, 1);
+      assert.equal(deps.observed.pageAttempts, 4);
+      assert.equal(result?.candidates.some(item => item.roleConfirmed), false);
+      assert.match(result?.error || "", /incomplete.*page/);
+    } finally { deps.restore(); }
+  });
+});
+
+test("later quota exhaustion or provider timeout preserves prior review candidates and never retries", async () => {
+  await withTestProvider(async () => {
+    const row = orchestrationRow({ websiteUrl: null });
+    for (const quotaFailure of [false, true]) {
+      const deps = mockDependencies(row, {
+        reserveLimit: quotaFailure ? 1 : undefined,
+        providerTimeoutMs: 15,
+        fetchProvider: async () => deps.observed.providerAttempts === 1
+          ? providerResponse([{ link: "https://www.nextdoor.com/public/", snippet: "Owner Jane Smith." }])
+          : new Promise(() => {}),
+      });
+      try {
+        const result = await lookupSalonOwnerName(row.id, row.userId, 3, 3);
+        assert.equal(result?.status, "needs_review");
+        assert.equal(result?.candidates[0].firstName, "Jane");
+        assert.equal(result?.candidates[0].roleConfirmed, false);
+        assert.equal(result?.providerCalls, quotaFailure ? 1 : 2);
+        assert.equal(deps.observed.providerAttempts, quotaFailure ? 1 : 2);
+        assert.match(result?.error || "", quotaFailure ? /incomplete.*quota/ : /incomplete.*time limit/);
+      } finally { deps.restore(); }
+    }
+  });
+});
+
+test("batch allowance is shared across rows and expanded estimates honor hourly and monthly caps", async () => {
+  await withTestProvider(async () => {
+    const rows = Array.from({ length: 5 }, (_, index) => orchestrationRow({
+      id: `row-${index}`, businessName: `Salon ${index}`, websiteUrl: null,
+    }));
+    const deps = mockDependencies(rows[0], {
+      rows, fetchProvider: async () => providerResponse(),
+      usage: { config: { maxSerpCallsPerHour: 12 }, usage: { monthlyQuota: 20, usedCredits: 3, hardStopAt: 10 } },
+    });
+    try {
+      assert.equal((await estimateSalonOwnerNameSearch(rows)).maxProviderCalls, 5);
+      const expanded = await estimateSalonOwnerNameSearch(rows, 3);
+      assert.equal(expanded.maxProviderCalls, 7);
+      assert.equal(expanded.maxPages, 20);
+      assert.equal(expanded.searchesPerRow, 3);
+      const batch = await lookupSalonOwnerNameBatch(rows, rows[0].userId, 4, 3);
+      assert.equal(batch.callsUsed, 4);
+      assert.deepEqual(batch.results.map(item => item.ownerName.providerCalls), [3, 1, 0, 0, 0]);
+      assert.equal(deps.observed.providerAttempts, 4);
+    } finally { deps.restore(); }
+  });
+});
+
+test("search input requires explicit expansion, confirmation, unique owned-row identifiers and bounded budgets", () => {
+  assert.equal(ownerNameRowsInput.parse({ rowIds: ["a"] }).searchesPerRow, 1);
+  assert.equal(ownerNameSearchInput.parse({ rowIds: ["a"], maxProviderCalls: 1, confirmed: true }).searchesPerRow, 1);
+  assert.equal(ownerNameSearchInput.safeParse({ rowIds: ["a"], maxProviderCalls: 3, confirmed: true }).success, false);
+  assert.equal(ownerNameSearchInput.safeParse({ rowIds: ["a"], searchesPerRow: 3, maxProviderCalls: 3, confirmed: true }).success, true);
+  for (const input of [
+    { rowIds: ["a"], searchesPerRow: 2, maxProviderCalls: 2, confirmed: true },
+    { rowIds: ["a"], searchesPerRow: 3, maxProviderCalls: 4, confirmed: true },
+    { rowIds: ["a"], maxProviderCalls: -1, confirmed: true },
+    { rowIds: ["a"], maxProviderCalls: 1.5, confirmed: true },
+    { rowIds: ["a"], maxProviderCalls: 1, confirmed: false },
+    { rowIds: ["a", "a"], maxProviderCalls: 1, confirmed: true },
+    { rowIds: [], maxProviderCalls: 0, confirmed: true },
+    { rowIds: ["a", "b", "c", "d", "e", "f"], maxProviderCalls: 6, confirmed: true },
+  ]) assert.equal(ownerNameSearchInput.safeParse(input).success, false);
 });

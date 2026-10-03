@@ -19,6 +19,8 @@ const MAX_PAGES_PER_ROW = 4;
 const MAX_PAGE_BYTES = 1_500_000;
 const FETCH_TIMEOUT_MS = 9_000;
 const PROVIDER_TIMEOUT_MS = 30_000;
+const LOOKUP_TIMEOUT_MS = 90_000;
+const MAX_SEARCHES_PER_ROW = 3;
 const MAX_REDIRECTS = 3;
 const ownerSearchLocks = new Map<string, Promise<void>>();
 
@@ -28,6 +30,14 @@ type SalonIdentity = Pick<
 >;
 
 type OrganicResult = { title?: string; link?: string; snippet?: string };
+type OwnerLookupProgress = {
+  calls: number;
+  candidates: SalonOwnerNameCandidate[];
+  pages: { count: number; attempted: number };
+};
+const newOwnerLookupProgress = (): OwnerLookupProgress => ({
+  calls: 0, candidates: [], pages: { count: 0, attempted: 0 },
+});
 
 function normalized(value: string | null | undefined): string {
   return (value || "").toLocaleLowerCase().normalize("NFKD")
@@ -61,11 +71,14 @@ const CO_FOUNDED_ROLE = `${roleWord("co")}-${FOUNDED_ROLE}`;
 const GROOMER_ROLE = roleWord("groomer");
 const STYLIST_ROLE = roleWord("stylist");
 const OPERATOR_ROLE = roleWord("operator");
+const OWNER_OPERATOR_ROLE = `${OWNER_ROLE}[ \\t]*(?:/|-|—|&|${roleWord("and")})[ \\t]*${OPERATOR_ROLE}`;
 const MANAGER_ROLE = roleWord("manager");
 const STAFF_MEMBER_ROLE = `${roleWord("staff")} ${roleWord("member")}`;
 const TEAM_MEMBER_ROLE = `${roleWord("team")} ${roleWord("member")}`;
 const EMPLOYEE_ROLE = roleWord("employee");
 const OWNER_PHRASES = [
+  { pattern: new RegExp(`\\b${OWNER_OPERATOR_ROLE}[ \\t]*(?:${roleWord("is")}[ \\t]+|[:—-][ \\t]*)?(${NAME})`, "g"), role: "owner/operator" },
+  { pattern: new RegExp(`\\b(${NAME})[ \\t]+(?:[,—-][ \\t]*)?(?:${roleWord("is")}[ \\t]+)?(?:${roleWord("the")}[ \\t]+)?${OWNER_OPERATOR_ROLE}\\b`, "g"), role: "owner/operator" },
   { pattern: new RegExp(`\\b(?:${roleWord("owned and operated by")}|${roleWord("owned by")})[ \\t]+(${NAME})`, "g"), role: "owner" },
   { pattern: new RegExp(`\\b(?:${OWNER_ROLE}|${PROPRIETOR_ROLE}|${CO_OWNER_ROLE})[ \\t]*(?:${roleWord("is")}|:|—|-)[ \\t]*(${NAME})`, "g"), role: "owner" },
   { pattern: new RegExp(`\\b(?:${OWNER_ROLE}|${PROPRIETOR_ROLE}|${CO_OWNER_ROLE})[ \\t]+(${NAME})(?=[ \\t]*(?:${roleWord("is")}\\b|[,.;!?]|$))`, "g"), role: "owner" },
@@ -753,20 +766,41 @@ function queryParts(row: SalonEnrichmentRow): { query: string; cacheKey: string;
   };
 }
 
-async function organicSearch(row: SalonEnrichmentRow, allowProviderCall: boolean): Promise<{
+export function salonOwnerSearchQueries(row: SalonEnrichmentRow): ReturnType<typeof queryParts>[] {
+  const legacy = queryParts(row);
+  const cityState = [row.city, row.state].filter(value => value?.trim()).join(", ");
+  const availableLocation = cityState || [row.address1 || row.address, row.zipCode].filter(Boolean).join(", ");
+  const phrases = [
+    legacy,
+    { ...legacy, query: `"${row.businessName}"${availableLocation ? ` ${availableLocation}` : ""} owner OR "owner-operator"` },
+    { ...legacy, query: `Who owns "${row.businessName}"${availableLocation ? ` in ${availableLocation}` : ""}?` },
+  ];
+  return phrases.filter((item, index) =>
+    phrases.findIndex(other => normalized(other.query) === normalized(item.query)) === index,
+  ).map((item, index) => index === 0 ? item : {
+    ...item,
+    cacheKey: `salon-owner-organic-phrase:${normalized(item.query)}`,
+  }).slice(0, MAX_SEARCHES_PER_ROW);
+}
+
+async function organicSearch(
+  parts: ReturnType<typeof queryParts>, remainingCalls: number, deadline: number, progress: OwnerLookupProgress,
+): Promise<{
   results: OrganicResult[];
   calls: number;
   error?: string;
+  budgetExhausted?: boolean;
 }> {
-  const { query, cacheKey, zip, state } = queryParts(row);
+  const { query, cacheKey, zip, state } = parts;
   const cached = await runtime.storage.getSerpCache(zip, cacheKey, state, 30);
   if (cached) {
     const values = cached.resultsJson as OrganicResult[];
     return { results: Array.isArray(values) ? values : [], calls: 0 };
   }
+  if (remainingCalls <= 0) return { results: [], calls: 0, budgetExhausted: true, error: "Owner lookup incomplete: the confirmed paid-search allowance has been reached" };
+  if (Date.now() >= deadline) return { results: [], calls: 0, error: "Owner lookup incomplete: the lookup time limit has been reached" };
   const apiKey = process.env.SERPAPI_API_KEY;
   if (!apiKey) return { results: [], calls: 0, error: "SERPAPI_API_KEY is not configured" };
-  if (!allowProviderCall) return { results: [], calls: 0 };
 
   const status = await runtime.getUsageStatus();
   const maxCallsPerHour = status.config.maxSerpCallsPerHour ?? 5;
@@ -783,24 +817,27 @@ async function organicSearch(row: SalonEnrichmentRow, allowProviderCall: boolean
       num: "10",
       api_key: apiKey,
     });
-    requestAttempted = true;
     // Cover both response headers and body parsing with one bounded deadline.
     // No automatic retry: a timed-out initiated request may still be billed.
     const request = async () => {
+      // This ledger is independent of storage and displayed row results. A
+      // later infrastructure error or deleted row must never refund this call.
+      requestAttempted = true;
+      progress.calls++;
       const response = await runtime.fetchProvider(`https://serpapi.com/search?${params}`, {
         signal: controller.signal,
       });
       if (!response.ok) throw new Error(`SerpAPI returned HTTP ${response.status}`);
       return response.json() as Promise<{ error?: string; organic_results?: OrganicResult[] }>;
     };
-    const deadline = new Promise<never>((_resolve, reject) => {
+    const providerDeadline = new Promise<never>((_resolve, reject) => {
       timeout = setTimeout(() => {
         const error = new DOMException("Owner search provider timed out", "TimeoutError");
         reject(error);
         controller.abort(error);
-      }, runtime.providerTimeoutMs ?? PROVIDER_TIMEOUT_MS);
+      }, Math.min(runtime.providerTimeoutMs ?? PROVIDER_TIMEOUT_MS, Math.max(1, deadline - Date.now())));
     });
-    const payload = await Promise.race([request(), deadline]);
+    const payload = await Promise.race([request(), providerDeadline]);
     if (payload.error) throw new Error(`SerpAPI: ${String(payload.error).slice(0, 240)}`);
     const results = Array.isArray(payload.organic_results)
       ? payload.organic_results.slice(0, 10).filter(item => item && typeof item === "object")
@@ -906,7 +943,9 @@ export function ownerLookupWebsiteUrl(row: SalonEnrichmentRow): string | null {
 
 async function performLookup(
   row: SalonEnrichmentRow,
-  allowProviderCall: boolean,
+  maxProviderCalls: number,
+  searchesPerRow: 1 | 3,
+  progress: OwnerLookupProgress,
 ): Promise<{ ownerName: OwnerNameResult; calls: number }> {
   const businessName = row.businessName?.trim();
   if (!businessName) {
@@ -926,69 +965,91 @@ async function performLookup(
       calls: 0,
     };
   }
-  const candidates: SalonOwnerNameCandidate[] = [];
+  const candidates = progress.candidates;
   const errors: string[] = [];
-  const pages = { count: 0, attempted: 0 };
+  const pages = progress.pages;
+  const deadline = Date.now() + LOOKUP_TIMEOUT_MS;
+  const inspectedUrls = new Set<string>();
+  const pageKey = (url: string) => {
+    const parsed = new URL(url);
+    parsed.hash = "";
+    return parsed.toString();
+  };
+  const inspectOnce = async (
+    url: string, isHomepage = false, organic = false, inheritedOrigin?: string,
+  ) => {
+    const key = pageKey(url);
+    if (inspectedUrls.has(key)) return null;
+    inspectedUrls.add(key);
+    const page = await inspectPage(row, url, candidates, pages, errors, isHomepage, organic, inheritedOrigin);
+    if (page) inspectedUrls.add(pageKey(page.url));
+    return page;
+  };
+  const verifiedOwnerFound = () => candidates.some(candidate => candidate.roleConfirmed && candidate.businessMatched);
   let homepage: { html: string; url: string; matched: boolean } | null = null;
 
-  // Existing matched business site gets first priority, before paid search.
-  const websiteUrl = ownerLookupWebsiteUrl(row);
-  if (websiteUrl && safeOrganicPage(websiteUrl)) {
-    const baseUrl = websiteUrl;
-    homepage = await inspectPage(row, baseUrl, candidates, pages, errors, new URL(baseUrl).pathname === "/");
-    if (homepage && pages.attempted < MAX_PAGES_PER_ROW &&
-        !candidates.some(candidate => candidate.roleConfirmed && candidate.businessMatched)) {
-      const base = new URL(homepage.url);
-      const paths = candidatePagePaths(homepage.html, base);
-      for (const path of paths) {
-        // Cap first-party inspection at three pages to reserve at least one
-        // request for an independently matched organic page.
-        if (pages.attempted >= Math.min(3, MAX_PAGES_PER_ROW - 1)) break;
-        if (path === base.pathname) continue;
-        await inspectPage(
-          row,
-          new URL(path, base).toString(),
-          candidates,
-          pages,
-          errors,
-          false,
-          false,
-          homepage.matched ? homepage.url : undefined,
-        );
-        if (candidates.some(candidate => candidate.roleConfirmed && candidate.businessMatched)) break;
+  try {
+    // Existing matched business site gets first priority, before paid search.
+    const websiteUrl = ownerLookupWebsiteUrl(row);
+    if (websiteUrl && safeOrganicPage(websiteUrl)) {
+      const baseUrl = websiteUrl;
+      homepage = await inspectOnce(baseUrl, new URL(baseUrl).pathname === "/");
+      if (homepage && pages.attempted < MAX_PAGES_PER_ROW && !verifiedOwnerFound()) {
+        const base = new URL(homepage.url);
+        const paths = candidatePagePaths(homepage.html, base);
+        for (const path of paths) {
+          // Reserve at least one request for an independently matched organic page.
+          if (pages.attempted >= Math.min(3, MAX_PAGES_PER_ROW - 1) || Date.now() >= deadline) break;
+          if (path === base.pathname) continue;
+          await inspectOnce(
+            new URL(path, base).toString(), false, false, homepage.matched ? homepage.url : undefined,
+          );
+          if (verifiedOwnerFound()) break;
+        }
       }
     }
-  }
 
-  const verifiedOwnerFound = candidates.some(candidate => candidate.roleConfirmed && candidate.businessMatched);
-  const search = verifiedOwnerFound
-    ? { results: [] as OrganicResult[], calls: 0 }
-    : await organicSearch(row, allowProviderCall);
-  let calls = search.calls;
-  if ("error" in search && search.error) errors.push(search.error);
-
-  // Search result summaries can suggest review candidates, but are never
-  // accepted as role evidence or matched-business evidence.
-  const organicPages: string[] = [];
-  for (const result of search.results) {
-    const summary = [result.title, result.snippet].filter(Boolean).join(" — ");
-    if (!summary) continue;
-    const summarySource: SalonOwnerNameSource = {
-      url: result.link || "https://www.google.com/search",
-      excerpt: summary.slice(0, 350),
-      kind: "organic_summary",
-    };
-    mergeCandidates(candidates, extractSalonOwnerSummaryCandidates(summary, summarySource));
-    if (result.link && safeOrganicPage(result.link) &&
-        (!homepage || new URL(result.link).origin !== new URL(homepage.url).origin) &&
-        !organicPages.includes(result.link)) organicPages.push(result.link);
-  }
-
-  // If the row did not have a usable matched website, inspect public organic
-  // pages within the same small page budget. Social/login pages are excluded.
-  for (const resultUrl of organicPages) {
-    if (pages.attempted >= MAX_PAGES_PER_ROW) break;
-    await inspectPage(row, resultUrl, candidates, pages, errors, false, true);
+    for (const phrase of salonOwnerSearchQueries(row).slice(0, searchesPerRow)) {
+      if (verifiedOwnerFound()) break;
+      if (pages.attempted >= MAX_PAGES_PER_ROW || Date.now() >= deadline) {
+        errors.push("Owner lookup incomplete: the page or lookup time limit has been reached");
+        break;
+      }
+      const search = await organicSearch(phrase, maxProviderCalls - progress.calls, deadline, progress);
+      if (search.error) {
+        errors.push(search.error.startsWith("Owner lookup incomplete:") ? search.error : `Owner lookup incomplete: ${search.error}`);
+        if (search.budgetExhausted) continue; // Later cached phrases remain free; no more paid requests.
+        break; // No automatic retries, including failures that may have been billed.
+      }
+      const organicPages: string[] = [];
+      // Summaries suggest candidates only; fetched matched pages establish roles.
+      for (const result of search.results) {
+        const summary = [result.title, result.snippet].filter(Boolean).join(" — ");
+        if (summary) {
+          mergeCandidates(candidates, extractSalonOwnerSummaryCandidates(summary, {
+            url: result.link || "https://www.google.com/search",
+            excerpt: summary.slice(0, 350),
+            kind: "organic_summary",
+          }));
+        }
+        if (result.link && safeOrganicPage(result.link) &&
+            !inspectedUrls.has(pageKey(result.link)) && !organicPages.includes(result.link)) {
+          organicPages.push(result.link);
+        }
+      }
+      // Inspect this phrase before spending on any fallback phrase.
+      for (const resultUrl of organicPages) {
+        if (pages.attempted >= MAX_PAGES_PER_ROW || Date.now() >= deadline || verifiedOwnerFound()) break;
+        await inspectOnce(resultUrl, false, true);
+      }
+      if (!verifiedOwnerFound() && organicPages.some(url => !inspectedUrls.has(pageKey(url)))) {
+        errors.push("Owner lookup incomplete: the page or lookup time limit has been reached");
+      }
+    }
+  } catch (error) {
+    // Cache reads, usage lookups and reservations can fail outside the provider
+    // request's catch. Keep earlier candidates and usage, and stop this row.
+    errors.push(`Owner lookup incomplete: ${error instanceof Error ? error.message : "Owner-search infrastructure failed"}`);
   }
 
   const distinct = candidates.filter((candidate, index) =>
@@ -1001,19 +1062,32 @@ async function performLookup(
     selectedCandidateId: null,
     approvedAt: null,
     usePersonalName: false,
-    providerCalls: calls,
+    providerCalls: progress.calls,
     pagesFetched: pages.count,
     ...(error ? { error } : {}),
     lookedUpAt: new Date().toISOString(),
   };
-  return { ownerName, calls };
+  return { ownerName, calls: progress.calls };
 }
 
 export async function lookupSalonOwnerName(
   rowId: string,
   userId: string,
-  allowProviderCall = true,
+  providerAllowance: number | boolean = 1,
+  searchesPerRow: 1 | 3 = 1,
 ): Promise<OwnerNameResult | null> {
+  return lookupSalonOwnerNameTracked(rowId, userId, providerAllowance, searchesPerRow, newOwnerLookupProgress());
+}
+
+async function lookupSalonOwnerNameTracked(
+  rowId: string, userId: string, providerAllowance: number | boolean, searchesPerRow: 1 | 3,
+  progress: OwnerLookupProgress,
+): Promise<OwnerNameResult | null> {
+  const maxProviderCalls = typeof providerAllowance === "boolean" ? Number(providerAllowance) : providerAllowance;
+  if (!Number.isInteger(maxProviderCalls) || maxProviderCalls < 0 || maxProviderCalls > MAX_SEARCHES_PER_ROW ||
+      ![1, 3].includes(searchesPerRow) || maxProviderCalls > searchesPerRow) {
+    throw new Error("Invalid owner-search allowance");
+  }
   return withRowSearchLock(rowId, async () => {
     const existingRow = await runtime.storage.getSalonEnrichmentRow(rowId, userId);
     if (!existingRow) return null;
@@ -1029,13 +1103,16 @@ export async function lookupSalonOwnerName(
     if (!row) return null;
     let result: { ownerName: OwnerNameResult; calls: number };
     try {
-      result = await performLookup(row, allowProviderCall);
+      result = await performLookup(row, maxProviderCalls, searchesPerRow, progress);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Owner-name search failed";
       const failed: OwnerNameResult = {
         ...EMPTY_OWNER_NAME_RESULT,
-        status: "failed",
-        error: message,
+        status: progress.candidates.length ? "needs_review" : "failed",
+        candidates: progress.candidates,
+        providerCalls: progress.calls,
+        pagesFetched: progress.pages.count,
+        error: `Owner lookup incomplete: ${message}`,
         lookedUpAt: new Date().toISOString(),
       };
       try {
@@ -1064,40 +1141,54 @@ export async function lookupSalonOwnerName(
         return failed;
       }
       if (completed) return failed;
-      const current = await runtime.storage.getSalonEnrichmentRow(row.id, userId);
+      const current = await runtime.storage.getSalonEnrichmentRow(row.id, userId).catch(() => undefined);
       if (!current) return failed;
       const currentResult = readOwnerResult(current);
       return {
         ...currentResult,
-        providerCalls: Math.max(result.calls, currentResult.providerCalls),
+        providerCalls: result.calls,
       };
     }
     if (!completed) {
-      const current = await runtime.storage.getSalonEnrichmentRow(row.id, userId);
-      if (!current) return null;
+      let current: SalonEnrichmentRow | undefined;
+      try {
+        current = await runtime.storage.getSalonEnrichmentRow(row.id, userId);
+      } catch (error) {
+        return {
+          ...result.ownerName, providerCalls: progress.calls, status: "failed",
+          error: `Owner lookup incomplete: could not read the current row after saving results: ${error instanceof Error ? error.message : "storage error"}`,
+        };
+      }
+      if (!current) return {
+        ...result.ownerName, providerCalls: progress.calls, status: "failed",
+        error: "Owner lookup incomplete: the salon row is no longer available and results could not be saved",
+      };
       const currentResult = readOwnerResult(current);
       return {
         ...currentResult,
-        providerCalls: Math.max(result.calls, currentResult.providerCalls),
+        providerCalls: result.calls,
       };
     }
     return result.ownerName;
   });
 }
 
-export async function estimateSalonOwnerNameSearch(rows: SalonEnrichmentRow[]): Promise<{
+export async function estimateSalonOwnerNameSearch(rows: SalonEnrichmentRow[], searchesPerRow: 1 | 3 = 1): Promise<{
   maxProviderCalls: number;
   maxPages: number;
   remainingCredits: number;
   allowed: boolean;
   reason?: string;
+  searchesPerRow: 1 | 3;
 }> {
+  if (![1, 3].includes(searchesPerRow)) throw new Error("Invalid owner-search phrase limit");
   if (!rows.length || rows.length > MAX_ROWS_PER_REQUEST) {
-    return { maxProviderCalls: 0, maxPages: 0, remainingCredits: 0, allowed: false, reason: "Select between 1 and 5 rows" };
+    return { searchesPerRow, maxProviderCalls: 0, maxPages: 0, remainingCredits: 0, allowed: false, reason: "Select between 1 and 5 rows" };
   }
   const eligibleRows = rows.filter(isSalonOwnerNameEligible);
   if (!eligibleRows.length) {
     return {
+      searchesPerRow,
       maxProviderCalls: 0,
       maxPages: 0,
       remainingCredits: 0,
@@ -1105,8 +1196,11 @@ export async function estimateSalonOwnerNameSearch(rows: SalonEnrichmentRow[]): 
       reason: "Selected rows are categorized as non-grooming businesses",
     };
   }
-  const misses = await Promise.all(eligibleRows.map(async row => {
-    const { cacheKey, zip, state } = queryParts(row);
+  const phrases = eligibleRows.flatMap(row => salonOwnerSearchQueries(row).slice(0, searchesPerRow));
+  const uniquePhrases = phrases.filter((phrase, index) => phrases.findIndex(other =>
+    other.cacheKey === phrase.cacheKey && other.zip === phrase.zip && other.state === phrase.state,
+  ) === index);
+  const misses = await Promise.all(uniquePhrases.map(async ({ cacheKey, zip, state }) => {
     return !(await runtime.storage.getSerpCache(zip, cacheKey, state, 30));
   }));
   const keyConfigured = !!process.env.SERPAPI_API_KEY;
@@ -1119,24 +1213,54 @@ export async function estimateSalonOwnerNameSearch(rows: SalonEnrichmentRow[]): 
   const hourlyRemaining = Math.max(0, (status.config.maxSerpCallsPerHour ?? 5) - callsLastHour);
   const remainingCredits = Math.min(monthlyRemaining, hourlyRemaining);
   const uncachedCount = misses.filter(Boolean).length;
-  const maxProviderCalls = keyConfigured ? Math.min(uncachedCount, remainingCredits, eligibleRows.length) : 0;
+  const maxProviderCalls = keyConfigured ? Math.min(uncachedCount, remainingCredits, eligibleRows.length * searchesPerRow) : 0;
   const hasWebsite = eligibleRows.some(row => {
     const url = ownerLookupWebsiteUrl(row);
     return !!url && safeOrganicPage(url);
   });
-  const allowed = !!(uncachedCount === 0 || maxProviderCalls > 0 || hasWebsite);
+  const allowed = !!(misses.some(miss => !miss) || maxProviderCalls > 0 || hasWebsite);
   const reason = allowed
     ? undefined
     : !keyConfigured ? "No matched website is available and SERPAPI_API_KEY is not configured"
       : remainingCredits <= 0 ? "Monthly or hourly SERP credits are exhausted"
         : "No owner-name searches are available";
   return {
+    searchesPerRow,
     maxProviderCalls,
     maxPages: eligibleRows.length * MAX_PAGES_PER_ROW,
     remainingCredits,
     allowed,
     ...(reason ? { reason } : {}),
   };
+}
+
+/** One numeric allowance for the whole batch, not a fresh allowance per row. */
+export async function lookupSalonOwnerNameBatch(
+  rows: SalonEnrichmentRow[], userId: string, maxProviderCalls: number, searchesPerRow: 1 | 3 = 1,
+): Promise<{ results: Array<{ rowId: string; ownerName: OwnerNameResult }>; callsUsed: number }> {
+  if (![1, 3].includes(searchesPerRow) || rows.length > MAX_ROWS_PER_REQUEST ||
+      !Number.isInteger(maxProviderCalls) || maxProviderCalls < 0 || maxProviderCalls > rows.length * searchesPerRow) {
+    throw new Error("Invalid batch owner-search allowance");
+  }
+  let callsUsed = 0;
+  const results: Array<{ rowId: string; ownerName: OwnerNameResult }> = [];
+  for (const row of rows) {
+    const progress = newOwnerLookupProgress();
+    let ownerName: OwnerNameResult | null;
+    try {
+      ownerName = await lookupSalonOwnerNameTracked(
+        row.id, userId, Math.min(searchesPerRow, Math.max(0, maxProviderCalls - callsUsed)), searchesPerRow, progress,
+      );
+    } finally {
+      // Never derive spending from a nullable/persisted result. If an unexpected
+      // error escapes, this batch stops rather than issuing further requests.
+      callsUsed += progress.calls;
+    }
+    if (ownerName) {
+      results.push({ rowId: row.id, ownerName });
+    }
+  }
+  return { results, callsUsed };
 }
 
 export function isApprovableSalonOwnerName(ownerName: OwnerNameResult | null | undefined): boolean {
@@ -1150,4 +1274,5 @@ export function getSalonOwnerNameResult(row: SalonEnrichmentRow): OwnerNameResul
 export const salonOwnerNameLimits = {
   maxRowsPerRequest: MAX_ROWS_PER_REQUEST,
   maxPagesPerRow: MAX_PAGES_PER_ROW,
+  maxSearchesPerRow: MAX_SEARCHES_PER_ROW,
 };

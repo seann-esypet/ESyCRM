@@ -24,10 +24,10 @@ import { salonEnrichmentIsActive, startSalonEnrichment } from "./salonEnrichment
 import {
   estimateSalonOwnerNameSearch,
   getSalonOwnerNameResult,
-  lookupSalonOwnerName,
-  salonOwnerNameLimits,
+  lookupSalonOwnerNameBatch,
   stripLegacyOwnerHtml,
 } from "./salonOwnerNames";
+import { ownerNameRowsInput, ownerNameSearchInput } from "./salonOwnerNameSearchInput";
 import { enrollFormOutreach, listFormOutreach, recordFormAction } from "./formOutreach";
 import { validFormUrl } from "./formOutreachPolicy";
 import * as XLSX from "xlsx";
@@ -3418,9 +3418,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  const ownerNameRowsInput = z.object({
-    rowIds: z.array(z.string().min(1)).min(1).max(salonOwnerNameLimits.maxRowsPerRequest),
-  });
   const getOwnedOwnerNameRows = async (rowIds: string[], userId: string) => {
     const rows = await Promise.all(rowIds.map(id => storage.getSalonEnrichmentRow(id, userId)));
     return rows.every(Boolean) ? rows as NonNullable<typeof rows[number]>[] : null;
@@ -3429,15 +3426,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/salon-owner-names/estimate", isAuthenticated, async (req: any, res) => {
     try {
       const input = ownerNameRowsInput.parse(req.body);
-      if (new Set(input.rowIds).size !== input.rowIds.length) {
-        return res.status(400).json({ message: "rowIds must be unique" });
-      }
       const rows = await getOwnedOwnerNameRows(input.rowIds, req.user.claims.sub);
       if (!rows) return res.status(404).json({ message: "One or more salon rows were not found or are not owned by you" });
       if (rows.some(row => salonOwnerNameLookupBlockedByRowStatus(row.status))) {
         return res.status(409).json({ message: "Wait for ordinary salon enrichment to complete before estimating owner-name lookup" });
       }
-      res.json(await estimateSalonOwnerNameSearch(rows));
+      res.json(await estimateSalonOwnerNameSearch(rows, input.searchesPerRow));
     } catch (error) {
       res.status(error instanceof z.ZodError ? 400 : 500).json({
         message: error instanceof Error ? error.message : "Could not estimate owner-name lookup",
@@ -3447,39 +3441,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/salon-owner-names/search", isAuthenticated, async (req: any, res) => {
     try {
-      const input = ownerNameRowsInput.extend({
-        maxProviderCalls: z.number().int().min(0).max(salonOwnerNameLimits.maxRowsPerRequest),
-        confirmed: z.literal(true),
-      }).parse(req.body);
-      if (new Set(input.rowIds).size !== input.rowIds.length) {
-        return res.status(400).json({ message: "rowIds must be unique" });
-      }
+      const input = ownerNameSearchInput.parse(req.body);
       const rows = await getOwnedOwnerNameRows(input.rowIds, req.user.claims.sub);
       if (!rows) return res.status(404).json({ message: "One or more salon rows were not found or are not owned by you" });
       if (rows.some(row => salonOwnerNameLookupBlockedByRowStatus(row.status))) {
         return res.status(409).json({ message: "Wait for ordinary salon enrichment to complete before starting owner-name lookup" });
       }
-      const estimate = await estimateSalonOwnerNameSearch(rows);
+      const estimate = await estimateSalonOwnerNameSearch(rows, input.searchesPerRow);
       if (input.maxProviderCalls > estimate.maxProviderCalls) {
         return res.status(409).json({
           message: "The requested provider-call budget exceeds the current available estimate",
           estimate,
         });
       }
-      let callsUsed = 0;
-      const results: Array<{ rowId: string; ownerName: OwnerNameResult }> = [];
-      for (const row of rows) {
-        const ownerName = await lookupSalonOwnerName(
-          row.id,
-          req.user.claims.sub,
-          callsUsed < input.maxProviderCalls,
-        );
-        if (ownerName) {
-          callsUsed += ownerName.providerCalls;
-          results.push({ rowId: row.id, ownerName });
-        }
-      }
-      res.json({ results, callsUsed });
+      res.json(await lookupSalonOwnerNameBatch(rows, req.user.claims.sub, input.maxProviderCalls, input.searchesPerRow));
     } catch (error) {
       const status = error instanceof z.ZodError ? 400 :
         error instanceof SalonOwnerNameStorageConflict ? 409 : 500;

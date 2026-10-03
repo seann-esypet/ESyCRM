@@ -13,7 +13,8 @@ import { AlertTriangle, Check, ExternalLink, RotateCcw, UserRound } from "lucide
 export type { OwnerNameResult } from "@shared/salonOwnerName";
 export type OwnerPreview = { subject: string; body: string; salutation: string; mode: string; previewSource: string };
 type ContactName = { firstName?: string | null; lastName?: string | null; useBusinessNameForEmail?: "Yes" | "No" | null };
-type Estimate = { maxProviderCalls: number; maxPages: number; remainingCredits: number; allowed: boolean; reason?: string };
+type SearchesPerRow = 1 | 3;
+type Estimate = { maxProviderCalls: number; maxPages: number; remainingCredits: number; allowed: boolean; reason?: string; searchesPerRow: SearchesPerRow };
 
 async function jsonRequest<T>(method: string, url: string, body?: unknown): Promise<T> {
   const response = await apiRequest(method, url, body);
@@ -43,6 +44,7 @@ export function OwnerNameReview({
   const [previewOpen, setPreviewOpen] = useState(false);
   const [estimate, setEstimate] = useState<Estimate | null>(null);
   const [confirmSearch, setConfirmSearch] = useState(false);
+  const [searchesPerRow, setSearchesPerRow] = useState<SearchesPerRow>(1);
 
   useEffect(() => {
     setCandidateId(ownerName?.selectedCandidateId ?? "");
@@ -58,18 +60,24 @@ export function OwnerNameReview({
     queryClient.invalidateQueries({ queryKey: ["/api/salon-owner-names/rows"] });
   };
   const estimateMutation = useMutation({
-    mutationFn: () => jsonRequest<Estimate>("POST", "/api/salon-owner-names/estimate", { rowIds: [rowId] }),
+    mutationFn: (count: SearchesPerRow) => jsonRequest<Estimate>("POST", "/api/salon-owner-names/estimate", { rowIds: [rowId], searchesPerRow: count }),
     onSuccess: data => { setEstimate(data); setConfirmSearch(true); },
     onError: error => toast({ title: "Could not estimate owner lookup", description: (error as Error).message, variant: "destructive" }),
   });
   const searchMutation = useMutation({
-    mutationFn: () => jsonRequest<{ results: { rowId: string; ownerName: OwnerNameResult }[] }>("POST", "/api/salon-owner-names/search", { rowIds: [rowId], maxProviderCalls: Math.min(1, estimate?.maxProviderCalls ?? 1), confirmed: true }),
+    mutationFn: () => {
+      if (!estimate || estimate.searchesPerRow !== searchesPerRow || !confirmSearch) throw new Error("The owner-search estimate is out of date. Request a fresh estimate before confirming.");
+      if (!Number.isInteger(estimate.maxProviderCalls) || estimate.maxProviderCalls < 0 || estimate.maxProviderCalls > searchesPerRow) throw new Error("The estimated provider-call cap is invalid. Request a fresh estimate.");
+      return jsonRequest<{ results: { rowId: string; ownerName: OwnerNameResult }[]; callsUsed?: number }>("POST", "/api/salon-owner-names/search", {
+        rowIds: [rowId], searchesPerRow, maxProviderCalls: estimate.maxProviderCalls, confirmed: true,
+      });
+    },
     onSuccess: data => {
       setConfirmSearch(false); setEstimate(null); refresh();
       const result = data.results.find(item => item.rowId === rowId)?.ownerName;
-      toast(result?.status === "failed"
-        ? { title: "Owner search could not finish", description: result.error || "No source-backed owner result was obtained. You can retry later.", variant: "destructive" }
-        : { title: "Owner search complete", description: result?.candidates.length ? "Review the source-backed candidates below." : "No confirmed owner was found. Business-name greetings remain available." });
+      toast(result?.status === "failed" || result?.error
+        ? { title: "Owner search could not finish", description: `${data.callsUsed ?? "Actual call count unavailable"} provider calls used. ${result.error || "No source-backed owner result was obtained. You can retry later."}`, variant: "destructive" }
+        : { title: "Owner search complete", description: `${data.callsUsed ?? "Actual call count unavailable"} provider calls used. ${result?.candidates.length ? "Review the source-backed candidates below." : "No confirmed owner was found. Business-name greetings remain available."}` });
     },
     onError: error => { refresh(); toast({ title: "Owner search failed", description: (error as Error).message, variant: "destructive" }); },
   });
@@ -120,7 +128,7 @@ export function OwnerNameReview({
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          {canSearch && <Button size="sm" variant="outline" onClick={() => { setConfirmSearch(false); estimateMutation.mutate(); }} disabled={estimateMutation.isPending || searchMutation.isPending}>
+          {canSearch && <Button size="sm" variant="outline" onClick={() => { setConfirmSearch(false); setEstimate(null); estimateMutation.mutate(searchesPerRow); }} disabled={estimateMutation.isPending || searchMutation.isPending}>
             <RotateCcw className="mr-1.5 h-3.5 w-3.5" />{estimateMutation.isPending ? "Estimating…" : ownerName?.status === "not_searched" ? "Search owner" : "Retry owner search"}
           </Button>}
         </div>
@@ -197,8 +205,20 @@ export function OwnerNameReview({
       </div>}
       {confirmSearch && estimate && <div className="mt-3 rounded-md border border-amber-300/70 bg-amber-50 p-3 text-sm text-amber-950">
         <p className="font-semibold">Confirm owner lookup</p>
-        <p className="mt-1 text-xs leading-5">Checks known business pages first. Up to {estimate.maxProviderCalls} provider call and {estimate.maxPages} page fetch{estimate.maxPages === 1 ? "" : "es"} for this salon. {estimate.maxProviderCalls === 0 ? "Public-page lookup only; no paid request will be made." : "No automatic paid retries."} {estimate.remainingCredits} credits remain{estimate.reason ? ` · ${estimate.reason}` : ""}.</p>
-        <div className="mt-2 flex gap-2"><Button size="sm" onClick={() => searchMutation.mutate()} disabled={!estimate.allowed || searchMutation.isPending}>{searchMutation.isPending ? "Searching…" : "Confirm & search"}</Button><Button size="sm" variant="outline" onClick={() => { setConfirmSearch(false); setEstimate(null); }}>Cancel</Button></div>
+        <label className="mt-2 flex max-w-sm flex-col gap-1 text-xs font-medium">Search phrases per salon
+          <Select value={String(searchesPerRow)} onValueChange={value => {
+            const count = Number(value) as SearchesPerRow;
+            setSearchesPerRow(count);
+            setConfirmSearch(false);
+            setEstimate(null);
+            estimateMutation.mutate(count);
+          }} disabled={estimateMutation.isPending || searchMutation.isPending}>
+            <SelectTrigger className="h-9 bg-background" aria-label="Owner search phrases per salon"><SelectValue /></SelectTrigger>
+            <SelectContent><SelectItem value="1">1 phrase · default</SelectItem><SelectItem value="3">Up to 3 phrases · explicit expanded search</SelectItem></SelectContent>
+          </Select>
+        </label>
+        <p className="mt-2 text-xs leading-5">Checks known business pages first and stops early when an owner is verified. Up to {estimate.maxProviderCalls} additional paid searches for this salon and {estimate.maxPages} page fetches (4-page cap per salon). {estimate.maxProviderCalls === 0 ? "Public-page and cached lookup only; no paid request will be made." : "No paid retries."} Cached results are free. {estimate.remainingCredits} credits remain{estimate.reason ? ` · ${estimate.reason}` : ""}.</p>
+        <div className="mt-2 flex gap-2"><Button size="sm" onClick={() => searchMutation.mutate()} disabled={!estimate.allowed || !Number.isInteger(estimate.maxProviderCalls) || estimate.maxProviderCalls < 0 || estimate.maxProviderCalls > searchesPerRow || estimate.searchesPerRow !== searchesPerRow || searchMutation.isPending || estimateMutation.isPending}>{searchMutation.isPending ? "Searching…" : "Confirm & search"}</Button><Button size="sm" variant="outline" onClick={() => { setConfirmSearch(false); setEstimate(null); }}>Cancel</Button></div>
       </div>}
       {contactName && <p className="mt-2 text-[11px] text-muted-foreground">Current contact: {[contactName.firstName, contactName.lastName].filter(Boolean).join(" ") || "no personal name"} · {contactName.useBusinessNameForEmail === "Yes" ? "business-name salutation" : contactName.useBusinessNameForEmail === "No" ? "personal-name salutation" : "salutation preference unavailable"}</p>}
     </section>

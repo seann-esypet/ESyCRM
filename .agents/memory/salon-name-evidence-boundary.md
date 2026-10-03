@@ -14,3 +14,9 @@ The user wants mixed-group sequence greetings to automatically say â€œHi Eliud,â
 **Why:** The user sends groups of 25 or 50 and may have first names for half or fewer; missing names must not require individual template edits.
 
 **How to apply:** Keep one shared template and resolve the greeting per recipient. Preserve personal-name opt-in independently of stored owner names.
+
+Owner-lookup improvements do not authorize a paid production research pilot. Obtain separate approval before testing discovery yield with live paid searches.
+
+**Why:** The owner-research scope separates implementation and controlled verification from additional provider spending.
+
+**How to apply:** Use mocked searches for implementation checks. Treat a live owner-research sample as a separate, explicitly budgeted decision; never approve names, update contacts, enroll, or send as part of that research.
