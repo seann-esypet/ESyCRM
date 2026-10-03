@@ -1,4 +1,5 @@
 import type { SalonEnrichmentRow } from "@shared/schema";
+import { salonEmailDomainRestriction } from "./salonEmailPolicy";
 
 const bookingProviders: Record<string, string> = {
   "book.cuddlesapp.com": "CuddlesApp",
@@ -69,7 +70,8 @@ export function extractSalonEmailFromBookingHtml(
   const excludedDomains = ["groomer.io", "moego.pet", ...Object.keys(bookingProviders), "example.com", "sentry.io", "cloudflare.com"];
   for (const email of [...mailtoAddresses, ...visibleAddresses]) {
     const domain = email.split("@")[1]?.toLowerCase();
-    if (domain && excludedDomains.every(excluded => domain !== excluded && !domain.endsWith(`.${excluded}`))) {
+    if (domain && !salonEmailDomainRestriction(email) &&
+        excludedDomains.every(excluded => domain !== excluded && !domain.endsWith(`.${excluded}`))) {
       return email.toLowerCase();
     }
   }
@@ -96,7 +98,7 @@ export function importableSalonEmailCandidate(
   const evidence = (row.evidence as { email?: {
     value?: string; source?: string; confidence?: string; sourceUrl?: string; purpose?: string;
   } } | null)?.email;
-  if (!email || !evidence || evidence.value?.trim().toLowerCase() !== email.toLowerCase()) return null;
+  if (!email || salonEmailDomainRestriction(email) || !evidence || evidence.value?.trim().toLowerCase() !== email.toLowerCase()) return null;
   if (row.identityMatchStatus !== "strong") return null;
   if (evidence.purpose && evidence.purpose !== "general") return null;
   if (evidence.source === "public_web_review" && evidence.confidence === "high" &&

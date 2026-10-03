@@ -52,6 +52,16 @@ function evidence(value: string | null, source: string, confidence: "high" | "me
   return { value, source, sourceUrl, fetchedAt: new Date().toISOString(), confidence, rationale };
 }
 
+export function rejectedSalonEmailEvidence(
+  rejected: Array<{ value: string; sourceUrl: string; reason: string }>,
+): Evidence {
+  return Object.fromEntries(rejected.map((candidate, index) => [
+    `emailRejected${index + 1}`,
+    evidence(candidate.value, "website_rejected_email", "low", candidate.sourceUrl,
+      `${candidate.reason}. Review evidence only; not usable for import or outreach.`),
+  ]));
+}
+
 async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichmentRow>> {
   const evidenceMap: Evidence = {};
   let serpCallsUsed = 0;
@@ -178,6 +188,7 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
   }
   const next: Partial<SalonEnrichmentRow> = {
     status: "enriched",
+    email: null,
     identityMatchStatus: "strong",
     contactRequestFormUrl: null,
     contactFormStatus: "unknown",
@@ -216,6 +227,7 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
     let websiteConfidence: "high" | "low" = "high";
     try {
       const crawled = await crawlWebsite(candidate.link);
+      Object.assign(evidenceMap, rejectedSalonEmailEvidence(crawled.rejectedEmails));
       if (crawled.email) {
         next.email = crawled.email;
         evidenceMap.email = {
@@ -291,6 +303,13 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
         if (fallbackCandidate?.link && fallbackCandidate.link !== candidate.link &&
             !bookingPlatformForUrl(fallbackCandidate.link)) {
           const fallbackCrawl = await crawlWebsite(fallbackCandidate.link);
+          const rejectedOffset = Object.keys(evidenceMap).filter(key => key.startsWith("emailRejected")).length;
+          fallbackCrawl.rejectedEmails.forEach((rejected, index) => {
+            evidenceMap[`emailRejected${rejectedOffset + index + 1}`] = evidence(
+              rejected.value, "website_rejected_email", "low", rejected.sourceUrl,
+              `${rejected.reason}. Review evidence only; not usable for import or outreach.`,
+            );
+          });
           if (fallbackCrawl.email) {
             next.email = fallbackCrawl.email;
             evidenceMap.email = {

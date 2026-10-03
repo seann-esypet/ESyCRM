@@ -2,6 +2,7 @@ import { storage } from "./storage";
 import type { LeadDiscoveryJob, LeadDiscoveryResult, InsertLeadDiscoveryResult, SerpUsage, LeadDiscoveryConfig } from "@shared/schema";
 import { parseAddressString } from "@shared/utils";
 import { fetchPublicPage, type SalonFetchRuntime } from "./salonPublicFetch";
+import { salonEmailContextRestriction, salonEmailDomainRestriction } from "./salonEmailPolicy";
 
 // New reduced query set for budget management
 const DEFAULT_QUERIES = [
@@ -398,8 +399,16 @@ function emailCandidates(html: string): { visible: string[]; metadata: string[] 
   const visibleHtml = decoded.replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, " ")
     .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, " ")
     .replace(/<head\b[^>]*>[\s\S]*?<\/head\s*>/gi, " ")
-    .replace(/<meta\b[^>]*>/gi, " ");
-  const visible: string[] = (visibleHtml.match(emailRe) || []) as string[];
+    .replace(/<meta\b[^>]*>/gi, " ")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<(template|noscript|svg|textarea)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ");
+  // Attribute values, tracking URLs and hidden form values are not visible
+  // business contact evidence. Keep explicit mailto/Cloudflare extraction.
+  const visibleText = visibleHtml
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<(template|noscript|svg|textarea)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ")
+    .replace(/<[^>]*>/g, " ");
+  const visible: string[] = (visibleText.match(emailRe) || []) as string[];
   visible.push(...extractMailtoEmails(visibleHtml));
   visible.push(...decodeCloudflareEmails(visibleHtml));
   const metadataText = [
@@ -424,12 +433,13 @@ function emailSourceType(html: string, email: string): "visible" | "mailto" | "c
   return "visible";
 }
 
-function isRestrictedSalonEmail(email: string, html: string): boolean {
-  const [local, domain] = email.split("@");
-  const vendorDomains = ["wix.com", "wixpress.com", "squarespace.com", "wordpress.com", "weebly.com", "godaddy.com", "google.com"];
-  if (vendorDomains.some(vendor => domain === vendor || domain.endsWith(`.${vendor}`)) &&
-      /^(support|help|billing|abuse|noreply|no-reply|contact)$/i.test(local)) return true;
-  let decodedMarkup = decodeHtml(html);
+function restrictedSalonEmailReason(email: string, html: string): string | null {
+  const domainReason = salonEmailDomainRestriction(email);
+  if (domainReason) return domainReason;
+  let decodedMarkup = decodeHtml(html)
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, " ")
+    .replace(/<head\b[^>]*>[\s\S]*?<\/head\s*>/gi, " ");
   for (const match of Array.from(html.matchAll(/\bhref\s*=\s*["']mailto:([^"'?#]*)/gi))) {
     let addressList = decodeHtml(match[1]);
     try { addressList = decodeURIComponent(addressList); } catch {}
@@ -455,8 +465,7 @@ function isRestrictedSalonEmail(email: string, html: string): boolean {
       context = searchable.slice(Math.max(0, index - 80), index + email.length + 80);
     }
   }
-  return /\b(?:vaccination|vaccine|rabies|immunization)\b/i.test(context) &&
-    /\b(?:records?|proof|paperwork|submit|send|upload)\b/i.test(context);
+  return salonEmailContextRestriction(context);
 }
 
 function contactLinks(html: string, base: URL): URL[] {
@@ -488,6 +497,7 @@ export async function crawlWebsite(url: string, options: { runtime?: SalonFetchR
   emailSourceType?: "visible" | "mailto" | "cloudflare";
   metadataEmail?: string;
   metadataEmailSourceUrl?: string;
+  rejectedEmails: Array<{ value: string; sourceUrl: string; reason: string }>;
   phone?: string;
   contactFormUrl?: string;
   resolvedWebsiteUrl?: string;
@@ -503,7 +513,7 @@ export async function crawlWebsite(url: string, options: { runtime?: SalonFetchR
       throw new Error("Only public HTTP(S) pages can be fetched");
     }
     const host = base.hostname.toLowerCase().replace(/^www\./, "");
-    const socialHosts = ["facebook.com", "instagram.com", "twitter.com", "x.com", "linkedin.com", "yelp.com", "tiktok.com"];
+    const socialHosts = ["facebook.com", "instagram.com", "twitter.com", "x.com", "linkedin.com", "yelp.com", "tiktok.com", "youtube.com", "youtu.be", "vimeo.com"];
     const bookingHosts = Object.keys(BOOKING_SOFTWARE_PATTERNS).filter(domain => domain !== "wix.com");
     if ([...socialHosts, ...bookingHosts].some(domain => host === domain || host.endsWith(`.${domain}`))) {
       throw new Error("Submitted URL is a booking or social platform, not a salon website");
@@ -558,7 +568,24 @@ export async function crawlWebsite(url: string, options: { runtime?: SalonFetchR
     const resolvedBase = new URL(homepage.url);
     const html = homepage.html;
     const result: Awaited<ReturnType<typeof crawlWebsite>> = {
-      html, resolvedWebsiteUrl: homepage.url, partialFailures,
+      html, resolvedWebsiteUrl: homepage.url, partialFailures, rejectedEmails: [],
+    };
+    const usableCandidate = (email: string, page: { url: string; html: string }): boolean => {
+      const reason = restrictedSalonEmailReason(email, page.html);
+      if (!reason) return true;
+      if (result.rejectedEmails.length < 50 && !result.rejectedEmails.some(
+        rejected => rejected.value === email && rejected.sourceUrl === page.url,
+      )) {
+        result.rejectedEmails.push({ value: email, sourceUrl: page.url, reason });
+      }
+      return false;
+    };
+    const checkCandidates = (page: { url: string; html: string }) => {
+      const candidates = emailCandidates(page.html);
+      return {
+        visible: candidates.visible.filter(email => usableCandidate(email, page)),
+        metadata: candidates.metadata.filter(email => usableCandidate(email, page)),
+      };
     };
 
     const bookingInfo = detectBookingSoftware(html, resolvedBase.href);
@@ -567,16 +594,15 @@ export async function crawlWebsite(url: string, options: { runtime?: SalonFetchR
       result.softwareName = bookingInfo.software;
     }
 
-    const firstCandidates = emailCandidates(html);
+    const firstCandidates = checkCandidates(homepage);
     for (const email of firstCandidates.visible) {
-      if (isRestrictedSalonEmail(email, html)) continue;
       result.email = email;
       result.emailSourceUrl = homepage.url;
       result.emailSourceType = emailSourceType(html, email);
       break;
     }
     if (firstCandidates.metadata.length) {
-      result.metadataEmail = firstCandidates.metadata.find(email => !isRestrictedSalonEmail(email, html));
+      result.metadataEmail = firstCandidates.metadata[0];
       if (result.metadataEmail) result.metadataEmailSourceUrl = homepage.url;
     }
     result.phone = extractPhone(html) ?? undefined;
@@ -608,17 +634,16 @@ export async function crawlWebsite(url: string, options: { runtime?: SalonFetchR
       await fetch(target);
       const page = pages.length > previousPageCount ? pages.at(-1) : undefined;
       if (!page || !sameSite(new URL(page.url), resolvedBase)) continue;
+      const candidates = checkCandidates(page);
       if (!result.email) {
-        const candidates = emailCandidates(page.html);
         for (const email of candidates.visible) {
-          if (isRestrictedSalonEmail(email, page.html)) continue;
           result.email = email;
           result.emailSourceUrl = page.url;
           result.emailSourceType = emailSourceType(page.html, email);
           break;
         }
         if (!result.metadataEmail) {
-          result.metadataEmail = candidates.metadata.find(email => !isRestrictedSalonEmail(email, page.html));
+          result.metadataEmail = candidates.metadata[0];
           if (result.metadataEmail) result.metadataEmailSourceUrl = page.url;
         }
       }
@@ -853,6 +878,7 @@ function extractContactDetails(rawText: string): ContactDetailResult {
   const emailMatches = decoded.match(EMAIL_RE);
   const email = emailMatches?.find(
     e =>
+      !salonEmailDomainRestriction(e) &&
       NOISE_DOMAINS.every(d => !e.includes(d)) &&
       !e.endsWith(".png") && !e.endsWith(".jpg") &&
       !e.endsWith(".gif") && !e.endsWith(".svg")

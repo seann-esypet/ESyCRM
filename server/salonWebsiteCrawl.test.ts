@@ -2,6 +2,8 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { crawlWebsite } from "./lead-discovery";
 import { fetchPublicPage, type SalonFetchRuntime } from "./salonPublicFetch";
+import { rejectedSalonEmailEvidence } from "./salonEnrichment";
+import { importableSalonEmailCandidate, extractSalonEmailFromBookingHtml } from "./bookingPageEmail";
 
 function runtimeFor(
   handler: (url: URL) => { status?: number; location?: string; body?: string },
@@ -24,6 +26,85 @@ function runtimeFor(
     },
   };
 }
+
+test("Webador boilerplate is retained as rejected evidence while the salon email is selected", async () => {
+  const mocked = runtimeFor(url => url.pathname !== "/" ? { status: 404 } : ({
+    body: `<h1>Paws Grooming</h1><p>Powered by Webador <a href="mailto:support@webador.com">Support</a></p>
+      <p>General salon inquiries: <a href="mailto:pawsgrooming@gmail.com">Contact us</a></p>`,
+  }));
+  const result = await crawlWebsite("https://paws.test/", { runtime: mocked.runtime });
+  assert.equal(result.email, "pawsgrooming@gmail.com");
+  assert.equal(result.metadataEmail, undefined);
+  assert.deepEqual(result.rejectedEmails, [{
+    value: "support@webador.com",
+    sourceUrl: "https://paws.test/",
+    reason: "Website, booking or social-platform mailbox, not a salon contact",
+  }]);
+  const evidence = rejectedSalonEmailEvidence(result.rejectedEmails);
+  assert.equal(evidence.emailRejected1.value, "support@webador.com");
+  assert.equal(evidence.emailRejected1.confidence, "low");
+  assert.match(evidence.emailRejected1.rationale!, /not usable for import or outreach/);
+  assert.equal(evidence.email, undefined);
+});
+
+test("provider domains and subdomains are excluded regardless of mailbox prefix, including metadata", async () => {
+  const mocked = runtimeFor(url => url.pathname !== "/" ? { status: 404 } : ({
+    body: `<h1>Paws</h1><meta property="og:email" content="sales@webador.com">
+      <p>help@support.webador.com contact@vagaro.com sales@gingrapp.com team@wix.com</p>`,
+  }));
+  const result = await crawlWebsite("https://paws.test/", { runtime: mocked.runtime });
+  assert.equal(result.email, undefined);
+  assert.equal(result.metadataEmail, undefined);
+  assert.equal(result.rejectedEmails.length, 5);
+});
+
+test("design credits and purpose-restricted addresses do not hide a separate general-contact address", async () => {
+  const mocked = runtimeFor(url => url.pathname !== "/" ? { status: 404 } : ({
+    body: `<p>Website designed by: designer@agency.test</p>
+      <p>For bookings only: appointments@paws.test</p>
+      <p>For vaccination records send proof to records@paws.test</p>
+      <p>General questions: support@paws.test</p>`,
+  }));
+  const result = await crawlWebsite("https://paws.test/", { runtime: mocked.runtime });
+  assert.equal(result.email, "support@paws.test");
+  assert.deepEqual(result.rejectedEmails.map(candidate => candidate.value),
+    ["designer@agency.test", "appointments@paws.test", "records@paws.test"]);
+});
+
+test("tracking URLs, hidden inputs, comments and templates are not visible email evidence", async () => {
+  const mocked = runtimeFor(() => ({
+    body: `<a href="https://youtube.com/watch?email=wrong@tracking.test">Watch us</a>
+      <input type="hidden" value="wrong@input.test">
+      <!-- <a href="mailto:wrong@comment.test">Email</a> -->
+      <template><a href="mailto:wrong@template.test">Email</a></template>
+      <p>hello@paws.test</p>`,
+  }));
+  const result = await crawlWebsite("https://paws.test/", { runtime: mocked.runtime });
+  assert.equal(result.email, "hello@paws.test");
+});
+
+test("unrelated video platforms are not crawled as salon websites", async () => {
+  const mocked = runtimeFor(() => ({ body: "must not fetch" }));
+  for (const host of ["youtube.com", "youtu.be", "vimeo.com"]) {
+    await assert.rejects(crawlWebsite(`https://${host}/paws`, { runtime: mocked.runtime }),
+      /booking or social platform/);
+  }
+  assert.deepEqual(mocked.visits, []);
+});
+
+test("historical provider emails cannot pass import eligibility even with apparently strong evidence", () => {
+  for (const email of ["support@webador.com", "sales@wix.com", "help@support.vagaro.com"]) {
+    const row = {
+      email, websiteUrl: "https://paws.test/", bookingUrl: null, identityMatchStatus: "strong",
+      evidence: { email: { value: email, source: "website", confidence: "high", sourceUrl: "https://paws.test/" } },
+    } as Parameters<typeof importableSalonEmailCandidate>[0];
+    assert.equal(importableSalonEmailCandidate(row), null);
+  }
+  assert.equal(extractSalonEmailFromBookingHtml(
+    `<body><h1>Paws Grooming</h1><p>sales@webador.com</p></body>`,
+    "Paws Grooming", "https://vagaro.com/paws",
+  ), null);
+});
 
 test("safe page fetch blocks private literals, private DNS answers, and unsafe redirects", async () => {
   let requestCount = 0;
