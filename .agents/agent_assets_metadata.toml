@@ -238,3 +238,31 @@ mtime_ms = 1790988812577
 storage_uri = "gcs://replit-rams-assets-picard/rams/assets/repl:1910afef-1072-4e99-9487-9737d06762ee/9e096285-db82-4072-9f78-8959566828b7/0b70efca-b9fd-474d-9e1e-33730bc3295b"
 storage_version_token = "1790988948526551"
 content_type = "text/csv"
+
+[[outputs]]
+id = "xb_pxY9JNE-JnzLfiiJBF"
+uri = "file://reports/salon-directory-with-public-web-facebook-reviewed.xlsx"
+type = "table"
+title = "Reviewed public-web and Facebook pilot workbook"
+description = "Ten-salon evidence, 20 tracked searches, cached result-level audit, and unchanged original workbook sheets."
+logical_id = "d8544cef-b4f2-4b72-a9fe-9500333a6aa7"
+content_hash = "sha256:391a7d2b1f31509b5f4c018af93520c0b8aa0a40df503de3d6e3f2ffbdcd1926"
+size = 9059063
+mtime_ms = 1790558608662
+storage_uri = "gcs://replit-rams-assets-picard/rams/assets/repl:1910afef-1072-4e99-9487-9737d06762ee/d8544cef-b4f2-4b72-a9fe-9500333a6aa7/245ef226-15cd-4096-93eb-4e7ae9fcc53b"
+storage_version_token = "1790558666849118"
+content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+[[outputs]]
+id = "J77YKlT4geReSZ4H3c6BA"
+uri = "file://reports/salon-public-web-facebook-comparison.md"
+type = "text"
+title = "Public-web and Facebook pilot comparison"
+description = "Incremental yield, review-only leads, rejected search-result emails, and provider-call accounting compared with the earlier baseline."
+logical_id = "7e525999-9ba4-467c-90db-202ea2e6e035"
+content_hash = "sha256:4c6e4db3bae716fb4a62d68b03a7f7fb75f5ded5ba0e6f3f7b9108449ea39d7c"
+size = 3451
+mtime_ms = 1790558600454
+storage_uri = "gcs://replit-rams-assets-picard/rams/assets/repl:1910afef-1072-4e99-9487-9737d06762ee/7e525999-9ba4-467c-90db-202ea2e6e035/b3e98503-7d4b-4d9b-a362-b0fd450ac8a6"
+storage_version_token = "1790558667462975"
+content_type = "text/markdown"
