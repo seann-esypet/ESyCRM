@@ -13,4 +13,10 @@ When delivering a research spreadsheet, explicitly say whether it is a research 
 
 **Why:** The user uploaded an agent-generated crawler report into the CRM because its intended use was not clear; they then deleted the business-name column while trying to fix the mapping.
 
-**How to apply:** State the exact upload destination with the download. Preserve business names and evidence, leave unapproved emails and unknown personal names blank, and warn about existing incomplete records before a repeat import.
+**How to apply:** State the exact upload destination with the download. Preserve business names and evidence. For direct CRM imports, leave unapproved emails and unknown personal names blank; warn about existing incomplete records before a repeat import.
+
+For Sales Lead Review uploads, include saved email addresses as review candidates and preserve their original evidence and review classification instead of blanking them.
+
+**Why:** The user explicitly asked to put email addresses back so they could import the full list into Sales Lead Review. Applying the direct-CRM export rule to a review list hid useful findings.
+
+**How to apply:** Validate against the named upload destination, distinguish prior confirmation from fresh verification, and do not treat uploading candidates as approval for CRM contact creation or outreach.
