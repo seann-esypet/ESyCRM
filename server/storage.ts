@@ -76,6 +76,8 @@ import { salonReportSendRejection } from "./salonSearchReport";
 import { isRetryableStagedSalonRow } from "./salonListStaging";
 import { deleteContactSafely } from "./contactDeletion";
 import { deleteSalonReviewRowSafely } from "./salonReviewDeletion";
+import { loadPipelineEmailSummaries } from "./pipelineEmailSummary";
+import type { PipelineEmailSummaries } from "@shared/pipelineEmailSummary";
 import {
   EMPTY_OWNER_NAME_RESULT,
   hasStrongOwnerNameEvidence,
@@ -270,6 +272,7 @@ export interface IStorage {
   updateDeal(id: string, deal: Partial<InsertDeal>, userId: string | null): Promise<Deal | undefined>;
   deleteDeal(id: string, userId: string | null): Promise<boolean>;
   getDealsByStage(stage: string, userId: string | null): Promise<Deal[]>;
+  getPipelineEmailSummaries(userId: string | null, stage?: string): Promise<PipelineEmailSummaries>;
 
   // Tasks (userId can be null for admins to get all data)
   getTasks(userId: string | null): Promise<Task[]>;
@@ -852,6 +855,29 @@ export class DatabaseStorage implements IStorage {
       return await db.select().from(deals);
     }
     return await db.select().from(deals).where(eq(deals.userId, userId));
+  }
+
+  async getPipelineEmailSummaries(userId: string | null, stage?: string): Promise<PipelineEmailSummaries> {
+    return loadPipelineEmailSummaries(userId, stage, {
+      getDeals: (scope, stageFilter) => stageFilter
+        ? this.getDealsByStage(stageFilter, scope) : this.getDeals(scope),
+      getContacts: (ids, scope) => db.select({
+        id: contacts.id, userId: contacts.userId, email: contacts.email,
+      }).from(contacts).where(and(
+        inArray(contacts.id, ids),
+        scope === null ? undefined : eq(contacts.userId, scope),
+      )),
+      getLogs: (ids, scope) => db.select({
+        id: emailSequenceLogs.id, userId: emailSequenceLogs.userId, contactId: emailSequenceLogs.contactId,
+        status: emailSequenceLogs.status, sentAt: emailSequenceLogs.sentAt,
+        scheduledSendAt: emailSequenceLogs.scheduledSendAt,
+        emailResponseReceived: emailSequenceLogs.emailResponseReceived, brevoMessageId: emailSequenceLogs.brevoMessageId,
+      }).from(emailSequenceLogs).innerJoin(contacts, eq(contacts.id, emailSequenceLogs.contactId)).where(and(
+        inArray(emailSequenceLogs.contactId, ids),
+        scope === null ? undefined : eq(emailSequenceLogs.userId, scope),
+        scope === null ? undefined : eq(contacts.userId, scope),
+      )),
+    });
   }
 
   async getDeal(id: string, userId: string | null): Promise<Deal | undefined> {

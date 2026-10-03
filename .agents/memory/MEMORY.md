@@ -7,3 +7,4 @@
 - [Salon name evidence boundary](salon-name-evidence-boundary.md) — owner identity does not prove a mailbox's addressee; name approval and personal-name salutations are separate decisions.
 - [Sales-facing UI clarity](sales-ui-clarity.md) — use task-based labels salespeople understand; distinguish ordinary list uploads from pre-checked reports and samples.
 - [Contact deletion safety](contact-deletion-safety.md) — import cleanup must preserve sales and financial history, require confirmation, and avoid guessing which records belong to an import.
+- [Browser runtime availability](browser-runtime-availability.md) — Chromium can be available without Playwright; use isolated API fixtures without changing CRM authentication.

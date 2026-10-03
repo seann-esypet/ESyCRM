@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Edit, Trash2, Calendar, DollarSign, Handshake, LayoutGrid, List, ArrowUpDown, ArrowUp, ArrowDown, RotateCcw, Download, Users, Mail, MessageSquare, Send, Clock, CheckCircle, XCircle, AlertCircle, CalendarClock, Play, Search } from "lucide-react";
+import { Edit, Trash2, Calendar, DollarSign, Handshake, LayoutGrid, List, ArrowUpDown, ArrowUp, ArrowDown, RotateCcw, Download, Users, Mail, MessageSquare, Send, Clock, CheckCircle, XCircle, AlertCircle, CalendarClock, Play, Search, RefreshCw } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -19,6 +19,9 @@ import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import type { Deal, Contact, User, EmailSequenceLog, EmailSequence, InboxMessage } from "@shared/schema";
 import { getCommissionAmounts } from "@shared/utils";
+import { matchesPipelineEmailFilters, pipelineSequenceLabels } from "@shared/pipelineEmailSummary";
+import type { PipelineEmailSummaries } from "@shared/pipelineEmailSummary";
+import PipelineEmailStatus from "@/components/deals/pipeline-email-status";
 
 type ViewType = "card" | "table";
 type SortColumn = "title" | "value" | "expectedCloseDate" | "stage" | "contact" | "probability";
@@ -45,6 +48,8 @@ export default function Deals() {
   const [showInitiateForm, setShowInitiateForm] = useState(false);
 
   const [searchTerm, setSearchTerm] = useState("");
+  const [sequenceFilter, setSequenceFilter] = useState("all");
+  const [historyFilter, setHistoryFilter] = useState("all");
   const initialFilterUserId = isAdmin ? new URLSearchParams(window.location.search).get("filterUserId") || "" : "";
   const [filterUserId, setFilterUserId] = useState(initialFilterUserId);
 
@@ -61,40 +66,57 @@ export default function Deals() {
     enabled: isAdmin,
   });
 
-  const { data: deals, isLoading } = useQuery<Deal[]>({
+  const { data: deals, isLoading, isError: dealsError, refetch: refetchDeals } = useQuery<Deal[]>({
     queryKey: ["/api/deals", filterUserId],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (filterUserId) params.set("filterUserId", filterUserId);
       const queryString = params.toString();
       const url = queryString ? `/api/deals?${queryString}` : "/api/deals";
-      const response = await fetch(url);
-      if (!response.ok) return [];
+      const response = await fetch(url, { credentials: "include" });
+      if (!response.ok) throw new Error("Unable to load pipeline deals.");
       return response.json();
     },
   });
 
-  const { data: contacts } = useQuery<Contact[]>({
+  const { data: contacts, isLoading: isLoadingContacts } = useQuery<Contact[]>({
     queryKey: ["/api/contacts", filterUserId],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (filterUserId) params.set("filterUserId", filterUserId);
       const queryString = params.toString();
       const url = queryString ? `/api/contacts?${queryString}` : "/api/contacts";
-      const response = await fetch(url);
-      if (!response.ok) return [];
+      const response = await fetch(url, { credentials: "include" });
+      if (!response.ok) throw new Error("Unable to load contacts.");
       return response.json();
     },
   });
 
-  const { data: sequenceLogs, isLoading: isLoadingLogs } = useQuery<EmailSequenceLog[]>({
-    queryKey: ["/api/email-sequence-logs", emailHistoryContactId],
+  const { data: emailSummaries, isLoading: isLoadingEmailSummaries, isError: emailSummariesError, refetch: refetchEmailSummaries } = useQuery<PipelineEmailSummaries>({
+    queryKey: ["/api/deals/email-summaries", filterUserId],
     queryFn: async () => {
-      const response = await fetch(`/api/email-sequence-logs?contactId=${emailHistoryContactId}`);
-      if (!response.ok) return [];
+      const params = new URLSearchParams();
+      if (filterUserId) params.set("filterUserId", filterUserId);
+      const queryString = params.toString();
+      const response = await fetch(`/api/deals/email-summaries${queryString ? `?${queryString}` : ""}`, { credentials: "include" });
+      if (!response.ok) throw new Error("Unable to load Pipeline email summaries.");
+      return response.json();
+    },
+    refetchInterval: 30_000,
+  });
+
+  const { data: sequenceLogs, isLoading: isLoadingLogs, isFetching: isFetchingLogs, isError: isLogsError, isSuccess: isLogsSuccess, refetch: refetchSequenceLogs } = useQuery<EmailSequenceLog[]>({
+    queryKey: ["/api/email-sequence-logs", emailHistoryContactId, filterUserId],
+    queryFn: async () => {
+      const params = new URLSearchParams({ contactId: emailHistoryContactId || "" });
+      if (filterUserId) params.set("filterUserId", filterUserId);
+      const response = await fetch(`/api/email-sequence-logs?${params}`, { credentials: "include" });
+      if (!response.ok) throw new Error("Unable to load email history.");
       return response.json();
     },
     enabled: !!emailHistoryContactId,
+    staleTime: 0,
+    refetchInterval: showInitiateForm || rescheduleLogId ? false : 30_000,
   });
 
   const { data: sequences } = useQuery<EmailSequence[]>({
@@ -102,14 +124,18 @@ export default function Deals() {
     enabled: !!emailHistoryContactId,
   });
 
-  const { data: inboxMessages, isLoading: isLoadingInbox } = useQuery<InboxMessage[]>({
-    queryKey: ["/api/inbox", emailHistoryContactId],
+  const { data: inboxMessages, isLoading: isLoadingInbox, isError: isInboxError, refetch: refetchInbox } = useQuery<InboxMessage[]>({
+    queryKey: ["/api/inbox", emailHistoryContactId, filterUserId],
     queryFn: async () => {
-      const response = await fetch(`/api/inbox?contactId=${emailHistoryContactId}`);
-      if (!response.ok) return [];
+      const params = new URLSearchParams({ contactId: emailHistoryContactId || "" });
+      if (filterUserId) params.set("filterUserId", filterUserId);
+      const response = await fetch(`/api/inbox?${params}`, { credentials: "include" });
+      if (!response.ok) throw new Error("Unable to load replies.");
       return response.json();
     },
     enabled: !!emailHistoryContactId,
+    staleTime: 0,
+    refetchInterval: 30_000,
   });
 
   const { data: unreadReplyDealIds } = useQuery<string[]>({
@@ -124,6 +150,7 @@ export default function Deals() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/email-sequence-logs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/deals/email-summaries"] });
       setRescheduleLogId(null);
       setRescheduleDate("");
       setRescheduleTime("09:00");
@@ -140,6 +167,7 @@ export default function Deals() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/email-sequence-logs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/deals/email-summaries"] });
       setShowInitiateForm(false);
       setInitiateDate("");
       setInitiateTime("09:00");
@@ -201,13 +229,25 @@ export default function Deals() {
   const getContactName = (contactId: string | null) => {
     if (!contactId || !contacts) return "No contact";
     const contact = contacts.find(c => c.id === contactId);
-    return contact ? `${contact.firstName} ${contact.lastName}` : "Unknown contact";
+    return contact ? [contact.firstName, contact.lastName].filter(Boolean).join(" ") ||
+      contact.company || "Unnamed contact" : "Contact unavailable";
   };
 
   const getContactAddress = (contactId: string | null) => {
     if (!contactId || !contacts) return "";
     const contact = contacts.find(c => c.id === contactId);
     return contact?.address || "";
+  };
+
+  const getPipelineSummary = (contactId: string | null) =>
+    contactId ? emailSummaries?.[contactId] : undefined;
+
+  const getPipelineEmail = (contactId: string | null) => {
+    if (!contactId) return null;
+    const summary = getPipelineSummary(contactId);
+    if (summary) return summary.email;
+    const contact = contacts?.find((item) => item.id === contactId);
+    return contact?.email ?? null;
   };
 
   const getStageLabel = (stage: string) => {
@@ -312,7 +352,17 @@ export default function Deals() {
   };
 
   const getTrackLabel = (track: string) => {
-    return track === "no_software" ? "No Software" : "Uses Competitor";
+    const labels: Record<string, string> = {
+      directory_general: "Directory — General",
+      directory_has_software: "Directory — Has Software",
+      directory_no_software: "Directory — No Software",
+      salon_no_software: "Salon — No Software",
+      salon_uses_competitor: "Salon — Uses Competitor",
+      mobile_no_software: "Mobile — No Software",
+      mobile_uses_competitor: "Mobile — Uses Competitor",
+      no_software: "No Software", uses_competitor: "Uses Competitor",
+    };
+    return labels[track] || track.replace(/_/g, " ");
   };
 
   const emailHistoryContact = emailHistoryContactId
@@ -346,11 +396,17 @@ export default function Deals() {
     initiateMutation.mutate({ contactId: emailHistoryContactId, scheduledSendAt });
   };
 
-  const contactTrack = emailHistoryContact?.usesSoftware === "Yes" ? "uses_competitor" : "no_software";
+  const contactTrack = `${emailHistoryContact?.businessType || "salon"}_${emailHistoryContact?.usesSoftware === "Yes" ? "uses_competitor" : "no_software"}`;
   const hasSequence1ForTrack = sequenceLogs?.some(
     l => l.sequenceNumber === 1 && l.sequenceTrack === contactTrack
   ) ?? false;
-  const canInitiateSequence = !hasSequence1ForTrack && !isLoadingLogs;
+  const canInitiateSequence = !!emailHistoryContactId
+    && !!emailHistoryContact
+    && !!getPipelineEmail(emailHistoryContactId)
+    && isLogsSuccess
+    && !isFetchingLogs
+    && !isLogsError
+    && !hasSequence1ForTrack;
 
   const handleEdit = (deal: Deal) => {
     setSelectedDeal(deal);
@@ -375,6 +431,8 @@ export default function Deals() {
   const handleFormSuccess = () => {
     handleFormClose();
     queryClient.invalidateQueries({ queryKey: ["/api/deals"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/contacts"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/deals/email-summaries"] });
   };
 
   const handleSort = (column: SortColumn) => {
@@ -400,13 +458,23 @@ export default function Deals() {
       const q = searchTerm.toLowerCase();
       sorted = sorted.filter(deal => {
         const contactName = getContactName(deal.contactId).toLowerCase();
+        const email = deal.contactId ? emailSummaries?.[deal.contactId]?.email?.toLowerCase() || "" : "";
         return (
           deal.title?.toLowerCase().includes(q) ||
           contactName.includes(q) ||
+          email.includes(q) ||
           deal.description?.toLowerCase().includes(q)
         );
       });
     }
+
+    sorted = sorted.filter((deal) =>
+      matchesPipelineEmailFilters(
+        deal.contactId ? emailSummaries?.[deal.contactId] : undefined,
+        sequenceFilter,
+        historyFilter,
+      )
+    );
 
     // Default sort: open deals first (by stage), then newest first (by createdAt)
     if (!sortColumn) {
@@ -466,7 +534,7 @@ export default function Deals() {
     });
 
     return sorted;
-  }, [deals, sortColumn, sortDirection, contacts, searchTerm]);
+  }, [deals, sortColumn, sortDirection, contacts, searchTerm, emailSummaries, sequenceFilter, historyFilter]);
 
   const SortIcon = ({ column }: { column: SortColumn }) => {
     if (sortColumn !== column) {
@@ -507,8 +575,32 @@ export default function Deals() {
         onAddNew={() => setIsFormOpen(true)}
         addButtonText="New Deal"
         onSearch={setSearchTerm}
+        searchValue={searchTerm}
+        wrapActions
         customActions={
-          <div className="flex gap-2 items-center">
+          <div className="flex flex-wrap gap-2 items-center">
+            <Select value={sequenceFilter} onValueChange={setSequenceFilter}>
+              <SelectTrigger className="w-[180px]" aria-label="Filter by sequence status" data-testid="filter-sequence-status">
+                <SelectValue placeholder="All sequence statuses" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All sequence statuses</SelectItem>
+                <SelectItem value="enrolled">Any sequence history</SelectItem>
+                {Object.entries(pipelineSequenceLabels).map(([value, label]) => (
+                  <SelectItem key={value} value={value}>{label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={historyFilter} onValueChange={setHistoryFilter}>
+              <SelectTrigger className="w-[190px]" aria-label="Filter by recorded sends" data-testid="filter-recorded-sends">
+                <SelectValue placeholder="All send history" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All send history</SelectItem>
+                <SelectItem value="sent">Has recorded sends</SelectItem>
+                <SelectItem value="none">No recorded sends</SelectItem>
+              </SelectContent>
+            </Select>
             {isAdmin && (
               <div className="flex items-center gap-2">
                 <Users className="h-4 w-4 text-muted-foreground" />
@@ -577,7 +669,29 @@ export default function Deals() {
       />
       
       <main className="flex-1 min-h-0 overflow-auto p-6 bg-muted/30" data-testid="deals-content">
-        {!deals?.length ? (
+        {dealsError && (
+          <div role="alert" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm">
+            <span>Pipeline deals could not be loaded.</span>
+            <Button variant="outline" size="sm" onClick={() => refetchDeals()}>
+              <RefreshCw className="mr-2 h-4 w-4" /> Retry
+            </Button>
+          </div>
+        )}
+        {emailSummariesError && (
+          <div role="alert" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm">
+            <span className="text-foreground">Pipeline email status could not be loaded. Sequence and send filters may not show all matching deals.</span>
+            <Button variant="outline" size="sm" onClick={() => refetchEmailSummaries()}>
+              <RefreshCw className="mr-2 h-4 w-4" /> Retry status
+            </Button>
+          </div>
+        )}
+        {dealsError ? (
+          <Card>
+            <CardContent className="p-10 text-center text-sm text-muted-foreground">
+              Pipeline deals are unavailable until the request succeeds.
+            </CardContent>
+          </Card>
+        ) : !deals?.length ? (
           <Card>
             <CardContent className="p-12 text-center">
               <Handshake className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
@@ -587,13 +701,29 @@ export default function Deals() {
               </p>
             </CardContent>
           </Card>
-        ) : sortedDeals.length === 0 && searchTerm ? (
+        ) : emailSummariesError && (sequenceFilter !== "all" || historyFilter !== "all") ? (
+          <Card>
+            <CardContent className="flex flex-wrap items-center justify-between gap-3 p-8">
+              <p className="text-sm text-muted-foreground">Email filters can’t be applied while Pipeline activity is unavailable.</p>
+              <Button variant="outline" size="sm" onClick={() => refetchEmailSummaries()}>
+                <RefreshCw className="mr-2 h-4 w-4" /> Retry status
+              </Button>
+            </CardContent>
+          </Card>
+        ) : isLoadingEmailSummaries && (sequenceFilter !== "all" || historyFilter !== "all") ? (
+          <Card>
+            <CardContent className="flex items-center gap-3 p-8 text-sm text-muted-foreground">
+              <span className="h-5 w-32 animate-pulse rounded bg-muted" />
+              Loading email activity before applying these filters…
+            </CardContent>
+          </Card>
+        ) : sortedDeals.length === 0 && (searchTerm || sequenceFilter !== "all" || historyFilter !== "all") ? (
           <Card>
             <CardContent className="p-12 text-center">
               <Search className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
-              <h3 className="text-lg font-medium text-foreground mb-2">No results for "{searchTerm}"</h3>
-              <p className="text-muted-foreground">Try a different search term or clear the search.</p>
-              <Button variant="outline" size="sm" className="mt-4" onClick={() => setSearchTerm("")}>Clear search</Button>
+              <h3 className="text-lg font-medium text-foreground mb-2">No deals match these filters</h3>
+              <p className="text-muted-foreground">Try a different search or reset the email status filters.</p>
+              <Button variant="outline" size="sm" className="mt-4" onClick={() => { setSearchTerm(""); setSequenceFilter("all"); setHistoryFilter("all"); }}>Clear filters</Button>
             </CardContent>
           </Card>
         ) : viewType === "card" ? (
@@ -700,6 +830,19 @@ export default function Deals() {
                       )}
                     </div>
 
+                    <PipelineEmailStatus
+                      contactId={deal.contactId}
+                      summary={getPipelineSummary(deal.contactId)}
+                      email={getPipelineEmail(deal.contactId)}
+                      contactKnown={!!contacts?.some((contact) => contact.id === deal.contactId)}
+                      contactsLoading={isLoadingContacts}
+                      loading={isLoadingEmailSummaries}
+                      failed={emailSummariesError}
+                      onRetry={() => refetchEmailSummaries()}
+                      onOpenHistory={() => handleContactClick(deal.contactId)}
+                      compact
+                    />
+
                     {deal.description && (
                       <p className="text-sm text-muted-foreground line-clamp-2">
                         {deal.description}
@@ -712,7 +855,8 @@ export default function Deals() {
           </div>
         ) : (
           <Card>
-            <Table>
+            <div className="w-full overflow-x-auto">
+            <Table className="min-w-[1320px]">
               <TableHeader>
                 <TableRow>
                   <TableHead>
@@ -727,6 +871,7 @@ export default function Deals() {
                       <SortIcon column="contact" />
                     </Button>
                   </TableHead>
+                  <TableHead>Email outreach</TableHead>
                   <TableHead>
                     <Button
                       variant="ghost"
@@ -812,6 +957,20 @@ export default function Deals() {
                           {getContactName(deal.contactId)}
                         </button>
                       </TableCell>
+                      <TableCell className="min-w-[300px]">
+                        <PipelineEmailStatus
+                          contactId={deal.contactId}
+                          summary={getPipelineSummary(deal.contactId)}
+                          email={getPipelineEmail(deal.contactId)}
+                          contactKnown={!!contacts?.some((contact) => contact.id === deal.contactId)}
+                          contactsLoading={isLoadingContacts}
+                          loading={isLoadingEmailSummaries}
+                          failed={emailSummariesError}
+                          onRetry={() => refetchEmailSummaries()}
+                          onOpenHistory={() => handleContactClick(deal.contactId)}
+                          compact
+                        />
+                      </TableCell>
                       <TableCell className="font-medium">
                         <button
                           className="text-primary hover:underline cursor-pointer font-medium text-left"
@@ -888,6 +1047,7 @@ export default function Deals() {
                 })}
               </TableBody>
             </Table>
+            </div>
           </Card>
         )}
       </main>
@@ -912,12 +1072,15 @@ export default function Deals() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Mail className="h-5 w-5" />
-              Email History — {emailHistoryContact ? `${emailHistoryContact.firstName} ${emailHistoryContact.lastName}` : ""}
+              Email History — {getContactName(emailHistoryContactId)}
             </DialogTitle>
           </DialogHeader>
 
           <ScrollArea className="max-h-[70vh] pr-4">
             <div className="space-y-6">
+              <p className="text-xs text-muted-foreground">
+                This view shows email and reply activity recorded in this CRM. It is not a delivery receipt from the recipient’s mail provider.
+              </p>
               <div>
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
@@ -937,7 +1100,7 @@ export default function Deals() {
                   )}
                 </div>
 
-                {showInitiateForm && (
+                {showInitiateForm && canInitiateSequence && (
                   <Card className="mb-3 border-primary/50">
                     <CardContent className="p-4">
                       <h4 className="text-sm font-medium text-foreground mb-3 flex items-center gap-2">
@@ -972,7 +1135,7 @@ export default function Deals() {
                           <Button
                             size="sm"
                             onClick={submitInitiate}
-                            disabled={!initiateDate || !initiateTime || initiateMutation.isPending}
+                            disabled={!initiateDate || !initiateTime || !canInitiateSequence || initiateMutation.isPending}
                             data-testid="button-submit-initiate"
                           >
                             {initiateMutation.isPending ? "Scheduling..." : "Schedule"}
@@ -991,21 +1154,30 @@ export default function Deals() {
                   </Card>
                 )}
 
-                {isLoadingLogs ? (
+                {isLogsError ? (
+                  <Card role="alert" className="border-destructive/30">
+                    <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
+                      <p className="text-sm text-muted-foreground">Email history could not be loaded. No sequence state can be confirmed.</p>
+                      <Button variant="outline" size="sm" onClick={() => refetchSequenceLogs()}>
+                        <RefreshCw className="mr-2 h-4 w-4" /> Retry
+                      </Button>
+                    </CardContent>
+                  </Card>
+                ) : isLoadingLogs ? (
                   <div className="space-y-2">
                     {[1, 2, 3].map(i => (
                       <div key={i} className="h-16 bg-muted rounded animate-pulse" />
                     ))}
                   </div>
-                ) : !sequenceLogs?.length ? (
+                ) : isLogsSuccess && !sequenceLogs?.length ? (
                   <Card>
                     <CardContent className="p-4 text-center text-sm text-muted-foreground">
-                      No email sequences have been sent to this contact yet.
+                      No CRM-recorded sequence activity for this contact.
                     </CardContent>
                   </Card>
                 ) : (
                   <div className="space-y-2">
-                    {sequenceLogs.map((log, index) => (
+                    {(sequenceLogs ?? []).map((log, index) => (
                       <Card key={log.id} className={index === 0 ? "border-primary/50 shadow-sm" : ""} data-testid={`sequence-log-${log.id}`}>
                         <CardContent className="p-3">
                           <div className="flex items-start justify-between gap-2">
@@ -1122,7 +1294,16 @@ export default function Deals() {
                   <MessageSquare className="h-4 w-4" />
                   Replies
                 </h3>
-                {isLoadingInbox ? (
+                {isInboxError ? (
+                  <Card role="alert" className="border-destructive/30">
+                    <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
+                      <p className="text-sm text-muted-foreground">Reply history could not be loaded.</p>
+                      <Button variant="outline" size="sm" onClick={() => refetchInbox()}>
+                        <RefreshCw className="mr-2 h-4 w-4" /> Retry
+                      </Button>
+                    </CardContent>
+                  </Card>
+                ) : isLoadingInbox ? (
                   <div className="space-y-2">
                     {[1, 2].map(i => (
                       <div key={i} className="h-20 bg-muted rounded animate-pulse" />
@@ -1131,7 +1312,7 @@ export default function Deals() {
                 ) : !inboxMessages?.length ? (
                   <Card>
                     <CardContent className="p-4 text-center text-sm text-muted-foreground">
-                      No replies received from this contact yet.
+                      No CRM-recorded replies for this contact.
                     </CardContent>
                   </Card>
                 ) : (

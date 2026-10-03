@@ -36,6 +36,7 @@ import { sendReplyNotificationEmail, sendEmail, replaceTemplateVariables } from 
 import { format as fmtDate } from "date-fns";
 import { canApproveSalonReportRow, convertSalonSearchReportEntry, reportPlaceIdsAreDistinct, salonReportScheduleRejection, salonSearchReportBatchSchema } from "./salonSearchReport";
 import { isRetryableStagedSalonRow, MAX_SALON_LIST_JSON_BYTES, MAX_SALON_LIST_ROWS, stageSalonListRows } from "./salonListStaging";
+import { pipelineEmailQueryScope } from "./pipelineEmailSummary";
 import salonSearchPilot from "../reports/salon-next-100-summary.json" with { type: "json" };
 
 // ─── Sequence Test Runner (in-memory) ────────────────────────────────────────
@@ -1361,6 +1362,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Must be before /api/deals/:id to prevent route collision
+  app.get("/api/deals/email-summaries", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = pipelineEmailQueryScope(req.user.role, req.user.claims.sub, req.query.filterUserId);
+      const stage = typeof req.query.stage === "string" ? req.query.stage : undefined;
+      const summaries = await storage.getPipelineEmailSummaries(userId, stage);
+      res.set("Cache-Control", "private, no-store");
+      res.json(summaries);
+    } catch (error) {
+      console.error("Error fetching Pipeline email summaries:", error);
+      res.status(500).json({ message: "Failed to fetch email status and history" });
+    }
+  });
+
   app.get("/api/deals/unread-replies", isAuthenticated, async (req: any, res) => {
     try {
       const userId = getUserIdForQuery(req.user);
@@ -2201,9 +2215,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Email Sequence Logs routes
   app.get("/api/email-sequence-logs", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = getUserIdForQuery(req.user);
-      const { contactId } = req.query;
-      const logs = await storage.getEmailSequenceLogs(userId, contactId as string | undefined);
+      const userId = pipelineEmailQueryScope(req.user.role, req.user.claims.sub, req.query.filterUserId);
+      const contactId = typeof req.query.contactId === "string" ? req.query.contactId : undefined;
+      if (contactId && !(await storage.getContact(contactId, userId))) {
+        return res.status(404).json({ message: "Contact unavailable" });
+      }
+      const logs = await storage.getEmailSequenceLogs(userId, contactId);
       res.json(logs);
     } catch (error) {
       console.error("Error fetching email sequence logs:", error);
@@ -2538,9 +2555,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Inbox routes - All protected with isAuthenticated
   app.get("/api/inbox", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = getUserIdForQuery(req.user);
-      const { contactId } = req.query;
-      const messages = await storage.getInboxMessages(userId, contactId as string | undefined);
+      const userId = pipelineEmailQueryScope(req.user.role, req.user.claims.sub, req.query.filterUserId);
+      const contactId = typeof req.query.contactId === "string" ? req.query.contactId : undefined;
+      if (contactId && !(await storage.getContact(contactId, userId))) {
+        return res.status(404).json({ message: "Contact unavailable" });
+      }
+      const messages = await storage.getInboxMessages(userId, contactId);
       res.json(messages);
     } catch (error) {
       console.error("Error fetching inbox messages:", error);
