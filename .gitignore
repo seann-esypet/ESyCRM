@@ -4,3 +4,6 @@ dist
 server/public
 vite.config.ts.*
 *.tar.gz
+reports/.salon-provider-comparison.lock
+reports/salon-provider-comparison-progress.json.tmp
+reports/salon-provider-comparison-progress.json.*.tmp
