@@ -162,8 +162,9 @@ export function OwnerNameReview({
               </div>
               {candidate.sources.map((source, index) => <div key={`${source.url}-${index}`} className="mt-2 border-l-2 border-primary/60 pl-3 text-xs">
                 <p className="leading-5 text-foreground/85">{source.excerpt || "No excerpt provided."}</p>
-                <a className="mt-1 inline-flex items-center gap-1 text-primary underline-offset-2 hover:underline" href={source.url} target="_blank" rel="noopener noreferrer">{source.kind || "Evidence source"} <ExternalLink className="h-3 w-3" /></a>
+                <a className="mt-1 inline-flex items-center gap-1 text-primary underline-offset-2 hover:underline" href={source.url} target="_blank" rel="noopener noreferrer">{source.kind === "google_ai_overview" ? "Google AI Overview · unverified suggestion" : source.kind === "google_ai_citation" ? "AI Overview citation · not yet verified" : source.kind || "Evidence source"} <ExternalLink className="h-3 w-3" /></a>
               </div>)}
+              {candidate.sources.some(source => source.kind === "google_ai_overview") && <p className="mt-2 text-xs text-muted-foreground">Google AI Overview suggested this name. A citation is not proof of ownership; approval requires a fetched source confirming the owner and this business/location.</p>}
               {!eligible && <p className="mt-2 text-xs text-amber-800">Cannot approve: requires a source-backed, business-matched owner role.</p>}
             </article>;
           })}

@@ -16,6 +16,7 @@ import { isResearchDirectoryRow, RESEARCH_READ_ONLY } from "./salonResearchPolic
 import { getSerpUsageStatus } from "./lead-discovery";
 import { ownerDiscoveryLocation, ownerInterviewDiscoveryText, prioritizeOwnerResults } from "./salonOwnerDiscovery";
 import { mentionsOwnerBusiness } from "@shared/salonOwnerDiscoveryRelevance";
+import { parseOwnerSearchResponse, readOwnerSearchCache, type OwnerSearchResult } from "./salonOwnerSearchResults";
 
 const MAX_ROWS_PER_REQUEST = 5;
 const MAX_PAGES_PER_ROW = 4;
@@ -32,7 +33,7 @@ type SalonIdentity = Pick<
   "businessName" | "address" | "address1" | "city" | "state" | "zipCode" | "websiteUrl"
 >;
 
-type OrganicResult = { title?: string; link?: string; snippet?: string };
+type OrganicResult = OwnerSearchResult;
 type OwnerLookupProgress = {
   calls: number;
   beforeProvider?: () => Promise<void>;
@@ -769,10 +770,11 @@ function getMonthYear(): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 }
 
-function queryParts(row: SalonEnrichmentRow): { query: string; cacheKey: string; zip: string; state: string } {
+function queryParts(row: SalonEnrichmentRow): { query: string; cacheKey: string; zip: string; state: string; businessName: string } {
   const location = [row.address1 || row.address, row.city, row.state, row.zipCode].filter(Boolean).join(", ");
   const query = `"${row.businessName}"${location ? ` "${location}"` : ""} owner salon`;
   return {
+    businessName: row.businessName,
     query,
     cacheKey: `salon-owner-organic:${normalized(row.businessName)}:${normalized(location)}`,
     zip: row.zipCode || normalized(row.city).replace(/\s+/g, "-") || "unknown",
@@ -783,8 +785,13 @@ function queryParts(row: SalonEnrichmentRow): { query: string; cacheKey: string;
 export function salonOwnerSearchQueries(row: SalonEnrichmentRow): ReturnType<typeof queryParts>[] {
   const legacy = queryParts(row);
   const availableLocation = ownerDiscoveryLocation(row);
+  const addressParts = [row.address1 || row.address].filter(Boolean) as string[];
+  for (const value of [row.city, row.state, row.zipCode]) {
+    if (value && !` ${normalized(addressParts.join(" "))} `.includes(` ${normalized(value)} `)) addressParts.push(value);
+  }
+  const addressLocation = addressParts.join(", ");
   const phrases = [
-    { ...legacy, query: `"${row.businessName}"${availableLocation ? ` ${availableLocation}` : ""} (owner OR founder)` },
+    { ...legacy, query: `"${row.businessName}"${addressLocation ? ` ${addressLocation}` : ""}` },
     { ...legacy, query: `Who is the owner of "${row.businessName}"${availableLocation ? ` in ${availableLocation}` : ""}?` },
     legacy,
   ];
@@ -802,13 +809,13 @@ async function organicSearch(
   results: OrganicResult[];
   calls: number;
   error?: string;
+  notice?: string;
   budgetExhausted?: boolean;
 }> {
   const { query, cacheKey, zip, state } = parts;
   const cached = await runtime.storage.getSerpCache(zip, cacheKey, state, 30);
   if (cached) {
-    const values = cached.resultsJson as OrganicResult[];
-    return { results: Array.isArray(values) ? values : [], calls: 0 };
+    return { ...readOwnerSearchCache(cached.resultsJson), calls: 0 };
   }
   if (remainingCalls <= 0) return { results: [], calls: 0, budgetExhausted: true, error: "Owner lookup incomplete: the confirmed paid-search allowance has been reached" };
   if (Date.now() >= deadline) return { results: [], calls: 0, error: "Owner lookup incomplete: the lookup time limit has been reached" };
@@ -828,6 +835,8 @@ async function organicSearch(
       engine: "google",
       q: query,
       num: "10",
+      hl: "en",
+      gl: "us",
       api_key: apiKey,
     });
     // Cover both response headers and body parsing with one bounded deadline.
@@ -842,7 +851,7 @@ async function organicSearch(
         signal: controller.signal,
       });
       if (!response.ok) throw new Error(`SerpAPI returned HTTP ${response.status}`);
-      return response.json() as Promise<{ error?: string; organic_results?: OrganicResult[] }>;
+      return response.json() as Promise<{ error?: string; organic_results?: OrganicResult[]; ai_overview?: unknown }>;
     };
     const providerDeadline = new Promise<never>((_resolve, reject) => {
       timeout = setTimeout(() => {
@@ -853,15 +862,13 @@ async function organicSearch(
     });
     const payload = await Promise.race([request(), providerDeadline]);
     if (payload.error) throw new Error(`SerpAPI: ${String(payload.error).slice(0, 240)}`);
-    const results = Array.isArray(payload.organic_results)
-      ? payload.organic_results.slice(0, 10).filter(item => item && typeof item === "object")
-      : [];
+    const parsed = parseOwnerSearchResponse(payload, parts.businessName, query);
     try {
-      await runtime.storage.createSerpCache(zip, cacheKey, state, results);
+      await runtime.storage.createSerpCache(zip, cacheKey, state, { version: 2, ...parsed });
     } catch (error) {
       console.error("[SalonOwnerNames] Could not cache organic search response:", error);
     }
-    return { results, calls: 1 };
+    return { ...parsed, calls: 1 };
   } catch (error) {
     // The provider may bill a request that timed out before returning headers.
     // Keep the reservation and count every initiated network attempt.
@@ -885,7 +892,7 @@ export async function searchSalonContactPages(row: SalonEnrichmentRow, remaining
   const query=`"${row.businessName}" ${location} contact email`;
   const progress={...newOwnerLookupProgress(),beforeProvider};
   const result=await organicSearch({...parts,query,cacheKey:`salon-contact-organic:${normalized(query)}`},remainingCalls,Date.now()+PROVIDER_TIMEOUT_MS,progress);
-  return {...result,results:result.results.filter(item=>item.title&&item.link&&businessAndLocationMatch(row,`${item.title} ${item.snippet||""}`))
+  return {...result,results:result.results.filter(item=>!item.summaryKind&&item.title&&item.link&&businessAndLocationMatch(row,`${item.title} ${item.snippet||""}`))
     .map(item=>({title:item.title!,link:item.link!,address:`${item.title} ${item.snippet||""}`,snippet:item.snippet}))};
 }
 
@@ -1054,6 +1061,7 @@ async function performLookup(
         if (search.budgetExhausted) continue; // Later cached phrases remain free; no more paid requests.
         break; // No automatic retries, including failures that may have been billed.
       }
+      if (search.notice) errors.push(search.notice);
       const organicPages: string[] = [];
       // Summaries suggest candidates only; fetched matched pages establish roles.
       for (const result of prioritizeOwnerResults(row, search.results)) {
@@ -1062,15 +1070,30 @@ async function performLookup(
         // display other businesses' people or spend page attempts on them.
         if (!mentionsOwnerBusiness(row.businessName, summary)) continue;
         if (summary) {
-          mergeCandidates(candidates, extractSalonOwnerSummaryCandidates(summary, {
+          const suggestions = extractSalonOwnerSummaryCandidates(summary, {
             url: result.link || "https://www.google.com/search",
             excerpt: summary.slice(0, 350),
-            kind: "organic_summary",
-          }));
+            kind: result.summaryKind || "organic_summary",
+          });
+          if (result.summaryKind === "google_ai_overview") {
+            for (const candidate of suggestions) {
+              candidate.role = "Unconfirmed Google AI Overview mention";
+              candidate.sources.push(...(result.citations || []).filter(citation => citation.link).map(citation => ({
+                url: citation.link!,
+                excerpt: `AI Overview citation (not yet verified): ${[citation.title, citation.snippet].filter(Boolean).join(" — ")}`.slice(0, 800),
+                kind: "google_ai_citation",
+              })));
+            }
+          }
+          mergeCandidates(candidates, suggestions);
         }
-        if (result.link && safeOrganicPage(result.link) &&
-            !inspectedUrls.has(pageKey(result.link)) && !organicPages.includes(result.link)) {
-          organicPages.push(result.link);
+        const pageResults = result.summaryKind ? result.citations || [] : [result];
+        for (const page of pageResults) {
+          if (!mentionsOwnerBusiness(row.businessName, [page.title, page.snippet].filter(Boolean).join(" "))) continue;
+          if (page.link && safeOrganicPage(page.link) &&
+              !inspectedUrls.has(pageKey(page.link)) && !organicPages.includes(page.link)) {
+            organicPages.push(page.link);
+          }
         }
       }
       // Inspect this phrase before spending on any fallback phrase.

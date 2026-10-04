@@ -13,6 +13,6 @@ export function mentionsOwnerBusiness(businessName: string, text: string): boole
 // Older lookups may have saved unrelated search-summary names. Hide those
 // suggestions without editing the saved evidence, approvals, or contact names.
 export function relevantOwnerCandidate(candidate: SalonOwnerNameCandidate, businessName: string): boolean {
-  return candidate.sources.some(source => source.kind !== "organic_summary" ||
+  return candidate.sources.some(source => !["organic_summary", "google_ai_overview", "google_ai_citation"].includes(source.kind) ||
     mentionsOwnerBusiness(businessName, source.excerpt));
 }

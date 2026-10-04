@@ -42,7 +42,12 @@ function fixtureOwnerName(businessName,found=false){
           url:"https://fixture.example/other",excerpt:"LEXY'S PET PARLOR — Rachel, the owner."}]},
       ...(found?[{id:"matched-owner",firstName:"Avery",lastName:"Smith",role:"founder",
         roleConfirmed:false,businessMatched:false,confidence:"low",sources:[{kind:"organic_page",
-          url:"https://fixture.example/interview",excerpt:`My name is Avery Smith, and I'm the founder of ${businessName}.`}]}]:[]),
+          url:"https://fixture.example/interview",excerpt:`My name is Avery Smith, and I'm the founder of ${businessName}.`}]},
+        {id:"ai-owner",firstName:"Eric",lastName:null,role:"Unconfirmed Google AI Overview mention",
+          roleConfirmed:false,businessMatched:false,confidence:"low",sources:[
+            {kind:"google_ai_overview",url:"https://www.google.com/search?q=fixture",excerpt:`${businessName}. Groomer / Owner: Eric`},
+            {kind:"google_ai_citation",url:"https://fixture.example/ai-citation",excerpt:`AI Overview citation (not yet verified): ${businessName}`},
+          ]}]:[]),
     ]};
 }
 async function reviewThroughScheduling(entry) {
@@ -70,6 +75,12 @@ async function reviewThroughScheduling(entry) {
   await click("Retry owner search",article);
   await click("Confirm & search",article);
   await until("document.querySelector('article').innerText.includes('Avery Smith')","new owner result appears without navigation");
+  await until("document.querySelector('article').innerText.includes('Eric')","first-name AI Overview suggestion");
+  assert.equal(await evaluate(`${article}.innerText.includes("Google AI Overview · unverified suggestion")`),true);
+  assert.equal(await evaluate(`${article}.innerText.includes("AI Overview citation · not yet verified")`),true);
+  assert.equal(await evaluate(`${article}.innerText.includes("A citation is not proof of ownership")`),true);
+  await evaluate(`Array.from(${article}.querySelectorAll('label')).find(e=>e.textContent.includes("Eric")&&e.querySelector('input[name^="owner-"]')).querySelector('input').click()`);
+  assert.equal(await evaluate(`${button("Approve selected owner",article)}.disabled`),true);
   assert.equal((await evaluate(`${article}.innerText`)).includes("Rachel"),false);
   await click("Add approved lead to Contacts",article);
   if(entry==="upload"){

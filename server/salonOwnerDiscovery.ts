@@ -14,7 +14,7 @@ export function ownerDiscoveryLocation(row: Identity): string {
   return [city, state].filter(Boolean).join(", ");
 }
 
-export function prioritizeOwnerResults(row: Identity, results: OrganicResult[]): OrganicResult[] {
+export function prioritizeOwnerResults<T extends OrganicResult>(row: Identity, results: T[]): T[] {
   const business = normalized(row.businessName);
   const score = (result: OrganicResult) => {
     const text = [result.title, result.snippet].filter(Boolean).join(" ");
@@ -24,6 +24,7 @@ export function prioritizeOwnerResults(row: Identity, results: OrganicResult[]):
     try { path = new URL(result.link || "").pathname; } catch { /* Invalid URLs are filtered before fetching. */ }
     return (mentionsBusiness ? 4 : 0) + (ownerRole ? 4 : 0)
       + (mentionsBusiness && /\/(?:interview|about|meet-|our-story)/i.test(path) ? 2 : 0)
+      + ("summaryKind" in result && result.summaryKind === "google_ai_overview" ? 2 : 0)
       - (/\/(?:search|category|tag)(?:\/|$)/i.test(path) ? 2 : 0);
   };
   return results.map((result, index) => ({ result, index, score: score(result) }))

@@ -32,3 +32,9 @@ An approved salon identity and a targeted Google query do not establish that eve
 **Why:** The user showed an owner lookup suggesting people from other businesses even though the selected salon had strong, approved identity evidence. Search providers can return unrelated results; marking their names “unconfirmed” still creates confusing review work.
 
 **How to apply:** Independently check discovery relevance before extracting people or using the limited page budget. Keep unrelated stored summary suggestions out of the review UI without silently editing saved evidence or Contacts. Relevance remains distinct from verified ownership and exact-location approval.
+
+Google AI Overview claims and their citations are discovery suggestions, not verified page evidence. A citation must not be represented as if its linked page was fetched and confirmed the AI's ownership claim.
+
+**Why:** The user demonstrated that a basic business/address Google search can show a first-name owner in an AI Overview when ordinary organic results omit that name. SerpAPI may return overview text inline, or only a retrieval token requiring another provider request; the latter is not a free continuation of the original search.
+
+**How to apply:** Keep relevant AI suggestions reviewable even when the cited page is inaccessible. Verify the actual linked source and exact business/location before allowing approval or personal-name use. Never automatically redeem an overview retrieval token outside an explicitly authorized request budget, and explain unavailable overview text rather than treating a token as a completed overview search.

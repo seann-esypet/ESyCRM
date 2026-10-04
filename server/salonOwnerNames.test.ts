@@ -243,7 +243,7 @@ function mockDependencies(
     usage?: unknown;
     complete?: boolean;
     completeFailures?: number;
-    cacheByKey?: Record<string, Array<{ title?: string; link?: string; snippet?: string }>>;
+    cacheByKey?: Record<string, unknown>;
     rows?: SalonEnrichmentRow[];
     fault?: { stage: "cache" | "usage" | "reservation" | "rowRead"; at: number };
     deleteFirstRowOnCompletion?: boolean;
@@ -658,12 +658,12 @@ test("category-less fixed-list uploads can run the opted-in owner stage after st
   }
 });
 
-test("owner discovery starts with business and city while preserving the exact-address fallback cache", () => {
+test("owner discovery starts with the plain business/address search while preserving the exact-address fallback cache", () => {
   const row = orchestrationRow();
   const queries = salonOwnerSearchQueries(row);
   assert.equal(queries.length, 3);
-  assert.equal(queries[0].query, '"Curly Tails" North Richland Hills, TX (owner OR founder)');
-  assert.doesNotMatch(queries[0].query, /5651|76117/);
+  assert.equal(queries[0].query, '"Curly Tails" 5651 Tourist Dr, North Richland Hills, TX, 76117');
+  assert.doesNotMatch(queries[0].query, /owner|founder/i);
   assert.equal(queries[1].query, 'Who is the owner of "Curly Tails" in North Richland Hills, TX?');
   assert.equal(queries[2].query, '"Curly Tails" "5651 Tourist Dr, North Richland Hills, TX, 76117" owner salon');
   assert.equal(queries[2].cacheKey, "salon-owner-organic:curly tails:5651 tourist dr north richland hills tx 76117");
@@ -676,7 +676,7 @@ test("owner discovery starts with business and city while preserving the exact-a
 test("formatted upload addresses supply locality for discovery without changing identity fields", () => {
   const row = orchestrationRow({ address: "1511 Washington Blvd, Detroit, MI 48226", address1: null, city: null, zipCode: null, state: "MI" });
   assert.equal(ownerDiscoveryLocation(row), "Detroit, MI");
-  assert.equal(salonOwnerSearchQueries(row)[0].query, '"Curly Tails" Detroit, MI (owner OR founder)');
+  assert.equal(salonOwnerSearchQueries(row)[0].query, '"Curly Tails" 1511 Washington Blvd, Detroit, MI 48226');
   assert.equal(row.city, null);
   assert.equal(row.zipCode, null);
   assert.equal(ownerDiscoveryLocation(orchestrationRow({ address: "5651 Tourist Dr", city: null, state: null })), "");
@@ -850,6 +850,113 @@ async function withTestProvider(fn: () => Promise<void>) {
     else process.env.SERPAPI_API_KEY = oldKey;
   }
 }
+
+function puppyCutzOverview(tokenOnly = false) {
+  return {
+    organic_results: [],
+    ai_overview: tokenOnly ? { page_token: "fixture-token-never-fetch" } : {
+      text_blocks: [
+        { type: "paragraph", snippet: "Puppy Cutz is a pet groomer at 6665 Pelouze St, Detroit, MI 48210." },
+        { type: "heading", snippet: "Business Details" },
+        { type: "list", list: [{ title: "Groomer / Owner", snippet: "Eric", reference_indexes: [0] }] },
+      ],
+      references: [{ index: 0, title: "Puppy Cutz", link: "https://fixture.example/puppy-cutz", snippet: "Located in Southwest Detroit. Over 10 years experience." }],
+    },
+  };
+}
+
+test("Puppy Cutz inline AI Overview surfaces Eric and its citation with one request, caches it, and cannot approve it", async () => {
+  await withTestProvider(async () => {
+    const row = orchestrationRow({
+      businessName: "Puppy Cutz", address: "6665 Pelouze St", address1: "6665 Pelouze St",
+      city: "Detroit", state: "MI", zipCode: "48210", websiteUrl: null, identityMatchStatus: "unmatched",
+    });
+    const cacheByKey: Record<string, unknown> = {};
+    const visited: string[] = [];
+    const deps = mockDependencies(row, {
+      cacheByKey,
+      fetchProvider: async url => {
+        const params = new URL(String(url)).searchParams;
+        assert.equal(params.get("q"), '"Puppy Cutz" 6665 Pelouze St, Detroit, MI, 48210');
+        assert.equal(params.get("hl"), "en");
+        assert.equal(params.get("gl"), "us");
+        return { ok: true, json: async () => puppyCutzOverview() } as Response;
+      },
+      fetchPage: async url => { visited.push(url); throw new Error("Public page returned HTTP 403"); },
+    });
+    try {
+      const result = await lookupSalonOwnerName(row.id, row.userId, 1, 1);
+      assert.equal(result?.providerCalls, 1);
+      assert.equal(result?.status, "needs_review");
+      const eric = result?.candidates.find(candidate => candidate.firstName === "Eric");
+      assert.ok(eric);
+      assert.equal(eric.lastName, null);
+      assert.equal(eric.roleConfirmed, false);
+      assert.equal(eric.businessMatched, false);
+      assert.equal(eric.sources.some(source => source.kind === "google_ai_overview"), true);
+      assert.equal(eric.sources.some(source => source.kind === "google_ai_citation"), true);
+      assert.equal(relevantOwnerCandidate(eric, row.businessName), true);
+      assert.equal(isStrongApprovedOwnerCandidate({ ...result!, selectedCandidateId: eric.id, approvedAt: "2026-10-04" }), null);
+      assert.deepEqual(visited, ["https://fixture.example/puppy-cutz"]);
+      assert.equal(result?.approvedAt, null);
+      assert.equal(result?.usePersonalName, false);
+      const cached = await lookupSalonOwnerName(row.id, row.userId, 0, 1);
+      assert.equal(cached?.providerCalls, 0);
+      assert.equal(cached?.candidates[0].firstName, "Eric");
+      assert.equal(deps.observed.providerAttempts, 1);
+    } finally { deps.restore(); }
+  });
+});
+
+test("AI Overview retrieval tokens explain missing text without a hidden extra provider request, including cache reuse", async () => {
+  await withTestProvider(async () => {
+    const row = orchestrationRow({ websiteUrl: null });
+    const deps = mockDependencies(row, {
+      cacheByKey: {},
+      fetchProvider: async () => ({ ok: true, json: async () => puppyCutzOverview(true) }) as Response,
+    });
+    try {
+      const result = await lookupSalonOwnerName(row.id, row.userId, 1, 1);
+      assert.equal(result?.providerCalls, 1);
+      assert.match(result?.error || "", /not its text.*did not make that extra paid request/);
+      assert.equal(result?.candidates.length, 0);
+      const cached = await lookupSalonOwnerName(row.id, row.userId, 0, 1);
+      assert.equal(cached?.providerCalls, 0);
+      assert.equal(cached?.error, result?.error);
+      assert.equal(deps.observed.providerAttempts, 1);
+      assert.equal(deps.observed.pageAttempts, 0);
+    } finally { deps.restore(); }
+  });
+});
+
+test("a fetched exact-location AI citation can confirm a first-name owner, but never auto-approve or personalize", async () => {
+  await withTestProvider(async () => {
+    const row = orchestrationRow({ websiteUrl: null });
+    const deps = mockDependencies(row, {
+      fetchProvider: async () => ({
+        ok: true,
+        json: async () => ({
+          ai_overview: {
+            text_blocks: [{ type: "paragraph", snippet: "Curly Tails. Owner: Jane", reference_indexes: [0] }],
+            references: [{ index: 0, title: "Curly Tails", link: "https://fixture.example/about" }],
+          },
+        }),
+      }) as Response,
+      fetchPage: async url => matchedPage(url, "Owner: Jane"),
+    });
+    try {
+      const result = await lookupSalonOwnerName(row.id, row.userId, 1, 1);
+      assert.equal(result?.candidates[0].firstName, "Jane");
+      assert.equal(result?.candidates[0].lastName, null);
+      assert.equal(result?.candidates[0].roleConfirmed, true);
+      assert.equal(result?.candidates[0].businessMatched, true);
+      assert.equal(result?.providerCalls, 1);
+      assert.equal(result?.pagesFetched, 1);
+      assert.equal(result?.approvedAt, null);
+      assert.equal(result?.usePersonalName, false);
+    } finally { deps.restore(); }
+  });
+});
 
 test("expanded lookup verifies a broader or natural-language result before another paid search", async () => {
   await withTestProvider(async () => {
