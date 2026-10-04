@@ -1,4 +1,5 @@
-import { Mail, RefreshCw } from "lucide-react";
+import * as React from "react";
+import { CalendarClock, CircleMinus, Mail, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { PipelineEmailSummary } from "@shared/pipelineEmailSummary";
@@ -40,6 +41,19 @@ export default function PipelineEmailStatus({
           ? pipelineSequenceLabels.not_enrolled
           : pipelineSequenceLabels[summary.sequenceStatus];
 
+  const statusIsNotEnrolled = status === pipelineSequenceLabels.not_enrolled;
+  const statusIsScheduled = status === pipelineSequenceLabels.scheduled;
+  const StatusIcon = statusIsNotEnrolled
+    ? CircleMinus
+    : statusIsScheduled
+      ? CalendarClock
+      : null;
+  const statusBadgeClass = statusIsNotEnrolled
+    ? "border-amber-700/25 bg-amber-100 text-amber-950 dark:border-amber-300/30 dark:bg-amber-950/60 dark:text-amber-100"
+    : statusIsScheduled
+      ? "border-sky-700/25 bg-sky-100 text-sky-950 dark:border-sky-300/30 dark:bg-sky-950/60 dark:text-sky-100"
+      : "font-semibold";
+
   let recordedSummary = "Recorded sends unavailable";
   if (contactId && loading) recordedSummary = "Loading recorded sends";
   else if (contactId && !failed && summary?.contactState === "available") {
@@ -78,11 +92,19 @@ export default function PipelineEmailStatus({
             <span className="font-medium text-foreground/80">Email:</span> {contactLine}
           </p>
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-            <span className="font-medium text-muted-foreground">Sequence status</span>
+            <span className="font-semibold text-foreground/80" data-pipeline-sequence-status-label>
+              Sequence status
+            </span>
             {loading ? (
               <span className="h-5 w-28 animate-pulse rounded bg-muted" aria-label="Loading sequence status" />
             ) : (
-              <Badge variant={status === "Status unavailable" || status === "Failed attempt" ? "destructive" : "secondary"} className="font-normal">
+              <Badge
+                data-pipeline-sequence-status={status}
+                variant={status === "Status unavailable" || status === "Failed attempt" ? "destructive" : "secondary"}
+                className={`min-h-7 gap-1.5 px-2.5 py-1 text-sm font-bold leading-4 ${statusBadgeClass}`}
+                title={statusIsScheduled ? "Next email is scheduled, not yet sent" : undefined}
+              >
+                {StatusIcon && <StatusIcon aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />}
                 {status}
               </Badge>
             )}

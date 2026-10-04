@@ -26,3 +26,9 @@ Browser fixtures must reproduce complete HTTP response contracts, not just the o
 **Why:** An otherwise successful Leads browser walkthrough omitted owner review entirely because its fixture lacked metadata added by the real HTTP response. Passing contact-creation checks did not establish that owner review had rendered or refreshed.
 
 **How to apply:** Match the actual endpoint envelope and assert the relevant review panel and its refreshed results are present. Missing fixture fields must not silently turn a feature test into a test of an unrelated path.
+
+Responsive fixture checks must confirm the page is unobstructed, not merely that the underlying elements have the expected dimensions.
+
+**Why:** Pipeline mobile checks passed while Email History remained open; the captured image exposed that the badges were behind a modal overlay. Element existence and layout measurements alone did not establish that a salesperson could see the status.
+
+**How to apply:** Assert that transient dialogs have actually closed before responsive checks and inspect at least one captured fixture image of the changed content. Keep that fixture evidence separate from verification of the real signed-in screen.

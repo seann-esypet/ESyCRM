@@ -2,7 +2,7 @@
 // authentication, enrollment, rescheduling, database writes or email sending.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import WebSocket from "ws";
@@ -58,6 +58,43 @@ async function input(selector, value) {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(el,${JSON.stringify(value)});
     el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true}));
   })()`);
+}
+
+async function prominentStatus(layout, emptyId = "empty", pendingId = "pending") {
+  const metrics = await evaluate(`(() => {
+    const inspect = id => {
+      const panel = document.querySelector('[data-testid="deal-${layout}-' + id + '"]');
+      const badge = panel?.querySelector('[data-pipeline-sequence-status]');
+      if (!badge) return null;
+      const style = getComputedStyle(badge);
+      const bounds = badge.getBoundingClientRect();
+      return {
+        text: badge.textContent.trim(), fontSize: parseFloat(style.fontSize),
+        weight: parseFloat(style.fontWeight), height: bounds.height,
+        color: style.color, background: style.backgroundColor,
+        icon: !!badge.querySelector('svg'),
+        fits: badge.scrollWidth <= badge.clientWidth + 2 &&
+          bounds.right <= panel.getBoundingClientRect().right + 2,
+      };
+    };
+    return { empty: inspect(${JSON.stringify(emptyId)}), pending: inspect(${JSON.stringify(pendingId)}) };
+  })()`);
+  for (const [name, metric] of Object.entries(metrics)) {
+    assert.ok(metric, `${layout} ${name} has an identifiable sequence badge`);
+    assert.ok(metric.fontSize >= 14, `${layout} ${name} has larger status text`);
+    assert.ok(metric.weight >= 600, `${layout} ${name} has bold status text`);
+    assert.ok(metric.height >= 28, `${layout} ${name} has a prominent status badge`);
+    assert.equal(metric.icon, true, `${layout} ${name} has a non-color cue`);
+    assert.equal(metric.fits, true, `${layout} ${name} status does not clip`);
+  }
+  assert.equal(metrics.empty.text, "Not in a sequence");
+  assert.equal(metrics.pending.text, "Scheduled");
+  assert.notEqual(metrics.empty.background, metrics.pending.background, "requested statuses have distinct backgrounds");
+}
+
+async function captureFixture(name) {
+  const image = await send("Page.captureScreenshot", { format: "png" });
+  await writeFile(`/tmp/pipeline-status-${name}.png`, Buffer.from(image.data, "base64"));
 }
 
 const date = "2026-10-01T14:00:00.000Z";
@@ -192,6 +229,11 @@ try {
   assert.match(await evaluate(row("no-address")), /No email address[\s\S]*1 recorded sent/);
   assert.match(await evaluate(row("no-contact")), /No linked contact/);
   assert.match(await evaluate(row("unavailable")), /Contact unavailable/);
+  await prominentStatus("row");
+  await captureFixture("desktop-light");
+  await evaluate("document.documentElement.classList.add('dark')");
+  await prominentStatus("row");
+  await evaluate("document.documentElement.classList.remove('dark')");
   console.log("PASS table status, missing contact/address, uncertain history and shared-contact counts");
 
   await click('[data-testid="sort-title"]');
@@ -224,6 +266,10 @@ try {
   await until(`document.querySelectorAll('[data-testid^="deal-card-"]').length===1`, "owner filtering");
   await select("select-filter-user-deals", "All Salespeople");
   await until(`document.querySelectorAll('[data-testid^="deal-card-"]').length===10`, "all owners");
+  await prominentStatus("card");
+  await evaluate("document.documentElement.classList.add('dark')");
+  await prominentStatus("card");
+  await evaluate("document.documentElement.classList.remove('dark')");
   console.log("PASS combined filters, view switching and administrator owner selection");
 
   await evaluate(`document.querySelector('[data-testid="deal-card-empty"] button[aria-label="Email history"]').click()`);
@@ -244,13 +290,20 @@ try {
   await until(`!document.querySelector('[data-testid="button-submit-reschedule-log-empty"]')`, "mocked reschedule completed");
   assert.equal(fakeMutations, 2);
   assert.ok(summaryReads > beforeReschedule);
-  await evaluate(`document.querySelector('[role="dialog"]').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);
+  await evaluate(`Array.from(document.querySelectorAll('[role="dialog"] button')).find(el=>el.textContent.trim()==='Close').click()`);
+  await until(`!document.querySelector('[role="dialog"]')`, "history dialog closed before mobile checks");
   await send("Emulation.setDeviceMetricsOverride", { width: 402, height: 874, deviceScaleFactor: 1, mobile: true });
   await click('[data-testid="button-toggle-sidebar"]');
   await until(`document.querySelector('[data-testid="header"]').clientWidth>250`, "existing sidebar collapsed for phone use");
   await until(`document.querySelector('[data-testid="deal-card-empty"]')?.innerText.includes('Scheduled')`, "mobile card rendering");
   const headerFits = await evaluate(`document.querySelector('[data-testid="header"]').scrollWidth<=document.querySelector('[data-testid="header"]').clientWidth+2`);
   assert.ok(headerFits, "Pipeline controls must fit the phone viewport");
+  await prominentStatus("card", "other");
+  await evaluate("document.documentElement.classList.add('dark')");
+  await prominentStatus("card", "other");
+  await evaluate(`document.querySelector('[data-testid="deal-card-other"]').scrollIntoView({block:"center"})`);
+  await captureFixture("mobile-dark");
+  await evaluate("document.documentElement.classList.remove('dark')");
   console.log("PASS history navigation, mocked initiation/rescheduling refresh and mobile card rendering");
 
   failSummaries = true;
