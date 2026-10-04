@@ -11,7 +11,7 @@ import { renderLeadSequencePreview } from "../server/leadSequencePreview.ts";
 const profile = await mkdtemp(join(tmpdir(),"leads-browser-"));
 const chrome = spawn("chromium",["--headless","--no-sandbox","--disable-dev-shm-usage","--remote-debugging-port=0",`--user-data-dir=${profile}`,"about:blank"],{stdio:"ignore"});
 const pending=new Map(),errors=[],writes=[];
-let ws,id=0,role="salesperson",rows=[],batches=[],scheduled=false,researchActive=false,linkedPreviewReads=0;
+let ws,id=0,role="salesperson",rows=[],batches=[],scheduled=false,researchActive=false,linkedPreviewReads=0,failSearchSave=false;
 const fixtureSequence={id:"fixture-sequence",sequenceNumber:1,sequenceTrack:"directory_general",isActive:"true",subject:"Are you listed?",body:"<p>[Contact_Greeting],</p><p>Fixture invitation.</p>",name:"Directory introduction"};
 const fixtureSender={id:"fixture-owner",firstName:"Fixture",lastName:"Salesperson"};
 function linkedContact(row){return row.importedContactId?{id:row.importedContactId,email:row.importedContactId==="fixture-phone-contact"?"existing@fixture-contact.example":row.email,company:row.businessName,firstName:null,useBusinessNameForEmail:"Yes"}:null;}
@@ -80,8 +80,13 @@ async function api(url,method,body) {
   if(method==="GET"&&batches.some(batch=>url.pathname===`/api/leads/${batch.id}`)){
     return {batch:batches.find(batch=>url.pathname===`/api/leads/${batch.id}`),rows:rows.map(r=>({...leadView(r),dealId:r.dealId||null})),total:rows.length,nextOffset:null,linkedRows:[]};
   }
-  if(method==="GET"&&url.pathname==="/api/lead-discovery/jobs")return [{id:"fixture-search-job",name:"Saved ZIP search fixture",state:"TX",zipCodes:"78701",status:"completed",totalBusinessesFound:1,createdAt:"2026-10-04T12:00:00Z"}];
-  if(method==="POST"&&url.pathname==="/api/leads/discovery/fixture-search-job/preview")return {count:1,duplicateCount:0,duplicates:[]};
+  if(method==="GET"&&url.pathname==="/api/lead-discovery/jobs")return [
+    {id:"fixture-search-job",state:"TX",zipCodes:"78701",status:"completed",totalBusinessesFound:1,createdAt:"2026-10-04T12:00:00Z"},
+    {id:"fixture-empty-job",state:"PA",zipCodes:"19102",status:"completed",totalBusinessesFound:0,createdAt:"2026-10-03T12:00:00Z"},
+  ];
+  if(method==="POST"&&url.pathname==="/api/leads/discovery/fixture-search-job/preview")return failSearchSave
+    ? {__httpStatus:400,message:"Fixture database error: search could not be saved"}
+    : {count:1,duplicateCount:0,duplicates:[]};
   if(method==="POST"&&url.pathname==="/api/leads/discovery/fixture-search-job"){
     assert.equal(body.confirmed,true);assert.equal(body.duplicateAction,"link");scheduled=false;
     const raw={"Business Name":"Fixture Search Grooming",Address:"1 Main Street Austin TX",State:"TX",Email:"team@fixture-search.example","Email Source URL":"https://fixture-search.example/contact","Email Review Status":"review_only","Provider category":"Pet groomer",Notes:"Saved matched business search. General contact email needs review."};
@@ -140,7 +145,7 @@ try {
     if(message.method==="Fetch.requestPaused"){
       try{const request=message.params.request,body=request.postData?JSON.parse(request.postData):{};
         const payload=await api(new URL(request.url),request.method,body);
-        await send("Fetch.fulfillRequest",{requestId:message.params.requestId,responseCode:200,responseHeaders:[{name:"Content-Type",value:"application/json"}],body:Buffer.from(JSON.stringify(payload)).toString("base64")});
+        await send("Fetch.fulfillRequest",{requestId:message.params.requestId,responseCode:payload?.__httpStatus||200,responseHeaders:[{name:"Content-Type",value:"application/json"}],body:Buffer.from(JSON.stringify(payload)).toString("base64")});
       }catch(error){errors.push(error.message);await send("Fetch.failRequest",{requestId:message.params.requestId,errorReason:"BlockedByClient"});}
     }else if(message.method==="Page.javascriptDialogOpening"){
       await send("Page.handleJavaScriptDialog",{accept:true,promptText:"link"});
@@ -181,8 +186,16 @@ try {
     }
     writes.length=0;
     await send("Page.navigate",{url:origin+"/leads"});
+    await until("document.body.innerText.includes('TX · ZIP 78701') && document.body.innerText.includes('1 saved business')","legacy search labels and real result count");
+    assert.equal(await evaluate("Array.from(document.querySelectorAll('button')).filter(e=>e.textContent.trim()==='Save in Leads'&&e.disabled).length"),1);
+    failSearchSave=true;
+    await click("Save in Leads");
+    await until("document.body.innerText.includes('Search could not be saved') && document.body.innerText.includes('Fixture database error')","visible search save failure");
+    assert.equal(writes.length,0);
+    failSearchSave=false;
     await click("Save in Leads");
     await until("document.body.innerText.includes('Saved search fixture')","saved search staged in common workspace");
+    await until("location.pathname==='/leads/fixture-search-batch'","successful save opens its list");
     assert.deepEqual(writes,["search-stage"]);assert.ok(rows.every(row=>!row.email&&!row.importedContactId&&row.reviewStatus!=="approved"));
     await send("Page.navigate",{url:origin+"/leads/fixture-search-batch"});
     await until("document.querySelector('article')?.innerText.includes('Fixture Search Grooming')","search-source review");

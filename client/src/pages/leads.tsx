@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams } from "wouter";
+import { Link, useLocation, useParams } from "wouter";
 import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import Papa from "papaparse";
 import * as XLSX from "xlsx";
@@ -7,6 +7,8 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import Header from "@/components/layout/header";
 import { OwnerNameReview } from "@/components/owner-name-review";
 import { LeadWorkflowGuide } from "@/components/leads/workflow-guide";
+import { CompletedSearches } from "@/components/leads/completed-searches";
+import { useToast } from "@/hooks/use-toast";
 import { DirectoryEligibilityReview } from "@/components/directory-eligibility";
 import { directoryEligibility, type DirectoryEligibility, type EligibilityRow } from "@shared/directoryEligibility";
 import { leadResearchNeedsRefresh, leadSchedulePreviewReady, leadRecipient, type LeadResearchProgress } from "@shared/leadWorkflowState";
@@ -307,6 +309,8 @@ function LeadRowCard({row,onRefresh}:{row:LeadRow;onRefresh:()=>void}) {
 
 export default function Leads() {
   const {id}=useParams<{id?:string}>();
+  const [,setLocation]=useLocation();
+  const {toast}=useToast();
   const [search,setSearch]=useState("");
   const [limit,setLimit]=useState("100");
   const [rowLimit,setRowLimit]=useState("100");
@@ -346,9 +350,14 @@ export default function Leads() {
       if(!choice||!["skip","link","update"].includes(choice.trim().toLowerCase()))throw new Error("Preview cancelled; nothing was added.");
       duplicateAction=choice.trim().toLowerCase();
     }
+    if(!preview.count)throw new Error("This search has no saved businesses to add.");
     if(!window.confirm(`Add ${preview.count} saved businesses to Leads? No research, contact creation, enrollment or sending will occur.`))throw new Error("Cancelled; nothing was added.");
     return requestJson(`/api/leads/discovery/${encodeURIComponent(jobId)}`,{confirmed:true,duplicateAction});
-  },onSuccess:()=>queryClient.invalidateQueries({queryKey:["/api/leads"]})});
+  },onSuccess:(result:any)=>{
+    queryClient.invalidateQueries({queryKey:["/api/leads"]});
+    toast({title:"Search saved in Leads",description:`${result.stagedCount??0} new businesses; ${result.linkedCount??0} existing leads linked. No contacts were created or emails sent.`});
+    if(result.batch?.id)setLocation(`/leads/${encodeURIComponent(result.batch.id)}`);
+  },onError:(error:Error)=>toast({title:"Could not save this search",description:error.message,variant:"destructive"})});
   const batchData=detail.data?.pages[0];
   const researchProgress=batchData?.batch.researchProgress?.leadResearch;
   const validResearchCaps=Boolean(estimate.data&&Number.isInteger(Number(rowLimit))&&Number(rowLimit)>=1&&Number(rowLimit)<=100&&Number(rowLimit)<=estimate.data.eligibleRows&&Number.isInteger(Number(calls))&&Number(calls)>=0&&Number(calls)<=estimate.data.maxProviderCalls);
@@ -388,7 +397,9 @@ export default function Leads() {
       </section>
       <section className="space-y-3"><div><h2 className="text-xl font-semibold">Completed business searches</h2><p className="text-sm text-muted-foreground">Stage a completed discovery job into the unified Leads review. This does not start another search.</p></div>
         {jobs.isError||national.isError?<Alert variant="destructive"><AlertDescription>Discovery job status unavailable. {(jobs.error as Error)?.message||(national.error as Error)?.message}</AlertDescription></Alert>:null}
-        {[...(jobs.data??[]),...(national.data??[])].filter(j=>/completed|complete|finished/i.test(String(j.status??j.state??""))).map((job:any)=><div key={String(job.id)} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card p-3"><div><p className="font-medium">{job.name||job.query||job.title||"Business search"}</p><p className="text-xs text-muted-foreground">{job.status||job.state} · {job.resultCount??job.totalResults??"—"} results · {dateText(job.createdAt)}</p></div><Button size="sm" variant="outline" disabled={stageJob.isPending} onClick={()=>stageJob.mutate(String(job.id))}>Save in Leads</Button></div>)}
+        <p className="text-xs text-muted-foreground">These are past search runs, not individual businesses. Saving reuses their stored results; it does not run or pay for another search. Nationwide runs include the state searches shown underneath.</p>
+        {stageJob.isError&&<Alert variant="destructive" role="alert"><AlertTitle>Search could not be saved</AlertTitle><AlertDescription>{stageJob.error.message}</AlertDescription></Alert>}
+        <CompletedSearches jobs={jobs.data??[]} nationalJobs={national.data??[]} disabled={stageJob.isPending} savingId={stageJob.isPending?stageJob.variables:undefined} onSave={jobId=>stageJob.mutate(jobId)} />
         {stageJob.error&&<Alert variant="destructive"><AlertDescription>{(stageJob.error as Error).message}</AlertDescription></Alert>}
         <Link href="/lead-discovery" className="inline-flex items-center gap-1 text-sm text-primary underline-offset-4 hover:underline">Open Business Search <ArrowRight className="h-4 w-4"/></Link>
       </section>

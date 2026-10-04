@@ -9,5 +9,8 @@ npm ci --include=dev --prefer-offline --no-audit --no-fund
 echo "[post-merge] Building the application"
 npm run build
 
+echo "[post-merge] Checking lead-list database columns (read-only)"
+./node_modules/.bin/tsx scripts/check-lead-schema.ts
+
 # Workflow reconciliation is managed by Replit after this script succeeds.
 # Do not start another server, run research scripts, or push database changes here.
