@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link, useLocation } from "wouter";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
@@ -21,8 +21,6 @@ import {
   LogOut,
   UserCog,
   Search,
-  FileSearch,
-  DatabaseZap,
   ClipboardList,
   FlaskConical,
   ChevronLeft,
@@ -31,17 +29,15 @@ import {
 
 const navigation = [
   { name: "Dashboard",       href: "/",                   icon: BarChart3 },
-  { name: "Lead Discovery",  href: "/lead-discovery",     icon: Search },
-  { name: "Upload Salon List", href: "/salon-enrichment",  icon: DatabaseZap },
-  { name: "Form Outreach",   href: "/form-outreach",       icon: ClipboardList },
+  { name: "Leads",           href: "/leads",               icon: Search },
+  { name: "Form Follow-ups", href: "/form-outreach",       icon: ClipboardList },
   { name: "Contacts",        href: "/contacts",           icon: Users },
   { name: "Pipeline",        href: "/deals",              icon: Handshake },
   { name: "Tasks",           href: "/tasks",              icon: CheckSquare },
-  { name: "Email Sequences", href: "/email-sequences",    icon: Mail },
+  { name: "Outreach",        href: "/email-sequences",     icon: Mail },
   { name: "Inbox",           href: "/inbox",              icon: InboxIcon },
   { name: "Commissions",     href: "/commissions",        icon: DollarSign },
   { name: "Reports",         href: "/reports",            icon: TrendingUp },
-  { name: "Sales Lead Review", href: "/salon-search-report", icon: FileSearch },
   { name: "Settings",        href: "/settings",           icon: SettingsIcon },
 ];
 
@@ -54,14 +50,17 @@ export default function Sidebar() {
   const [location] = useLocation();
   const { user } = useAuth();
 
+  const userChangedSidebar = useRef(false);
   const [collapsed, setCollapsed] = useState(() => {
-    try { return localStorage.getItem("sidebar_collapsed") === "true"; }
-    catch { return false; }
+    try {
+      const saved = localStorage.getItem("sidebar_collapsed");
+      return saved === null ? window.matchMedia("(max-width: 767px)").matches : saved === "true";
+    } catch { return window.matchMedia("(max-width: 767px)").matches; }
   });
 
   useEffect(() => {
-    try { localStorage.setItem("sidebar_collapsed", String(collapsed)); }
-    catch {}
+    if (!userChangedSidebar.current) return;
+    try { localStorage.setItem("sidebar_collapsed", String(collapsed)); } catch {}
   }, [collapsed]);
 
   const handleLogout = () => {
@@ -175,7 +174,7 @@ export default function Sidebar() {
         <Tooltip delayDuration={0}>
           <TooltipTrigger asChild>
             <button
-              onClick={() => setCollapsed(c => !c)}
+              onClick={() => { userChangedSidebar.current = true; setCollapsed(c => !c); }}
               className={cn(
                 "flex items-center w-full rounded-md px-2 py-2 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors",
                 collapsed ? "justify-center" : "justify-end"

@@ -301,7 +301,7 @@ export default function Contacts() {
         title="Contacts" 
         onSearch={setSearchQuery}
         onAddNew={() => setIsFormOpen(true)}
-        onImport={() => setIsImportOpen(true)}
+        onImport={() => window.location.assign("/leads?upload=1")}
         showImportButton={true}
         addButtonText="Add Contact"
         customActions={
@@ -351,6 +351,7 @@ export default function Contacts() {
       />
       
       <main className="flex-1 min-h-0 overflow-auto p-6 bg-muted/30" data-testid="contacts-content">
+        <p className="mb-4 text-sm text-muted-foreground">Contacts store reviewed business and person details. Find or upload new businesses in Leads, track sales opportunities in Pipeline, and confirm messages separately in Outreach.</p>
         <div className="flex items-center gap-3 mb-4">
           <span className="text-sm font-medium text-muted-foreground">Uses Software:</span>
           {(["all", "Yes", "No", "Unknown"] as const).map((val) => (

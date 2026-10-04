@@ -33,7 +33,7 @@ export const salonSearchReportBatchSchema = z.object({
 
 export type ReviewedSalonReportEntry = z.infer<typeof reviewedSalonSchema>;
 
-function untrustedOwnerName(value: unknown): OwnerNameResult | undefined {
+export function untrustedOwnerName(value: unknown): OwnerNameResult | undefined {
   if (typeof value === "string") {
     try {
       value = JSON.parse(value);

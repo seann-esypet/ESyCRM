@@ -669,6 +669,7 @@ export default function Deals() {
       />
       
       <main className="flex-1 min-h-0 overflow-auto p-6 bg-muted/30" data-testid="deals-content">
+        <p className="mb-4 text-sm text-muted-foreground">Pipeline tracks sales opportunities and next steps for your contacts. Research and approve businesses in Leads first; choosing and scheduling an outreach sequence is a separate confirmed action.</p>
         {dealsError && (
           <div role="alert" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm">
             <span>Pipeline deals could not be loaded.</span>

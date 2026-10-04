@@ -27,6 +27,8 @@ function renderContacts(contacts: Contact[]) {
     onArchive: () => {},
     onUnarchive: () => {},
     onStatusChange: () => {},
+    selectedContactIds:new Set<string>(), isDeleting:false,
+    onToggleSelection:()=>{}, onToggleSelectVisible:()=>{}, onDelete:()=>{}, onDeleteSelected:()=>{},
   }));
 }
 

@@ -37,6 +37,8 @@ import { format as fmtDate } from "date-fns";
 import { canApproveSalonReportRow, convertSalonSearchReportEntry, reportPlaceIdsAreDistinct, salonReportScheduleRejection, salonSearchReportBatchSchema } from "./salonSearchReport";
 import { directoryEligibility, directoryEligibilitySummary } from "@shared/directoryEligibility";
 import { registerDirectoryEligibilityRoutes } from "./directoryEligibilityRoutes";
+import { registerLeadWorkspaceRoutes } from "./leadWorkspaceRoutes";
+import { retainedRecipientEvidence } from "./recipientOutreach";
 import { isRetryableStagedSalonRow, MAX_SALON_LIST_JSON_BYTES, MAX_SALON_LIST_ROWS, stageSalonListRows } from "./salonListStaging";
 import { registerSalonResearchRoutes } from "./salonResearch";
 import { rejectResearchExecution, isResearchDirectoryRow, RESEARCH_READ_ONLY } from "./salonResearchPolicy";
@@ -166,6 +168,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Setup auth middleware - From Replit Auth blueprint
   await setupAuth(app);
   registerDirectoryEligibilityRoutes(app, isAuthenticated);
+  registerLeadWorkspaceRoutes(app, isAuthenticated);
   registerSalonResearchRoutes(app, isAuthenticated, isAdmin);
 
   // Helper function to get user ID or null for admin (admin sees all data)
@@ -681,7 +684,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       async function collectWebsite(): Promise<void> {
-        const websiteUrl = contact.websiteUrl;
+        const websiteUrl = contact?.websiteUrl;
         if (!websiteUrl) {
           console.log("[OwnerDiscovery] Website: skipped — no website URL on contact");
           return;
@@ -1944,7 +1947,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         monthlyAmount: monthly.toFixed(2),
       });
       // Update the deal stage to won and set the plan
-      await storage.updateDeal(dealId, { stage: "won", wonDate: new Date(), plan: planName }, isAdminUser ? null : actorId);
+      await storage.updateDeal(dealId, { stage: "won", wonDate: new Date().toISOString(), plan: planName }, isAdminUser ? null : actorId);
 
       // Send admin notification for Won stage change
       if (deal.stage !== "won") {
@@ -2227,7 +2230,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Contact unavailable" });
       }
       const logs = await storage.getEmailSequenceLogs(userId, contactId);
-      res.json(logs);
+      res.json(await retainedRecipientEvidence(logs));
     } catch (error) {
       console.error("Error fetching email sequence logs:", error);
       res.status(500).json({ message: "Failed to fetch email sequence logs" });

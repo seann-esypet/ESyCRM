@@ -1,5 +1,6 @@
 import { storage } from "./storage";
 import { sendSequenceEmail } from "./sendgrid";
+import { claimRecipientSend, recordRecipientOutcome } from "./recipientOutreach";
 import type { Contact, EmailSequence, EmailSequenceLog } from "@shared/schema";
 
 /**
@@ -225,7 +226,7 @@ export async function processEmailSequences(): Promise<{
       
       if (ageMs > STALE_PROCESSING_THRESHOLD_MS) {
         console.log(`Resetting stale processing log ${log.id} back to pending (stuck for ${Math.round(ageMs / 60000)} minutes)`);
-        await storage.updateEmailSequenceLog(log.id, { status: "pending", processingStartedAt: null }, null);
+        await storage.updateEmailSequenceLog(log.id, { status: "needs_review", errorMessage: "Stale processing state: provider acceptance is unknown. Reconcile before retrying." }, null);
       }
     }
     
@@ -254,10 +255,7 @@ export async function processEmailSequences(): Promise<{
       stats.processed++;
       
       try {
-        await storage.updateEmailSequenceLog(log.id, { 
-          status: "processing",
-          processingStartedAt: new Date()
-        }, null);
+        // Validate contact/template below, then atomically reserve immediately before the provider call.
       } catch (error) {
         console.error(`Failed to mark log ${log.id} as processing:`, error);
         stats.errors.push(`Failed to mark log ${log.id} as processing`);
@@ -310,8 +308,17 @@ export async function processEmailSequences(): Promise<{
           continue;
         }
 
+        if (sequence.userId !== log.userId || sequence.sequenceNumber !== log.sequenceNumber || sequence.sequenceTrack !== log.sequenceTrack) {
+          await storage.updateEmailSequenceLog(log.id, { status: "needs_review", errorMessage: "Sequence identity changed after scheduling. Review before sending." }, null);
+          continue;
+        }
+        const claim = await claimRecipientSend(log.id, contact.email);
+        if ("rejection" in claim) {
+          stats.errors.push(claim.rejection);
+          continue;
+        }
         const result = await sendSequenceEmail({
-          contact,
+          contact: { ...contact, email: claim.recipient },
           salesperson,
           sequence,
           customSubject: log.customSubject,
@@ -320,15 +327,7 @@ export async function processEmailSequences(): Promise<{
 
         if (result.success) {
           const sentAt = new Date();
-          await storage.updateEmailSequenceLog(
-            log.id,
-            {
-              status: "sent",
-              sentAt,
-              ...(result.messageId ? { brevoMessageId: result.messageId } : {}),
-            },
-            null
-          );
+          await recordRecipientOutcome(log.id, true, result.messageId);
           stats.sent++;
           console.log(`Sent Sequence ${sequence.sequenceNumber} to ${contact.email}`);
 
@@ -342,11 +341,7 @@ export async function processEmailSequences(): Promise<{
         } else {
           const errMsg = result.error || "Unknown Brevo error";
           console.error(`[EmailScheduler] FAILED to send to ${contact.email}: ${errMsg}`);
-          await storage.updateEmailSequenceLog(
-            log.id,
-            { status: "failed", errorMessage: errMsg },
-            null
-          );
+          await recordRecipientOutcome(log.id, false, undefined, errMsg);
           stats.failed++;
           stats.errors.push(`Failed to send to ${contact.email}: ${errMsg}`);
         }
@@ -359,7 +354,7 @@ export async function processEmailSequences(): Promise<{
         const errorMessage = error instanceof Error ? error.message : "Unknown error";
         console.error(`[EmailScheduler] Exception processing log ${log.id}: ${errorMessage}`);
         stats.errors.push(`Error processing log ${log.id}: ${errorMessage}`);
-        await storage.updateEmailSequenceLog(log.id, { status: "failed", errorMessage }, null);
+        await storage.updateEmailSequenceLog(log.id, { status: "needs_review", errorMessage: `Delivery requires review: ${errorMessage}` }, null);
         stats.failed++;
       }
     }

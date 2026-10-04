@@ -50,6 +50,7 @@ const forbiddenWebHosts = [
   "x.com", "youtube.com", "yelp.com", "square.site", "squareup.com",
   "vagaro.com", "booksy.com", "styleseat.com", "fresha.com", "mindbodyonline.com",
   "schedulicity.com", "acuityscheduling.com", "setmore.com", "zenoti.com",
+  "bbb.org", "yellowpages.com", "angi.com", "thumbtack.com",
 ];
 
 function text(value: unknown, maxLength = 1000): string | null {
@@ -68,7 +69,7 @@ function valueFor(row: Record<string, unknown>, field: keyof Omit<SalonListInput
   return key ? text(row[key]) : null;
 }
 
-function safeWebsite(value: string | null): string | null {
+export function safeWebsite(value: string | null): string | null {
   if (!value) return null;
   try {
     const url = new URL(/^https?:\/\//i.test(value) ? value : `https://${value}`);

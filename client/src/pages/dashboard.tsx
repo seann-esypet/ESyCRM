@@ -201,7 +201,7 @@ export default function Dashboard() {
                       data-testid={`contact-${contact.id}`}
                     >
                       <div className="w-10 h-10 bg-primary text-primary-foreground rounded-full flex items-center justify-center font-medium">
-                        {getInitials(contact.firstName, contact.lastName)}
+                        {getInitials(contact.firstName || "", contact.lastName || "")}
                       </div>
                       <div className="flex-1">
                         <p className="text-sm font-medium text-foreground">

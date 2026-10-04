@@ -1,0 +1,4 @@
+Business Name,Address,State,Email,Email Source URL,Email Review Status,notes
+Fixture Grooming,1 Main Street Austin TX,TX,team@fixture.example,https://fixture.example/contact,confirmed_first_party,General-contact publication for this exact fixture business.
+Fixture Candidate,2 Main Street Austin TX,TX,candidate@candidate.example,https://candidate.example/contact,review_only,Review-only candidate; never approved by upload.
+Fixture Unresolved,3 Main Street Austin TX,TX,,,,No email found.

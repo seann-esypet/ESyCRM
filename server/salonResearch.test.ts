@@ -72,6 +72,10 @@ test("a rejected website does not automatically exclude a genuine grooming busin
 });
 
 test("isolated API fixture stores the directory once and synchronizes without importing", async t => {
+  if (process.env.RUN_SALON_RESEARCH_DB_FIXTURE !== "true") {
+    t.skip("Opt-in database fixture; ordinary tests must not stage the full original directory or create records.");
+    return;
+  }
   // The real CRM authentication stays in place. Only this throwaway HTTP fixture
   // uses test middleware, and all test records are in the development database.
   assert.notEqual(process.env.NODE_ENV, "production");

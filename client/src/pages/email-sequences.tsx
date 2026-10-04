@@ -21,6 +21,24 @@ type DirectoryTrack = "directory_general" | "directory_has_software" | "director
 type AnySequenceTrack = SequenceTrack | DirectoryTrack;
 
 export default function EmailSequences() {
+  const [reconciliationId,setReconciliationId]=useState("");
+  const [reconciliationRecipient,setReconciliationRecipient]=useState("");
+  const [providerMessageId,setProviderMessageId]=useState("");
+  const [providerAcceptedAt,setProviderAcceptedAt]=useState("");
+  const [providerNote,setProviderNote]=useState("");
+  const [providerConfirmed,setProviderConfirmed]=useState(false);
+  const [providerError,setProviderError]=useState("");
+  const reconciliation=useMutation({
+    mutationFn:async(outcome:"accepted"|"not_accepted")=>{
+      if(!providerConfirmed)throw new Error("Confirm that you inspected the provider history for this actual recipient.");
+      const response=await apiRequest("POST",`/api/recipient-outreach/${reconciliationId}/reconcile`,{confirmed:true,outcome,
+        recipient:reconciliationRecipient,providerMessageId,note:providerNote,
+        ...(outcome==="accepted" ? {acceptedAt:new Date(providerAcceptedAt).toISOString()} : {})});
+      return response.json();
+    },
+    onSuccess:()=>{setReconciliationId("");setProviderConfirmed(false);queryClient.invalidateQueries({queryKey:["/api/email-sequence-logs"]});},
+    onError:error=>setProviderError(error.message),
+  });
   const [activeBiz, setActiveBiz] = useState<BusinessType>("salon");
   const [activeSub, setActiveSub] = useState<SubTrack>("no_software");
   const [activeStrategy, setActiveStrategy] = useState<"legacy" | "directory_first">("legacy");
@@ -67,7 +85,7 @@ export default function EmailSequences() {
 
   const activeTrack: SequenceTrack = `${activeBiz}_${activeSub}`;
 
-  const { data: logs, isLoading: isLogsLoading, isError: isLogsError } = useQuery<EmailSequenceLog[]>({
+  const { data: logs, isLoading: isLogsLoading, isError: isLogsError } = useQuery<(EmailSequenceLog & { recipientAddress?: string | null; recipientEvidence?: string })[]>({
     queryKey: ["/api/email-sequence-logs"],
   });
 
@@ -131,7 +149,7 @@ export default function EmailSequences() {
     if (!logs) return null;
     return logs.filter(log => 
       log.sequenceId === sequenceId && 
-      (log.status === "pending" || log.status === "processing")
+      (log.status === "pending" || log.status === "processing" || log.status === "needs_review")
     ).length;
   };
 
@@ -291,6 +309,7 @@ export default function EmailSequences() {
       
       <main className="flex-1 min-h-0 overflow-auto p-6 bg-muted/30" data-testid="email-sequences-content">
         <div className="max-w-6xl mx-auto">
+          <p className="mb-4 text-sm text-muted-foreground">Outreach controls which messages and follow-ups are scheduled. Leads are researched and approved separately; Contacts store the business record, and Pipeline tracks the sales opportunity. Review recipient history and confirm enrollment before scheduling.</p>
           <Tabs value={activeStrategy} onValueChange={(value) => setActiveStrategy(value as "legacy" | "directory_first")} className="space-y-5">
             <TabsList className="grid w-full grid-cols-2 max-w-md" data-testid="tabs-sequence-strategy">
               <TabsTrigger value="legacy">Existing Sequences</TabsTrigger>
@@ -401,7 +420,7 @@ export default function EmailSequences() {
           <div className="mt-6 p-4 bg-muted border border-border rounded-lg">
             <h3 className="font-semibold text-foreground mb-2">How Email Sequences Work</h3>
             <ul className="text-sm text-muted-foreground space-y-1">
-              <li>• When a deal is marked "Qualified Lead", the system automatically selects the right track based on software status</li>
+              <li>• Choose a recipient and audience track explicitly; directory and existing sequence tracks remain separate</li>
               <li>• Sequence 1 sends on your chosen date and time (Eastern Time)</li>
               <li>• Sequences 2-5 send automatically after specified days if no reply received</li>
               <li>• Use [Contact_Greeting] for an automatic personal or business-team greeting. Other placeholders: [Contact_First_Name], [Sales_Person], [Business_Name], and [City]</li>
@@ -482,7 +501,7 @@ export default function EmailSequences() {
               ? (logs ?? []).filter(
                   l =>
                     l.sequenceId === queueViewerSequence.id &&
-                    (l.status === "pending" || l.status === "processing")
+                    (l.status === "pending" || l.status === "processing" || l.status === "needs_review")
                 )
               : [];
 
@@ -550,8 +569,21 @@ export default function EmailSequences() {
                           )}
                         </div>
                         <div className="text-xs text-muted-foreground">
-                          {getContactEmail(log.contactId)}
+                          {log.recipientAddress || "Historical recipient unknown — current contact email is not historical send evidence."}
                         </div>
+                        {log.status === "needs_review" && <div className="space-y-2 mt-1 text-xs">
+                          <p className="text-destructive">Delivery needs review: {log.errorMessage || "Inspect provider history before retrying. Nothing has been resent."}</p>
+                          {reconciliationId!==log.id?<Button size="sm" variant="outline" onClick={()=>{setReconciliationId(log.id);setReconciliationRecipient(log.recipientAddress||"");setProviderConfirmed(false);setProviderNote("");setProviderMessageId("");setProviderError("");}}>Review provider outcome</Button>:<div className="space-y-2 rounded border p-2">
+                            <p>Inspect the email provider's records. Uncertain delivery must remain on hold. These actions record evidence only; they do not resend or delete anything.</p>
+                            <input className="w-full rounded border p-2" aria-label="Actual recipient from provider history" placeholder="Actual recipient from provider history" value={reconciliationRecipient} onChange={e=>setReconciliationRecipient(e.target.value)}/>
+                            <input className="w-full rounded border p-2" aria-label="Provider message ID" placeholder="Provider message ID (required for accepted delivery)" value={providerMessageId} onChange={e=>setProviderMessageId(e.target.value)}/>
+                            <label>Actual provider acceptance time (your browser's local timezone)<input type="datetime-local" className="w-full rounded border p-2" value={providerAcceptedAt} onChange={e=>setProviderAcceptedAt(e.target.value)}/></label>
+                            <textarea className="w-full rounded border p-2" aria-label="Provider review evidence" placeholder="Record what you inspected and the definitive outcome" value={providerNote} onChange={e=>setProviderNote(e.target.value)}/>
+                            <label className="flex gap-2"><input type="checkbox" checked={providerConfirmed} onChange={e=>setProviderConfirmed(e.target.checked)}/>I inspected provider history for this exact recipient and confirmed the stated outcome.</label>
+                            <div className="flex gap-2 flex-wrap"><Button size="sm" disabled={!providerConfirmed||!providerNote.trim()||!providerMessageId.trim()||!providerAcceptedAt||reconciliation.isPending} onClick={()=>reconciliation.mutate("accepted")}>Record provider acceptance</Button><Button size="sm" variant="outline" disabled={!providerConfirmed||!providerNote.trim()||reconciliation.isPending} onClick={()=>reconciliation.mutate("not_accepted")}>Record confirmed non-acceptance</Button><Button size="sm" variant="ghost" onClick={()=>setReconciliationId("")}>Cancel review</Button></div>
+                            {providerError&&<p className="text-destructive">{providerError}</p>}
+                          </div>}
+                        </div>}
                         {subject && (
                           <div className="text-xs text-foreground mt-1 font-medium truncate" title={subject}>
                             Subject: {subject}

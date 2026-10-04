@@ -1,4 +1,4 @@
-import { Switch, Route } from "wouter";
+import { Switch, Route, useLocation, useParams } from "wouter";
 import { useEffect } from "react";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -21,10 +21,46 @@ import AdminSequenceTest from "@/pages/admin-sequence-test";
 import LeadDiscovery from "@/pages/lead-discovery";
 import DealWorkspace from "@/pages/deal-workspace";
 import PayrollDetail from "@/pages/payroll-detail";
-import SalonEnrichment from "@/pages/salon-enrichment";
-import SalonSearchReport from "@/pages/salon-search-report";
 import FormOutreach from "@/pages/form-outreach";
+import Leads from "@/pages/leads";
 import Sidebar from "@/components/layout/sidebar";
+import { Link } from "wouter";
+import { ArrowLeft } from "lucide-react";
+
+function LeadsBusinessSearch() {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+      <div className="sticky top-0 z-10 border-b bg-background/95 px-4 py-3 backdrop-blur sm:px-6">
+        <Link href="/leads" className="inline-flex items-center gap-2 text-sm font-medium text-primary hover:underline">
+          <ArrowLeft className="h-4 w-4" />Back to saved Leads review
+        </Link>
+      </div>
+      <LeadDiscovery />
+    </div>
+  );
+}
+
+function LegacyEnrichmentRedirect() {
+  const { id } = useParams<{ id?: string }>();
+  const [, setLocation] = useLocation();
+  useEffect(() => { setLocation(id ? `/leads/${encodeURIComponent(id)}` : "/leads?upload=1"); }, [id, setLocation]);
+  return null;
+}
+
+function LegacySearchReportRedirect() {
+  const [, setLocation] = useLocation();
+  useEffect(() => {
+    const batchId = new URLSearchParams(window.location.search).get("batchId");
+    setLocation(batchId ? `/leads/${encodeURIComponent(batchId)}` : "/leads");
+  }, [setLocation]);
+  return null;
+}
+
+function LegacyDiscoveryRedirect() {
+  const [, setLocation] = useLocation();
+  useEffect(() => { setLocation("/leads/search"); }, [setLocation]);
+  return null;
+}
 
 // Silently ping the server every 10 minutes so the auth token stays refreshed
 function useSessionKeepAlive(active: boolean) {
@@ -65,13 +101,16 @@ function Router() {
   return (
     <div className="flex h-screen bg-background">
       <Sidebar />
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="min-w-0 flex-1 flex flex-col overflow-hidden">
         <Switch>
           <Route path="/" component={Dashboard} />
-          <Route path="/lead-discovery" component={LeadDiscovery} />
-          <Route path="/salon-enrichment/:id" component={SalonEnrichment} />
-          <Route path="/salon-enrichment" component={SalonEnrichment} />
-          <Route path="/salon-search-report" component={SalonSearchReport} />
+          <Route path="/leads/search" component={LeadsBusinessSearch} />
+          <Route path="/leads" component={Leads} />
+          <Route path="/leads/:id" component={Leads} />
+          <Route path="/lead-discovery" component={LegacyDiscoveryRedirect} />
+          <Route path="/salon-enrichment/:id" component={LegacyEnrichmentRedirect} />
+          <Route path="/salon-enrichment" component={LegacyEnrichmentRedirect} />
+          <Route path="/salon-search-report" component={LegacySearchReportRedirect} />
           <Route path="/form-outreach" component={FormOutreach} />
           <Route path="/contacts" component={Contacts} />
           <Route path="/deal/:id" component={DealWorkspace} />

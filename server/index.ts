@@ -77,7 +77,7 @@ app.use((req, res, next) => {
     log(`serving on port ${port}`);
     
     // Start email sequence scheduler if Brevo is configured
-    if (process.env.BREVO_API_KEY) {
+    if (app.get("env") === "production" && process.env.BREVO_API_KEY) {
       log("Starting email sequence scheduler...");
       startEmailSequenceScheduler();
     } else {
@@ -85,13 +85,13 @@ app.use((req, res, next) => {
     }
 
     // Start task reminder scheduler (always runs, checks every 15 min)
-    startTaskReminderScheduler();
+    if (app.get("env") === "production") startTaskReminderScheduler();
 
     // Start commission monthly payment scheduler (always runs, checks every 24 hours)
-    startCommissionScheduler();
+    if (app.get("env") === "production") startCommissionScheduler();
 
     // Start daily activity report scheduler (sends at 6:00 PM ET every day)
-    if (process.env.BREVO_API_KEY) {
+    if (app.get("env") === "production" && process.env.BREVO_API_KEY) {
       startDailyReportScheduler();
     }
   });

@@ -15,8 +15,14 @@ When delivering a research spreadsheet, explicitly say whether it is a research 
 
 **How to apply:** State the exact upload destination with the download. Preserve business names and evidence. For direct CRM imports, leave unapproved emails and unknown personal names blank; warn about existing incomplete records before a repeat import.
 
-For Sales Lead Review uploads, include saved email addresses as review candidates and preserve their original evidence and review classification instead of blanking them.
+For Leads review uploads, include saved email addresses as review candidates and preserve their original evidence and review classification instead of blanking them.
 
 **Why:** The user explicitly asked to put email addresses back so they could import the full list into Sales Lead Review. Applying the direct-CRM export rule to a review list hid useful findings.
 
 **How to apply:** Validate against the named upload destination, distinguish prior confirmation from fresh verification, and do not treat uploading candidates as approval for CRM contact creation or outreach.
+
+Salespeople should use one Leads workflow whether businesses came from an internal search, an ordinary spreadsheet, or a source-reviewed report.
+
+**Why:** The user cannot remember whether to use Lead Discovery, Upload Salon List, or Sales Lead Review, and expects hired salespeople to understand the CRM without knowing how a research file was produced.
+
+**How to apply:** Keep technical format recognition behind Search for Businesses and Upload a List. Review evidence, approve, add to CRM, and confirm a sequence separately; never introduce another salesperson-facing importer.

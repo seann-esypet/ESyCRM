@@ -252,7 +252,7 @@ export async function searchWithSerpApi(
   zipCode: string,
   state: string,
   queryTemplate: string,
-  options?: { placeId?: string; beforeProviderRequest?: () => void },
+  options?: { placeId?: string; beforeProviderRequest?: () => void | Promise<void> },
 ): Promise<{ results: SerpApiResult[]; fromCache: boolean }> {
   const apiKey = process.env.SERPAPI_API_KEY;
   if (!apiKey) {
@@ -283,7 +283,7 @@ export async function searchWithSerpApi(
     const params = buildGoogleMapsParams(apiKey, query, zipCode, options?.placeId);
     const searchQuery = `${query.replace(", Zip code " + zipCode, "")} ${zipCode}`;
 
-    options?.beforeProviderRequest?.();
+    await options?.beforeProviderRequest?.();
     console.log(options?.placeId ? "Looking up Google Maps Place ID" : `Searching Google Maps: ${searchQuery}`);
     // Count initiation even when a network failure leaves provider billing uncertain.
     billableCallMade = true;
@@ -479,7 +479,7 @@ function contactLinks(html: string, base: URL): URL[] {
   return links;
 }
 
-export async function crawlWebsite(url: string, options: { runtime?: SalonFetchRuntime } = {}): Promise<{
+export async function crawlWebsite(url: string, options: { runtime?: SalonFetchRuntime; onPage?: (page: { url: string; html: string }) => void } = {}): Promise<{
   html: string;
   bookingUrl?: string;
   softwareName?: string;
@@ -534,6 +534,7 @@ export async function crawlWebsite(url: string, options: { runtime?: SalonFetchR
             allowedHosts: [base.hostname, base.hostname.replace(/^www\./, ""), `www.${base.hostname.replace(/^www\./, "")}`],
           });
           pages.push({ url: response.finalUrl, html: response.body });
+          options.onPage?.({ url: response.finalUrl, html: response.body });
           visited.add(response.finalUrl);
           return;
         } catch (caught) {
@@ -1108,6 +1109,8 @@ export async function runNationalSearchJob(nationalJobId: string, userId: string
 
     let totalLeadsFound = 0;
     let statesCompleted = 0; // FIX 2: track completed states explicitly
+    let searchInvocations=0;
+    const searchCeiling=statesToSearch.length*3;
 
     for (let i = 0; i < statesToSearch.length; i++) {
       const stateCode = statesToSearch[i];
@@ -1172,6 +1175,11 @@ export async function runNationalSearchJob(nationalJobId: string, userId: string
         }
 
         try {
+          if(searchInvocations>=searchCeiling){
+            await storage.updateNationalSearchJobIfNotCancelled(nationalJobId,{status:"failed",errorMessage:`The confirmed ${searchCeiling}-call allowance is exhausted. Saved results remain available; another search requires a new confirmation.`});
+            return;
+          }
+          searchInvocations++;
           const { results: searchResults } = await searchWithSerpApi(query, zip, stateCode, queryTemplate);
           const existingResults: import("@shared/schema").LeadDiscoveryResult[] = [];
 

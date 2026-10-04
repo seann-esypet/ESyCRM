@@ -52,6 +52,11 @@ export default function AddContactsToSequenceDialog({
   const [customSubject, setCustomSubject] = useState("");
   const [customBody, setCustomBody] = useState("");
   const { toast } = useToast();
+  const histories = useQuery<{ contacts: { contactId: string; label: string | null; crossOwner: boolean; history: { status: string; date?: string }[] }[] }>({
+    queryKey: ["/api/recipient-outreach/history", selectedContacts],
+    queryFn: async () => (await apiRequest("POST", "/api/recipient-outreach/history", { contactIds: selectedContacts })).json(),
+    enabled: open && selectedContacts.length > 0 && selectedContacts.length <= 200,
+  });
 
   const { data: allContacts, isLoading: isLoadingContacts } = useQuery<Contact[]>({
     queryKey: ["/api/contacts"],
@@ -130,6 +135,9 @@ export default function AddContactsToSequenceDialog({
   const submitMutation = useMutation({
     mutationFn: async () => {
       if (selectedContacts.length === 0) throw new Error("No contacts selected");
+      if (selectedContacts.length > 200) throw new Error("Preview and schedule up to 200 contacts at a time.");
+      if (histories.isLoading || histories.isError || !histories.data) throw new Error("Review recipient history before scheduling. Retry its preview if it failed.");
+      if (sequence.sequenceNumber === 1 && histories.data.contacts.some(item => item.label)) throw new Error("One or more addresses are already scheduled, previously emailed or have uncertain history. Review them before scheduling another introduction.");
       if (!sendDate) throw new Error("Please pick a send date");
       if (isCustomTrack && !customSubject.trim()) throw new Error("Please enter a custom email subject");
       if (isCustomTrack && !customBody.trim()) throw new Error("Please enter a custom email body");
@@ -279,6 +287,9 @@ export default function AddContactsToSequenceDialog({
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-2xl w-full max-h-[90vh] flex flex-col">
+        {selectedContacts.length > 0 && <div className="text-xs rounded border p-2">
+          {histories.isLoading ? "Checking recipient addresses…" : histories.isError ? "Recipient history could not be checked. Retry before scheduling." : histories.data?.contacts.filter(item => item.label).map(item => <p key={item.contactId}>{allContacts?.find(c=>c.id===item.contactId)?.company || "Selected contact"}: {item.label}{item.crossOwner ? " — protected outreach by another CRM owner" : item.history[0]?.date ? ` — ${new Date(item.history[0].date).toLocaleString()}` : ""}</p>)}
+        </div>}
         <DialogHeader className="shrink-0">
           <DialogTitle className="flex items-center gap-2">
             <Mail className="h-5 w-5" />

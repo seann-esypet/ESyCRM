@@ -33,6 +33,7 @@ type SalonIdentity = Pick<
 type OrganicResult = { title?: string; link?: string; snippet?: string };
 type OwnerLookupProgress = {
   calls: number;
+  beforeProvider?: () => Promise<void>;
   candidates: SalonOwnerNameCandidate[];
   pages: { count: number; attempted: number };
 };
@@ -823,6 +824,7 @@ async function organicSearch(
     const request = async () => {
       // This ledger is independent of storage and displayed row results. A
       // later infrastructure error or deleted row must never refund this call.
+      await progress.beforeProvider?.();
       requestAttempted = true;
       progress.calls++;
       const response = await runtime.fetchProvider(`https://serpapi.com/search?${params}`, {
@@ -864,6 +866,16 @@ async function organicSearch(
   } finally {
     if (timeout) clearTimeout(timeout);
   }
+}
+
+// Same bounded deployed public-search service/cache as owner research; no agent tools.
+export async function searchSalonContactPages(row: SalonEnrichmentRow, remainingCalls: number, beforeProvider: () => Promise<void>) {
+  const parts=queryParts(row), location=[row.address1||row.address,row.city,row.state,row.zipCode].filter(Boolean).join(" ");
+  const query=`"${row.businessName}" ${location} contact email`;
+  const progress={...newOwnerLookupProgress(),beforeProvider};
+  const result=await organicSearch({...parts,query,cacheKey:`salon-contact-organic:${normalized(query)}`},remainingCalls,Date.now()+PROVIDER_TIMEOUT_MS,progress);
+  return {...result,results:result.results.filter(item=>item.title&&item.link&&businessAndLocationMatch(row,`${item.title} ${item.snippet||""}`))
+    .map(item=>({title:item.title!,link:item.link!,address:`${item.title} ${item.snippet||""}`,snippet:item.snippet}))};
 }
 
 async function withRowSearchLock<T>(key: string, action: () => Promise<T>): Promise<T> {

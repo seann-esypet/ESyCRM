@@ -1093,7 +1093,7 @@ export default function ContactForm({ contact, onSuccess, onCancel }: ContactFor
           open={showDuplicateDialog}
           onOpenChange={setShowDuplicateDialog}
           duplicates={duplicates}
-          newContact={pendingContactData}
+          newContact={{ ...pendingContactData, firstName: pendingContactData.firstName || "", lastName: pendingContactData.lastName || "" }}
           onAddAnyway={handleAddAnyway}
           onOverride={handleOverride}
           onCancel={handleCancel}

@@ -69,12 +69,14 @@ import {
 } from "@shared/schema";
 import { normalizePhoneNumber, normalizeName, normalizeEmail } from "@shared/utils";
 import { db } from "./db";
+import { reserveRecipientLog } from "./recipientOutreach";
 import { eq, desc, and, sql, gte, lte, or, ne, inArray, isNull } from "drizzle-orm";
 import { DIRECTORY_FIRST_STRATEGY, DIRECTORY_TRACKS, directoryEmailSequenceTemplates } from "./directoryEmailSequences";
 import { importableSalonEmail } from "./bookingPageEmail";
 import { salonReportSendRejection } from "./salonSearchReport";
 import { directoryEligibility } from "@shared/directoryEligibility";
 import { isRetryableStagedSalonRow } from "./salonListStaging";
+import { salonCrmDuplicates } from "./salonCrmDuplicates";
 import { deleteContactSafely } from "./contactDeletion";
 import { deleteSalonReviewRowSafely } from "./salonReviewDeletion";
 import { loadPipelineEmailSummaries } from "./pipelineEmailSummary";
@@ -303,8 +305,8 @@ export interface IStorage {
   // Email Sequence Logs
   getEmailSequenceLogs(userId: string | null, contactId?: string): Promise<EmailSequenceLog[]>;
   getEmailSequenceLogById(id: string, userId: string | null): Promise<EmailSequenceLog | undefined>;
-  createEmailSequenceLog(log: InsertEmailSequenceLog, userId: string): Promise<EmailSequenceLog>;
-  bulkCreateEmailSequenceLogs(sequenceId: string, contactIds: string[], userId: string | null, scheduledSendAt?: Date | null, customSubject?: string, customBody?: string): Promise<{ successful: EmailSequenceLog[], failed: Array<{ contactId: string, error: string }> }>;
+  createEmailSequenceLog(log: InsertEmailSequenceLog, userId: string, expectedRecipient?: string): Promise<EmailSequenceLog>;
+  bulkCreateEmailSequenceLogs(sequenceId: string, contactIds: string[], userId: string | null, scheduledSendAt?: Date | null, customSubject?: string, customBody?: string, expectedRecipients?: Record<string,string>): Promise<{ successful: EmailSequenceLog[], failed: Array<{ contactId: string, error: string }> }>;
   updateEmailSequenceLog(id: string, log: Partial<InsertEmailSequenceLog>, userId: string | null): Promise<EmailSequenceLog | undefined>;
   deleteEmailSequenceLog(id: string, userId: string | null): Promise<boolean>;
   
@@ -1340,19 +1342,20 @@ export class DatabaseStorage implements IStorage {
     return log;
   }
 
-  async createEmailSequenceLog(insertLog: InsertEmailSequenceLog, userId: string): Promise<EmailSequenceLog> {
+  async createEmailSequenceLog(insertLog: InsertEmailSequenceLog, userId: string, expectedRecipient?:string): Promise<EmailSequenceLog> {
     const contact = await this.getContact(insertLog.contactId, null);
     if (!contact) throw new Error("Contact not found");
     const rejection = await this.getSalonReportSendRejection(contact.id, userId, contact.userId, contact.email);
     if (rejection) throw new Error(rejection);
-    const [log] = await db
-      .insert(emailSequenceLogs)
-      .values({ ...insertLog, userId })
-      .returning();
-    return log;
+    const sequence = await this.getEmailSequence(insertLog.sequenceId, userId);
+    if (!sequence || sequence.isActive !== "true") throw new Error("Select an active sequence owned by this CRM owner.");
+    if (sequence.sequenceNumber !== insertLog.sequenceNumber || (insertLog.sequenceTrack && sequence.sequenceTrack !== insertLog.sequenceTrack)) {
+      throw new Error("Sequence step or audience changed; refresh the enrollment preview.");
+    }
+    return reserveRecipientLog({ ...insertLog, sequenceTrack:sequence.sequenceTrack }, userId, expectedRecipient??contact.email);
   }
 
-  async bulkCreateEmailSequenceLogs(sequenceId: string, contactIds: string[], userId: string | null, scheduledSendAt?: Date | null, customSubject?: string, customBody?: string): Promise<{ successful: EmailSequenceLog[], failed: Array<{ contactId: string, error: string }> }> {
+  async bulkCreateEmailSequenceLogs(sequenceId: string, contactIds: string[], userId: string | null, scheduledSendAt?: Date | null, customSubject?: string, customBody?: string, expectedRecipients?:Record<string,string>): Promise<{ successful: EmailSequenceLog[], failed: Array<{ contactId: string, error: string }> }> {
     const successful: EmailSequenceLog[] = [];
     const failed: Array<{ contactId: string, error: string }> = [];
     
@@ -1464,21 +1467,17 @@ export class DatabaseStorage implements IStorage {
         
         // Create log entry with status "pending"
         // Use the sequence owner's ID for the log
-        const [log] = await db
-          .insert(emailSequenceLogs)
-          .values({
+        const log = await this.createEmailSequenceLog({
             contactId,
             sequenceId,
             sequenceTrack: sequence.sequenceTrack,
             sequenceNumber: sequence.sequenceNumber,
             status: "pending",
             emailResponseReceived: "false",
-            userId: sequenceOwnerId,
             ...(scheduledSendAt ? { scheduledSendAt } : {}),
             ...(customSubject ? { customSubject } : {}),
             ...(customBody ? { customBody } : {}),
-          })
-          .returning();
+          }, sequenceOwnerId,expectedRecipients?.[contactId]);
         
         successful.push(log);
       } catch (error) {
@@ -2433,7 +2432,13 @@ export class DatabaseStorage implements IStorage {
     for (const result of reportRows) {
       if (result.batchUserId !== ownerId) return "Salon report batch is no longer owned by the sequence owner";
       if (directoryEligibility(result.row).blocked) return "Grooming suitability is unconfirmed or this business was excluded";
-      if (result.fileName !== "salon-public-web-review") continue;
+      if (result.fileName !== "salon-public-web-review") {
+        if (result.row.reviewStatus !== "approved" || result.row.identityMatchStatus !== "strong" ||
+          !importableSalonEmail(result.row) || normalizeEmail(importableSalonEmail(result.row)) !== normalizeEmail(contactEmail)) {
+          return "Lead email approval or attribution no longer matches the linked contact's current address.";
+        }
+        continue;
+      }
       const rejection = salonReportSendRejection(
         result.row,
         { userId: contactOwnerId, email: contactEmail },
@@ -2596,6 +2601,8 @@ export class DatabaseStorage implements IStorage {
       if (!batch) return { imported: [] as SalonEnrichmentRow[], skipped: [{ rowId: batchId, reason: "Batch not found" }], ownerId: null };
 
       const ownerId = batch.userId;
+      // Serialize imports across all lists for this CRM owner, not just one batch.
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`crm-import:${ownerId}`}))`);
       const rows = await tx.select().from(salonEnrichmentRows).where(and(
         eq(salonEnrichmentRows.batchId, batchId),
         eq(salonEnrichmentRows.userId, ownerId),
@@ -2607,16 +2614,6 @@ export class DatabaseStorage implements IStorage {
         row.identityMatchStatus === "strong",
       );
       const existingContacts = await tx.select().from(contacts).where(eq(contacts.userId, ownerId));
-      const importedPlaceIds = new Set<string>();
-      for (const contact of existingContacts) {
-        if (!contact.notes) continue;
-        try {
-          const placeId = JSON.parse(contact.notes)?.placeId;
-          if (typeof placeId === "string" && placeId.trim()) importedPlaceIds.add(placeId.trim().toLowerCase());
-        } catch {
-          // Existing free-form notes are not necessarily JSON.
-        }
-      }
       const imported: SalonEnrichmentRow[] = [];
       const skipped: Array<{ rowId: string; reason: string }> = [];
 
@@ -2638,32 +2635,10 @@ export class DatabaseStorage implements IStorage {
           skipped.push({ rowId: row.id, reason: "No approved, importable email with complete evidence" });
           continue;
         }
-        const placeKey = row.placeId?.trim().toLowerCase();
-        if (placeKey && importedPlaceIds.has(placeKey)) {
-          await tx.update(salonEnrichmentRows).set({
-            duplicateMetadata: { reason: "Place ID is already present in contacts", placeId: row.placeId },
-            reviewStatus: "needs_review",
-            updatedAt: new Date(),
-          }).where(eq(salonEnrichmentRows.id, row.id));
-          skipped.push({ rowId: row.id, reason: "Place ID already imported" });
-          continue;
-        }
-        const companyKey = normalizeName(row.businessName);
-        const addressKey = normalizeName(row.address1 || row.address);
-        const phoneKey = normalizePhoneNumber(row.phone);
-        const emailKey = normalizeEmail(verifiedEmail);
-        const duplicates = existingContacts.filter(contact =>
-          (phoneKey && normalizePhoneNumber(contact.phone) === phoneKey) ||
-          (emailKey && normalizeEmail(contact.email) === emailKey) ||
-          (companyKey && addressKey &&
-            normalizeName(contact.company) === companyKey &&
-            normalizeName(contact.address) === addressKey &&
-            (!row.zipCode || !contact.zipCode || contact.zipCode === row.zipCode)),
-        );
+        const duplicates = salonCrmDuplicates(row,existingContacts,verifiedEmail);
         if (duplicates.length) {
           await tx.update(salonEnrichmentRows).set({
             duplicateMetadata: { contactIds: duplicates.map(contact => contact.id), reason: "Existing contact match" },
-            reviewStatus: "needs_review",
             updatedAt: new Date(),
           }).where(eq(salonEnrichmentRows.id, row.id));
           skipped.push({ rowId: row.id, reason: "Potential duplicate contact" });
@@ -2730,7 +2705,6 @@ export class DatabaseStorage implements IStorage {
         if (!updated) throw new Error(`Row ${row.id} was imported concurrently`);
         imported.push(updated);
         existingContacts.push(contact);
-        if (placeKey) importedPlaceIds.add(placeKey);
       }
       return { imported, skipped, ownerId };
     });

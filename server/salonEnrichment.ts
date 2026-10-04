@@ -1,5 +1,5 @@
 import { storage } from "./storage";
-import { crawlWebsite, searchWithSerpApi } from "./lead-discovery";
+import { crawlWebsite as defaultCrawlWebsite, searchWithSerpApi as defaultSearchWithSerpApi } from "./lead-discovery";
 import { isResearchDirectoryBatch, isResearchDirectoryRow, RESEARCH_READ_ONLY } from "./salonResearchPolicy";
 import { bookingPlatformForUrl, findSalonEmailOnBookingPage } from "./bookingPageEmail";
 import { lookupSalonOwnerName } from "./salonOwnerNames";
@@ -64,7 +64,14 @@ export function rejectedSalonEmailEvidence(
   ]));
 }
 
-async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichmentRow>> {
+async function enrichRow(row: SalonEnrichmentRow, options: {
+  search?: typeof defaultSearchWithSerpApi;
+  fallbackSearch?: typeof defaultSearchWithSerpApi;
+  crawl?: typeof defaultCrawlWebsite;
+  matchedWebsite?: boolean;
+} = {}): Promise<Partial<SalonEnrichmentRow>> {
+  const searchWithSerpApi = options.search || defaultSearchWithSerpApi;
+  const crawlWebsite = options.crawl || defaultCrawlWebsite;
   if (isResearchDirectoryRow(row)) throw new Error(RESEARCH_READ_ONLY);
   const evidenceMap: Evidence = {};
   let serpCallsUsed = 0;
@@ -87,7 +94,7 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
   let fallbackUsed = false;
   const runFallback = async () => {
     fallbackUsed = true;
-    const fallback = await searchWithSerpApi(
+    const fallback = await (options.fallbackSearch || searchWithSerpApi)(
       `"${row.businessName}" "${row.city || ""}" ${row.state || ""} grooming website contact booking`,
       zip,
       state,
@@ -98,14 +105,16 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
   };
 
   try {
-    serpResult = await searchWithSerpApi(query, zip, state, queryTemplate, placeId ? { placeId } : undefined);
+    serpResult = options.matchedWebsite && row.websiteUrl
+      ? { fromCache: true, results: [{ title: row.businessName, address: row.address, placeId: row.placeId, link: row.websiteUrl, phone: row.phone }] }
+      : await searchWithSerpApi(query, zip, state, queryTemplate, placeId ? { placeId } : undefined);
     if (!serpResult.fromCache) serpCallsUsed++;
     candidate = serpResult.results.find(result => strongMatch(row, result));
     phoneSourceUrl = candidate?.link || undefined;
     initialPlaceIdMatch = Boolean(placeId && candidate?.placeId && normalized(placeId) === normalized(candidate.placeId));
   } catch (error) {
     const message = error instanceof Error ? error.message : "SERP lookup failed";
-    if (/quota|hourly serp limit|rate limit/i.test(message)) throw error;
+    if (/quota|hourly serp limit|rate limit|provider-call budget/i.test(message)) throw error;
     return {
       status: "failed",
       lastError: message,
@@ -283,9 +292,9 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
         evidenceMap.bookingUrl = evidence(crawled.bookingUrl, "website", crawled.softwareName && crawled.softwareName !== "Unknown" ? "high" : "medium", candidate.link);
         evidenceMap.currentSoftware = evidence(crawled.softwareName || "Unknown", "website", crawled.softwareName && crawled.softwareName !== "Unknown" ? "high" : "medium", candidate.link);
       } else {
-        next.usesSoftware = "No";
-        next.audienceTrack = "directory_no_software";
-        evidenceMap.usesSoftware = evidence("No", "website", "medium", candidate.link, "Canonical website crawled with no booking signal");
+        next.usesSoftware = "Unknown";
+        next.audienceTrack = "directory_general";
+        evidenceMap.usesSoftware = evidence("Unknown", "website", "medium", candidate.link, "No booking signal found; this does not establish absence of software.");
       }
       next.reviewStatus = "needs_review";
     } catch (error) {
@@ -341,7 +350,7 @@ async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichme
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : "";
-        if (/quota|hourly serp limit|rate limit/i.test(message)) throw error;
+        if (/quota|hourly serp limit|rate limit|provider-call budget/i.test(message)) throw error;
       }
     }
     const confidence: Record<string, string> = { identity: identityConfidence };

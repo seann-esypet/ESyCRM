@@ -11,7 +11,7 @@ const DEFAULT_FROM_NAME = "EsyPet Solutions";
 if (BREVO_API_KEY) {
   console.log(`[Brevo] API key loaded. Length: ${BREVO_API_KEY.length}`);
   // Diagnostic: verify key works on startup
-  (async () => {
+  if (process.env.NODE_ENV === "production") (async () => {
     try {
       const res = await fetch("https://api.brevo.com/v3/account", {
         headers: { "api-key": BREVO_API_KEY }
@@ -103,7 +103,7 @@ export async function sendEmail({
   fromEmail?: string;
   fromName?: string;
   replyTo?: string;
-}): Promise<{ success: boolean; error?: string }> {
+}): Promise<{ success: boolean; messageId?: string; error?: string }> {
   if (!BREVO_API_KEY) {
     console.error("[Brevo] API key not configured");
     return { success: false, error: "Email service not configured" };

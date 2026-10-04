@@ -149,6 +149,7 @@ export default function LeadDiscovery() {
 
   const startNationalJobMutation = useMutation({
     mutationFn: async () => {
+      if (!window.confirm("Search all 50 states? This existing search uses up to 150 targeted search calls, subject to the configured hourly allowance. Review the settings and smaller targeted-state option first. It does not enroll or email anyone.")) throw new Error("Search cancelled.");
       const res = await apiRequest("POST", "/api/lead-discovery/national-job");
       return res.json();
     },
@@ -163,6 +164,7 @@ export default function LeadDiscovery() {
 
   const startTargetedJobMutation = useMutation({
     mutationFn: async (params: { states: string[]; maxPerState: number; noSoftwareOnly: boolean }) => {
+      if (!window.confirm(`Search ${params.states.length} states, keeping up to ${params.maxPerState} results per state? Up to ${params.states.length * 3} search calls, subject to the configured hourly allowance. Contact-detail research is confirmed separately.`)) throw new Error("Search cancelled.");
       const res = await apiRequest("POST", "/api/lead-discovery/national-job", params);
       return res.json();
     },
@@ -200,6 +202,8 @@ export default function LeadDiscovery() {
 
   const createJobMutation = useMutation({
     mutationFn: async (data: { state: string; zipCodes: string }) => {
+      const count = data.zipCodes.split(/[,\n]/).filter(zip => zip.trim()).length;
+      if (!window.confirm(`Search ${count} ZIP codes and keep up to 20 businesses per ZIP? Up to ${count * 3} search calls, subject to the configured hourly allowance. Details can then be researched in a separately confirmed batch.`)) throw new Error("Search cancelled.");
       const res = await apiRequest("POST", "/api/lead-discovery/jobs", {
         ...data,
         searchEngines: "google_maps",
@@ -242,27 +246,56 @@ export default function LeadDiscovery() {
     },
   });
 
+  async function stageSavedSearch(jobId:string){
+    try{
+      const preview=await(await apiRequest("POST",`/api/leads/discovery/${encodeURIComponent(jobId)}/preview`,{})).json();
+      let duplicateAction="link";
+      if(preview.duplicateCount){
+        const choice=window.prompt(`${preview.duplicateCount} saved matches: ${preview.duplicates.slice(0,10).map((row:any)=>row.businessName).join(", ")}.\nChoose skip, link, or update (attach source suggestions only; CRM and approved evidence never change).`,"link");
+        if(!choice||!["skip","link","update"].includes(choice.trim().toLowerCase()))return;
+        duplicateAction=choice.trim().toLowerCase();
+      }
+      if(!window.confirm(`Stage ${preview.count} saved businesses in Leads for review? No research, contact creation, enrollment or sending will occur.`))return;
+      const result=await(await apiRequest("POST",`/api/leads/discovery/${encodeURIComponent(jobId)}`,{confirmed:true,duplicateAction})).json();
+      queryClient.invalidateQueries({queryKey:["/api/leads"]});
+      window.location.assign(`/leads/${encodeURIComponent(result.batch.id)}`);
+    }catch(error){toast({title:"Could not add saved search",description:error instanceof Error?error.message:"Try again.",variant:"destructive"});}
+  }
   const importResultsMutation = useMutation({
     mutationFn: async (resultIds: string[]) => {
-      const safeIds = resultIds.filter(id => {
-        const row = results.find(result => result.id === id);
-        return row && !eligibilityFor(row).blocked && row.isImported !== "true";
-      });
-      if (!safeIds.length) throw new Error("Select at least one unblocked result. Grooming review is separate from import approval.");
-      const res = await apiRequest("POST", "/api/lead-discovery/import", { resultIds: safeIds });
-      return res.json();
+      const selected = [...results, ...nationalResults, ...allResults].filter(result => resultIds.includes(result.id));
+      if (!selected.length) throw new Error("Select saved search results first.");
+      const jobIds = Array.from(new Set(selected.map(result => result.jobId)));
+      if (!window.confirm(`Add ${selected.length} businesses to the Leads review queue? Existing matches will be linked, never overwritten. No contacts, enrollment or sending will occur.`)) throw new Error("Cancelled; nothing was added.");
+      let lastBatch: any;
+      for (const jobId of jobIds) {
+        const rowIds=selected.filter(result=>result.jobId===jobId).map(result=>result.id);
+        const preview=await(await apiRequest("POST",`/api/leads/discovery/${encodeURIComponent(jobId)}/preview`,{rowIds})).json();
+        let duplicateAction="link";
+        if(preview.duplicateCount){
+          const choice=window.prompt(`${preview.duplicateCount} matching saved leads:\n${preview.duplicates.slice(0,10).map((row:any)=>row.businessName+(row.protected?" (protected)":"")).join("\n")}\nChoose skip, link, or update (attach source suggestions only; never overwrite approved or CRM data). Cancel makes no changes.`, "link");
+          if(!choice||!["skip","link","update"].includes(choice.toLowerCase().trim()))throw new Error("Duplicate preview cancelled; choose skip, link, or update.");
+          duplicateAction=choice.toLowerCase().trim();
+        }
+        const res = await apiRequest("POST", `/api/leads/discovery/${encodeURIComponent(jobId)}`, {
+          confirmed: true, rowIds, duplicateAction,
+        });
+        lastBatch = (await res.json()).batch;
+      }
+      return lastBatch;
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/lead-discovery/jobs"] });
       queryClient.invalidateQueries({ queryKey: ["/api/contacts"] });
       setSelectedResults([]);
       toast({ 
-        title: "Import complete", 
-        description: `Imported ${data.imported} contacts${data.errors.length > 0 ? `. ${data.errors.length} errors.` : ""}` 
+        title: "Added to Leads",
+        description: "Review source evidence and approve before adding contacts."
       });
+      window.location.assign(`/leads/${encodeURIComponent(data.id)}`);
     },
     onError: (error: any) => {
-      toast({ title: "Import failed", description: error.message, variant: "destructive" });
+      toast({ title: "Leads were not added", description: error.message, variant: "destructive" });
     },
   });
 
@@ -367,7 +400,7 @@ export default function LeadDiscovery() {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
-      <Header title="Lead Discovery" />
+      <Header title="Search for Businesses" />
       
       <main className="flex-1 overflow-y-auto p-6">
         {!config?.serpApiConfigured && (
@@ -708,7 +741,7 @@ export default function LeadDiscovery() {
                       data-testid="btn-import-selected"
                     >
                       <Upload className="h-4 w-4 mr-1" />
-                      Import Selected ({selectedResults.length})
+                      Add to Leads ({selectedResults.length})
                     </Button>
                   </div>
                 </div>
@@ -945,6 +978,7 @@ export default function LeadDiscovery() {
                 </p>
               </div>
               <div className="flex gap-2 flex-shrink-0">
+                {latestNationalJob && latestNationalJob.leadsFound > 0 && <Button onClick={()=>stageSavedSearch(latestNationalJob.id)}>Add saved results to Leads</Button>}
                 {latestNationalJob && latestNationalJob.leadsFound > 0 && (
                   <Button
                     variant="outline"
@@ -1197,6 +1231,7 @@ export default function LeadDiscovery() {
                         </div>
                       )}
                       {job.errorMessage && <p className="text-xs text-red-500 truncate">{job.errorMessage}</p>}
+                      {job.leadsFound > 0 && <Button size="sm" variant="outline" onClick={e=>{e.stopPropagation();stageSavedSearch(job.id);}}>Add saved results to Leads</Button>}
                       {/* Export button per job */}
                       {job.leadsFound > 0 && (
                         <Button

@@ -14,3 +14,9 @@ For Chrome DevTools Protocol checks, evaluate DOM existence as a boolean instead
 **Why:** React attaches cyclic state to DOM nodes, which can exceed CDP's object serialization depth. Radix tab activation may depend on input events that a programmatic click does not emit.
 
 **How to apply:** Wrap wait conditions in `Boolean(...)`, and focus the tab before sending Enter (or dispatch the expected pointer event). These are test-harness requirements, not reasons to alter the application.
+
+Workflow fixtures must represent lifecycle changes, not just return successful mutations: include a null contact before CRM linking, a refreshed actual-recipient preview after linking, and delayed research progress/completion.
+
+**Why:** A success-only mocked walkthrough can conceal stale previews and incompatible progress response shapes even while all visible buttons appear to work.
+
+**How to apply:** Wait for the completed confirmation controls rather than generic row-count text. Verify that asynchronous results appear without navigation and that missing or stale previews disable scheduling. Keep fixture verification distinct from real signed-in verification.
