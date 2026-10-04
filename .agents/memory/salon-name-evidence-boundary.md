@@ -20,3 +20,9 @@ Owner-lookup improvements do not authorize a paid production research pilot. Obt
 **Why:** The owner-research scope separates implementation and controlled verification from additional provider spending.
 
 **How to apply:** Use mocked searches for implementation checks. Treat a live owner-research sample as a separate, explicitly budgeted decision; never approve names, update contacts, enroll, or send as part of that research.
+
+Keep owner discovery broader than owner approval. An interview that names the business but omits its current street address can suggest a review candidate; it must not silently satisfy the exact-location or fetched ownership evidence checks.
+
+**Why:** The user found an owner through a simple Google search while the CRM exhausted its bounded crawl on website pages. Public interviews can contain useful ownership statements without the address needed for automatic identity verification.
+
+**How to apply:** Prefer business/locality discovery and relevant ownership sources within the existing cap, reserving capacity for organic evidence rather than spending every attempt on website paths. Preserve strict approval, mailbox attribution, and personal-greeting safeguards instead of increasing spending or treating search snippets as verified evidence.

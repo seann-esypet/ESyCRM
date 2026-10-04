@@ -14,6 +14,7 @@ import {
 import { storage } from "./storage";
 import { isResearchDirectoryRow, RESEARCH_READ_ONLY } from "./salonResearchPolicy";
 import { getSerpUsageStatus } from "./lead-discovery";
+import { ownerDiscoveryLocation, ownerInterviewDiscoveryText, prioritizeOwnerResults } from "./salonOwnerDiscovery";
 
 const MAX_ROWS_PER_REQUEST = 5;
 const MAX_PAGES_PER_ROW = 4;
@@ -79,6 +80,11 @@ const STAFF_MEMBER_ROLE = `${roleWord("staff")} ${roleWord("member")}`;
 const TEAM_MEMBER_ROLE = `${roleWord("team")} ${roleWord("member")}`;
 const EMPLOYEE_ROLE = roleWord("employee");
 const OWNER_PHRASES = [
+  ...[["owner", OWNER_ROLE], ["founder", FOUNDER_ROLE], ["proprietor", PROPRIETOR_ROLE]].map(([role, word]) => ({
+    pattern: new RegExp(`\\b${roleWord("my name is")}[ \\t]+(${NAME})[ \\t]*,?[ \\t]+(?:${roleWord("and")}[ \\t]+)?I(?:['’]m|[ \\t]+${roleWord("am")})[ \\t]+(?:${roleWord("the")}[ \\t]+)?${word}\\b(?:[ \\t]+${roleWord("of")}[ \\t]+([^\\n.!?]{1,180}))?`, "g"),
+    role,
+    businessAssociation: true,
+  })),
   { pattern: new RegExp(`\\b${OWNER_OPERATOR_ROLE}[ \\t]*(?:${roleWord("is")}[ \\t]+|[:—-][ \\t]*)?(${NAME})`, "g"), role: "owner/operator" },
   { pattern: new RegExp(`\\b(${NAME})[ \\t]+(?:[,—-][ \\t]*)?(?:${roleWord("is")}[ \\t]+)?(?:${roleWord("the")}[ \\t]+)?${OWNER_OPERATOR_ROLE}\\b`, "g"), role: "owner/operator" },
   { pattern: new RegExp(`\\b(?:${roleWord("owned and operated by")}|${roleWord("owned by")})[ \\t]+(${NAME})`, "g"), role: "owner" },
@@ -256,11 +262,15 @@ function collectCandidates(
   businessName?: string,
 ): SalonOwnerNameCandidate[] {
   const discovered: SalonOwnerNameCandidate[] = [];
-  const collect = (patterns: Array<{ pattern: RegExp; role: string }>, confirmed: boolean) => {
-    for (const { pattern, role } of patterns) {
+  const collect = (patterns: Array<{ pattern: RegExp; role: string; businessAssociation?: boolean }>, confirmed: boolean) => {
+    for (const { pattern, role, businessAssociation } of patterns) {
       pattern.lastIndex = 0;
       let match: RegExpExecArray | null;
       while ((match = pattern.exec(text))) {
+        if (businessAssociation && match[2] && businessName) {
+          const namedBusinesses = match[2].split(/\s+(?:and|in|at|&)\s+|[,;|]/i).map(normalized);
+          if (!namedBusinesses.includes(normalized(businessName))) continue;
+        }
         const person = normalizedPersonName(match[1], allowFirstOnly, businessName);
         if (!person) continue;
         const roleConfirmed = confirmed && !summariesAreUnconfirmed && businessMatched &&
@@ -770,16 +780,15 @@ function queryParts(row: SalonEnrichmentRow): { query: string; cacheKey: string;
 
 export function salonOwnerSearchQueries(row: SalonEnrichmentRow): ReturnType<typeof queryParts>[] {
   const legacy = queryParts(row);
-  const cityState = [row.city, row.state].filter(value => value?.trim()).join(", ");
-  const availableLocation = cityState || [row.address1 || row.address, row.zipCode].filter(Boolean).join(", ");
+  const availableLocation = ownerDiscoveryLocation(row);
   const phrases = [
+    { ...legacy, query: `Who is the owner of "${row.businessName}"${availableLocation ? ` in ${availableLocation}` : ""}?` },
+    { ...legacy, query: `"${row.businessName}"${availableLocation ? ` ${availableLocation}` : ""} (owner OR founder OR proprietor)` },
     legacy,
-    { ...legacy, query: `"${row.businessName}"${availableLocation ? ` ${availableLocation}` : ""} owner OR "owner-operator"` },
-    { ...legacy, query: `Who owns "${row.businessName}"${availableLocation ? ` in ${availableLocation}` : ""}?` },
   ];
   return phrases.filter((item, index) =>
     phrases.findIndex(other => normalized(other.query) === normalized(item.query)) === index,
-  ).map((item, index) => index === 0 ? item : {
+  ).map(item => item === legacy ? item : {
     ...item,
     cacheKey: `salon-owner-organic-phrase:${normalized(item.query)}`,
   }).slice(0, MAX_SEARCHES_PER_ROW);
@@ -924,6 +933,11 @@ async function inspectPage(
     const evidenceText = !matched ? "" : organic ? verifiedOrganicEvidenceText(row, text) : text;
     if (evidenceText) {
       mergeCandidates(candidates, extractSalonOwnerCandidates(evidenceText, source, true, true, row.businessName));
+    } else if (organic && !contradictory) {
+      const discoveryText = ownerInterviewDiscoveryText(row, text);
+      if (discoveryText) {
+        mergeCandidates(candidates, extractSalonOwnerCandidates(discoveryText, source, false, false, row.businessName));
+      }
     }
     return { html: page.html, url: page.url, matched };
   } catch (error) {
@@ -1011,8 +1025,9 @@ async function performLookup(
         const base = new URL(homepage.url);
         const paths = candidatePagePaths(homepage.html, base);
         for (const path of paths) {
-          // Reserve at least one request for an independently matched organic page.
-          if (pages.attempted >= Math.min(3, MAX_PAGES_PER_ROW - 1) || Date.now() >= deadline) break;
+          // Broken/irrelevant site paths must not consume the organic review budget.
+          // Keep at least two attempts for independently matched search-result pages.
+          if (pages.attempted >= MAX_PAGES_PER_ROW - 2 || Date.now() >= deadline) break;
           if (path === base.pathname) continue;
           await inspectOnce(
             new URL(path, base).toString(), false, false, homepage.matched ? homepage.url : undefined,
@@ -1036,7 +1051,7 @@ async function performLookup(
       }
       const organicPages: string[] = [];
       // Summaries suggest candidates only; fetched matched pages establish roles.
-      for (const result of search.results) {
+      for (const result of prioritizeOwnerResults(row, search.results)) {
         const summary = [result.title, result.snippet].filter(Boolean).join(" — ");
         if (summary) {
           mergeCandidates(candidates, extractSalonOwnerSummaryCandidates(summary, {

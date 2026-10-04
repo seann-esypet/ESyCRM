@@ -19,6 +19,7 @@ import {
 } from "./salonOwnerNames";
 import type { SalonOwnerNameDependencies } from "./salonOwnerNames";
 import { ownerNameRowsInput, ownerNameSearchInput } from "./salonOwnerNameSearchInput";
+import { ownerDiscoveryLocation, prioritizeOwnerResults } from "./salonOwnerDiscovery";
 
 const identity = {
   businessName: "Curly Tails",
@@ -656,18 +657,53 @@ test("category-less fixed-list uploads can run the opted-in owner stage after st
   }
 });
 
-test("ordered phrases preserve the legacy cache and omit missing location fields", () => {
+test("owner discovery starts with business and city while preserving the exact-address fallback cache", () => {
   const row = orchestrationRow();
   const queries = salonOwnerSearchQueries(row);
   assert.equal(queries.length, 3);
-  assert.equal(queries[0].query, '"Curly Tails" "5651 Tourist Dr, North Richland Hills, TX, 76117" owner salon');
-  assert.equal(queries[0].cacheKey, "salon-owner-organic:curly tails:5651 tourist dr north richland hills tx 76117");
-  assert.match(queries[1].query, /"Curly Tails" North Richland Hills, TX owner OR "owner-operator"/);
-  assert.equal(queries[2].query, 'Who owns "Curly Tails" in North Richland Hills, TX?');
+  assert.equal(queries[0].query, 'Who is the owner of "Curly Tails" in North Richland Hills, TX?');
+  assert.doesNotMatch(queries[0].query, /5651|76117/);
+  assert.equal(queries[1].query, '"Curly Tails" North Richland Hills, TX (owner OR founder OR proprietor)');
+  assert.equal(queries[2].query, '"Curly Tails" "5651 Tourist Dr, North Richland Hills, TX, 76117" owner salon');
+  assert.equal(queries[2].cacheKey, "salon-owner-organic:curly tails:5651 tourist dr north richland hills tx 76117");
   assert.equal(new Set(queries.map(item => item.cacheKey)).size, 3);
   const sparse = salonOwnerSearchQueries(orchestrationRow({ address: null, address1: null, city: null, state: null, zipCode: null }));
   for (const item of sparse) assert.doesNotMatch(item.query, /undefined|null|""| in \?/);
   assert.equal(new Set(sparse.map(item => item.query)).size, sparse.length);
+});
+
+test("formatted upload addresses supply locality for discovery without changing identity fields", () => {
+  const row = orchestrationRow({ address: "1511 Washington Blvd, Detroit, MI 48226", address1: null, city: null, zipCode: null, state: "MI" });
+  assert.equal(ownerDiscoveryLocation(row), "Detroit, MI");
+  assert.equal(salonOwnerSearchQueries(row)[0].query, 'Who is the owner of "Curly Tails" in Detroit, MI?');
+  assert.equal(row.city, null);
+  assert.equal(row.zipCode, null);
+  assert.equal(ownerDiscoveryLocation(orchestrationRow({ address: "5651 Tourist Dr", city: null, state: null })), "");
+});
+
+test("business-specific owner interviews outrank generic results without trusting unrelated people", () => {
+  const results = [
+    { title: "Curly Tails grooming appointments", link: "https://fixture.example/book" },
+    { title: "Founder Jane Smith", link: "https://fixture.example/other-business" },
+    { title: "Meet Jane Smith of Curly Tails", snippet: "I’m the founder of Curly Tails.", link: "https://fixture.example/interview/jane" },
+  ];
+  assert.equal(prioritizeOwnerResults(orchestrationRow(), results)[0], results[2]);
+});
+
+test("first-person interview ownership requires fetched matched evidence, never a summary or historical claim", () => {
+  const statement = "My name is Jane Smith, and I’m the founder of Curly Tails.";
+  const [candidate] = extractSalonOwnerCandidates(statement, source, true, false, identity.businessName);
+  assert.equal(candidate?.firstName, "Jane");
+  assert.equal(candidate?.lastName, "Smith");
+  assert.equal(candidate?.roleConfirmed, true);
+  assert.equal(extractSalonOwnerSummaryCandidates(statement, { ...source, kind: "organic_summary" })[0]?.roleConfirmed, false);
+  for (const text of [statement.replace("I’m the founder", "I was the founder"), `Reviewer says: ${statement}`]) {
+    assert.equal(extractSalonOwnerCandidates(text, source, true, false, identity.businessName).some(item => item.roleConfirmed), false);
+  }
+  for (const otherBusiness of ["Another Salon", "Curly Tails Academy"]) {
+    const text = statement.replace("of Curly Tails", `of ${otherBusiness}`);
+    assert.equal(extractSalonOwnerCandidates(text, source, true, false, identity.businessName).some(item => item.roleConfirmed), false);
+  }
 });
 
 test("explicit owner/operator variants confirm either direction without promoting operator-only or historical claims", () => {
@@ -689,6 +725,61 @@ const providerResponse = (organic_results: Array<{ title?: string; link?: string
   new Response(JSON.stringify({ organic_results }), { status: 200, headers: { "Content-Type": "application/json" } });
 const matchedPage = (url: string, evidence = "Owner/operator: Jane Smith.") => ({
   url, html: `<main><p>Curly Tails, 5651 Tourist Dr, North Richland Hills, TX 76117. ${evidence}</p></main>`,
+});
+
+test("broken website subpages leave room for a relevant owner interview before generic search results", async () => {
+  await withTestProvider(async () => {
+    const row = orchestrationRow();
+    const visited: string[] = [];
+    const interview = "https://fixture.example/interview/curly-tails";
+    const deps = mockDependencies(row, {
+      fetchProvider: async () => providerResponse([
+        { title: "Curly Tails grooming appointments", link: "https://fixture.example/generic" },
+        { title: "Curly Tails business listing", link: "https://fixture.example/listing" },
+        { title: "Meet Jane Smith of Curly Tails", link: interview, snippet: "My name is Jane Smith, and I’m the founder of Curly Tails." },
+      ]),
+      fetchPage: async url => {
+        visited.push(url);
+        if (url === row.websiteUrl) return { url, html: "<main>Curly Tails, 5651 Tourist Dr, North Richland Hills TX 76117.<a href='/about'>About</a><a href='/team'>Team</a></main>" };
+        if (url === interview) return matchedPage(url, "My name is Jane Smith, and I’m the founder of Curly Tails.");
+        throw new Error("Public page returned HTTP 404");
+      },
+    });
+    try {
+      const result = await lookupSalonOwnerName(row.id, row.userId, 3, 3);
+      const candidate = result?.candidates.find(item => item.firstName === "Jane");
+      assert.equal(candidate?.lastName, "Smith");
+      assert.equal(candidate?.roleConfirmed, true);
+      assert.equal(candidate?.businessMatched, true);
+      assert.equal(candidate?.sources.some(item => item.kind === "organic_page"), true);
+      assert.equal(visited.length, 3);
+      assert.equal(visited.at(-1), interview);
+      assert.equal(result?.providerCalls, 1);
+      assert.equal(result?.status, "needs_review");
+      assert.equal(result?.approvedAt, null);
+      assert.equal(result?.usePersonalName, false);
+    } finally { deps.restore(); }
+  });
+});
+
+test("a fetched first-person interview without the street address surfaces a candidate but cannot approve a name", async () => {
+  const row = orchestrationRow({ websiteUrl: null });
+  const interview = "https://fixture.example/interview/curly-tails";
+  const deps = mockDependencies(row, {
+    cached: [{ title: "Interview with Curly Tails founder", link: interview }],
+    fetchPage: async url => ({ url, html: "<main><p>My name is Jane Smith, and I’m the founder of Curly Tails in North Richland Hills.</p></main>" }),
+  });
+  try {
+    const result = await lookupSalonOwnerName(row.id, row.userId, 0, 1);
+    const candidate = result?.candidates.find(item => item.firstName === "Jane");
+    assert.equal(candidate?.lastName, "Smith");
+    assert.equal(candidate?.roleConfirmed, false);
+    assert.equal(candidate?.businessMatched, false);
+    assert.equal(candidate?.sources.some(item => item.kind === "organic_page"), true);
+    assert.equal(result?.status, "needs_review");
+    assert.equal(result?.providerCalls, 0);
+    assert.equal(isStrongApprovedOwnerCandidate({ ...result!, approvedAt: new Date().toISOString(), selectedCandidateId: candidate!.id }), null);
+  } finally { deps.restore(); }
 });
 async function withTestProvider(fn: () => Promise<void>) {
   const oldKey = process.env.SERPAPI_API_KEY;
