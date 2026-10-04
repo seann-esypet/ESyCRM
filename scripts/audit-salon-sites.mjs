@@ -1,11 +1,10 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import { pathToFileURL } from "node:url";
 
-const selection = JSON.parse(readFileSync("reports/salon-site-audit-selection.json", "utf8")).rows;
-const output = "reports/salon-site-crawl-evidence.json";
 const emailPattern = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
-const blockedHost = /(^|\.)(facebook\.com|instagram\.com|vagaro\.com|squareup\.com|moego\.pet|spoton\.com|rymap\.org|rymaps\.org|groomore\.com)$/i;
+const blockedHost = /(^|\.)(facebook\.com|instagram\.com|twitter\.com|x\.com|linkedin\.com|yelp\.com|tiktok\.com|youtube\.com|youtu\.be|vagaro\.com|squareup\.com|moego\.pet|spoton\.com|rymap\.org|rymaps\.org|groomore\.com)$/i;
 const unrelatedCategory = /^(American restaurant|Grocery store|Supermarket|Dollar store|Pharmacy)$/i;
 
 function decode(text) {
@@ -116,7 +115,7 @@ function sameSiteLinks(html, base, host) {
   return links.slice(0, 3);
 }
 
-async function audit(row) {
+export async function audit(row) {
   const record = { ...row, outcome: "not_assessed", pages: [], errors: [] };
   if (row.stratum === "unrelated_category_control" || unrelatedCategory.test(row.category)) {
     record.outcome = "unrelated_business_control";
@@ -157,10 +156,14 @@ async function audit(row) {
   return record;
 }
 
-const results = [];
-for (let i = 0; i < selection.length; i += 3) {
-  results.push(...await Promise.all(selection.slice(i, i + 3).map(audit)));
-  writeFileSync(output, JSON.stringify({ method: "Read-only GET; maximum four same-domain HTML pages per business; no social/booking/directory scraping, no form submissions", results }, null, 2));
-  console.log(`Audited ${results.length}/${selection.length}`);
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const selection = JSON.parse(readFileSync("reports/salon-site-audit-selection.json", "utf8")).rows;
+  const output = "reports/salon-site-crawl-evidence.json";
+  const results = [];
+  for (let i = 0; i < selection.length; i += 3) {
+    results.push(...await Promise.all(selection.slice(i, i + 3).map(audit)));
+    writeFileSync(output, JSON.stringify({ method: "Read-only GET; maximum four same-domain HTML pages per business; no social/booking/directory scraping, no form submissions", results }, null, 2));
+    console.log(`Audited ${results.length}/${selection.length}`);
+  }
+  console.log(`Saved ${output}`);
 }
-console.log(`Saved ${output}`);

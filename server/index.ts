@@ -5,6 +5,7 @@ import { startEmailSequenceScheduler } from "./emailScheduler";
 import { startTaskReminderScheduler } from "./taskReminderScheduler";
 import { startCommissionScheduler } from "./commissionScheduler";
 import { startDailyReportScheduler } from "./dailyReportScheduler";
+import { startSalonResearchSynchronization } from "./salonResearch";
 
 const app = express();
 // Uploaded enrichment batches can contain the full source row for thousands of
@@ -44,6 +45,7 @@ app.use((req, res, next) => {
 
 (async () => {
   const server = await registerRoutes(app);
+  startSalonResearchSynchronization();
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;

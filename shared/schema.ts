@@ -440,6 +440,7 @@ export const salonEnrichmentBatches = pgTable("salon_enrichment_batches", {
   estimatedSerpCalls: integer("estimated_serp_calls").notNull().default(0),
   usedSerpCalls: integer("used_serp_calls").notNull().default(0),
   errorMessage: text("error_message"),
+  researchProgress: jsonb("research_progress"),
   startedAt: timestamp("started_at"),
   pausedAt: timestamp("paused_at"),
   completedAt: timestamp("completed_at"),

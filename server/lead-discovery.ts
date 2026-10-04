@@ -252,7 +252,7 @@ export async function searchWithSerpApi(
   zipCode: string,
   state: string,
   queryTemplate: string,
-  options?: { placeId?: string },
+  options?: { placeId?: string; beforeProviderRequest?: () => void },
 ): Promise<{ results: SerpApiResult[]; fromCache: boolean }> {
   const apiKey = process.env.SERPAPI_API_KEY;
   if (!apiKey) {
@@ -283,11 +283,13 @@ export async function searchWithSerpApi(
     const params = buildGoogleMapsParams(apiKey, query, zipCode, options?.placeId);
     const searchQuery = `${query.replace(", Zip code " + zipCode, "")} ${zipCode}`;
 
+    options?.beforeProviderRequest?.();
     console.log(options?.placeId ? "Looking up Google Maps Place ID" : `Searching Google Maps: ${searchQuery}`);
+    // Count initiation even when a network failure leaves provider billing uncertain.
+    billableCallMade = true;
     const response = await fetch(`https://serpapi.com/search?${params}`);
     // A completed provider response may consume credit even if the response
     // cannot be parsed or cached; never refund it as a network failure.
-    billableCallMade = true;
     
     if (!response.ok) {
       console.error("SerpAPI request failed with status", response.status);

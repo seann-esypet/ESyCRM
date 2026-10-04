@@ -13,10 +13,12 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { OwnerNameReview, OwnerSearchEstimate, OwnerPreview } from "@/components/owner-name-review";
 import SalesLeadListUpload from "@/components/sales-lead-list-upload";
+import { SalonResearchProgress } from "@/components/salon-research-progress";
 import { DirectoryEligibilityReview, EligibilitySummaryStrip, type EligibilitySummary } from "@/components/directory-eligibility";
 import type { DirectoryEligibility } from "@shared/directoryEligibility";
 import type { OwnerNameResult } from "@shared/salonOwnerName";
 import { deleteContactBatch } from "@/lib/contact-deletion";
+import { useAuth } from "@/hooks/useAuth";
 import {
   AlertCircle, ArrowLeft, ArrowRight, BriefcaseBusiness, CalendarClock,
   Check, CircleHelp, ExternalLink, FileJson2, Mail, MapPin, RefreshCw,
@@ -34,6 +36,7 @@ type SearchRow = {
   placeId?: string | null;
   email?: string | null;
   candidateEmail?: string | null;
+  generalContactFormUrl?: string | null;
   suggestedFirstName?: string | null;
   suggestedLastName?: string | null;
   sourceUrl?: string | null;
@@ -151,6 +154,7 @@ function rowEligibility(row: SearchRow): DirectoryEligibility {
 
 export default function SalonSearchReport() {
   const { toast } = useToast();
+  const { user } = useAuth();
   const uploadRef = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState("");
   const [batchId, setBatchId] = useState("all");
@@ -486,6 +490,22 @@ export default function SalonSearchReport() {
           </div>
         </section>
 
+        <SalonResearchProgress
+          isAdmin={user?.role?.toLowerCase() === "admin"}
+          onViewDirectory={id => {
+            setBatchId(id);
+            setCategory("all");
+            setPage(0);
+            refresh();
+          }}
+          onViewVerifiedEmails={id => {
+            setBatchId(id);
+            setCategory("verified_public_email");
+            setPage(0);
+            refresh();
+          }}
+        />
+
         <SalesLeadListUpload onSuccess={result => {
           setBatchId(result.batch.id);
           setPage(0);
@@ -674,6 +694,7 @@ export default function SalonSearchReport() {
                       <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
                         <span className="inline-flex items-center gap-1"><MapPin className="h-3.5 w-3.5" />{[row.address, row.state].filter(Boolean).join(", ") || "Location not provided"}</span>
                         {row.email && <span className="inline-flex items-center gap-1"><Mail className="h-3.5 w-3.5" />{row.email}</span>}
+                        {row.generalContactFormUrl && <a href={row.generalContactFormUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-primary underline"><ExternalLink className="h-3.5 w-3.5" />Reviewed contact form · manual outreach only</a>}
                         {!row.email && row.candidateEmail && <span className="inline-flex items-center gap-1 rounded-md border border-amber-300/70 bg-amber-50 px-2 py-1 text-amber-900"><Mail className="h-3.5 w-3.5" /><span>{row.candidateEmail}</span><span className="font-semibold">Unverified / restricted · not actionable</span></span>}
                         {row.placeId && <span className="font-mono">Place ID · {row.placeId}</span>}
                       </div>

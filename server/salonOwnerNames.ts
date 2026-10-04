@@ -12,6 +12,7 @@ import {
   type SalonOwnerNameSource,
 } from "@shared/salonOwnerName";
 import { storage } from "./storage";
+import { isResearchDirectoryRow, RESEARCH_READ_ONLY } from "./salonResearchPolicy";
 import { getSerpUsageStatus } from "./lead-discovery";
 
 const MAX_ROWS_PER_REQUEST = 5;
@@ -1091,6 +1092,7 @@ async function lookupSalonOwnerNameTracked(
   return withRowSearchLock(rowId, async () => {
     const existingRow = await runtime.storage.getSalonEnrichmentRow(rowId, userId);
     if (!existingRow) return null;
+    if (isResearchDirectoryRow(existingRow)) throw new Error(RESEARCH_READ_ONLY);
     if (existingRow.status === "pending" || existingRow.status === "processing") {
       return {
         ...EMPTY_OWNER_NAME_RESULT,

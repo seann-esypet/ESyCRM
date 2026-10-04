@@ -10,3 +10,5 @@
 - [Browser runtime availability](browser-runtime-availability.md) — Chromium can be available without Playwright; use isolated API fixtures without changing CRM authentication.
 - [Provider spending accounting](provider-spending-accounting.md) — count initiated requests independently of saved row results; failures and deletion must never refund a batch allowance.
 - [Post-merge data safety](post-merge-data-safety.md) — automatic setup rebuilds the app; merging code does not authorize database pushes, research, imports, or outreach.
+- [Google Places demo access](google-places-demo-access.md) — the user says the demo key may expire and billing needs updating if it stops working.
+- [Published salon research](published-salon-research.md) — one stored directory with incremental progress; manual review, approved import, then pipeline.

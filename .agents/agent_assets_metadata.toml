@@ -266,3 +266,31 @@ mtime_ms = 1790558600454
 storage_uri = "gcs://replit-rams-assets-picard/rams/assets/repl:1910afef-1072-4e99-9487-9737d06762ee/7e525999-9ba4-467c-90db-202ea2e6e035/b3e98503-7d4b-4d9b-a362-b0fd450ac8a6"
 storage_version_token = "1790558667462975"
 content_type = "text/markdown"
+
+[[outputs]]
+id = "hgF_OHrqiQ-EbgiOhiYCz"
+uri = "file://attached_assets/0_CRM_Data_CA_NY_TX_Statewide_UNREGISTERED_Grooming_Salons_08_1790473643094.xlsx"
+type = "table"
+title = "Original CA, TX and NY salon directory"
+description = "13,928 source rows, deduplicated to 13,847 Place IDs for research. This is the original unverified directory, not an approved outreach list."
+logical_id = "7f358011-b42c-43ec-8996-a8c95c295f16"
+content_hash = "sha256:098cfc3493ee1d9a5d6539c7c31b768fef3f6e188cb44b6cf72dd30b4ee15883"
+size = 1982099
+mtime_ms = 1790473643835
+storage_uri = "gcs://replit-rams-assets-picard/rams/assets/repl:1910afef-1072-4e99-9487-9737d06762ee/7f358011-b42c-43ec-8996-a8c95c295f16/15606be4-eedb-41fa-abdc-9f59ec3b9b21"
+storage_version_token = "1791066177405345"
+content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+[[outputs]]
+id = "uW5bbFKTFPWvXcWRbux3E"
+uri = "file://reports/salon-provider-comparison-results.xlsx"
+type = "table"
+title = "Final salon lookup comparison — 81 matched rows"
+description = "User-closed pilot: 81 recorded SerpApi rows compared with the same saved DataForSEO rows; 39 untested. Source evidence, exclusions, costs, forms and final limited-sample recommendation."
+logical_id = "d972f07e-2e8b-44af-a901-18f8983ef7c4"
+content_hash = "sha256:695819b90abcd019c96886d0c43fc5d56bb2d5356a20a4300fe3730ce8351e9f"
+size = 466723
+mtime_ms = 1791076957519
+storage_uri = "gcs://replit-rams-assets-picard/rams/assets/repl:1910afef-1072-4e99-9487-9737d06762ee/d972f07e-2e8b-44af-a901-18f8983ef7c4/e16de9b2-0572-40ab-9c16-7c7ae2edb122"
+storage_version_token = "1791077201520746"
+content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"

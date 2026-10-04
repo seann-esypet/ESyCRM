@@ -1,5 +1,6 @@
 import { storage } from "./storage";
 import { crawlWebsite, searchWithSerpApi } from "./lead-discovery";
+import { isResearchDirectoryBatch, isResearchDirectoryRow, RESEARCH_READ_ONLY } from "./salonResearchPolicy";
 import { bookingPlatformForUrl, findSalonEmailOnBookingPage } from "./bookingPageEmail";
 import { lookupSalonOwnerName } from "./salonOwnerNames";
 import { promoteVerifiedStagedReportEmail } from "./salonSearchReport";
@@ -64,6 +65,7 @@ export function rejectedSalonEmailEvidence(
 }
 
 async function enrichRow(row: SalonEnrichmentRow): Promise<Partial<SalonEnrichmentRow>> {
+  if (isResearchDirectoryRow(row)) throw new Error(RESEARCH_READ_ONLY);
   const evidenceMap: Evidence = {};
   let serpCallsUsed = 0;
   const zip = row.zipCode || "00000";
@@ -372,9 +374,21 @@ async function processBatch(batch: SalonEnrichmentBatch): Promise<void> {
     while (true) {
       const current = await storage.getSalonEnrichmentBatch(batch.id, batch.userId);
       if (!current || current.status !== "running") return;
+      if (isResearchDirectoryBatch(current)) {
+        await storage.updateSalonEnrichmentBatch(batch.id, {
+          status: "paused", pausedAt: new Date(), errorMessage: RESEARCH_READ_ONLY,
+        }, batch.userId);
+        return;
+      }
       const pendingRows = await storage.getSalonEnrichmentRows(batch.id, batch.userId, { status: "pending" });
       const processingRows = await storage.getSalonEnrichmentRows(batch.id, batch.userId, { status: "processing" });
       const rows = pendingRows.concat(processingRows);
+      if (rows.some(isResearchDirectoryRow)) {
+        await storage.updateSalonEnrichmentBatch(batch.id, {
+          status: "paused", pausedAt: new Date(), errorMessage: RESEARCH_READ_ONLY,
+        }, batch.userId);
+        return;
+      }
       if (!rows.length) {
         await storage.updateSalonEnrichmentBatch(batch.id, { status: "completed", completedAt: new Date() }, batch.userId);
         await storage.refreshSalonEnrichmentBatchCounts(batch.id, batch.userId);
@@ -475,6 +489,7 @@ async function processBatch(batch: SalonEnrichmentBatch): Promise<void> {
 }
 
 export function startSalonEnrichment(batch: SalonEnrichmentBatch): void {
+  if (isResearchDirectoryBatch(batch)) throw new Error(RESEARCH_READ_ONLY);
   processBatch(batch).catch(async error => {
     console.error(`[SalonEnrichment] Batch ${batch.id} failed:`, error);
     await storage.updateSalonEnrichmentBatch(batch.id, {

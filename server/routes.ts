@@ -38,6 +38,8 @@ import { canApproveSalonReportRow, convertSalonSearchReportEntry, reportPlaceIds
 import { directoryEligibility, directoryEligibilitySummary } from "@shared/directoryEligibility";
 import { registerDirectoryEligibilityRoutes } from "./directoryEligibilityRoutes";
 import { isRetryableStagedSalonRow, MAX_SALON_LIST_JSON_BYTES, MAX_SALON_LIST_ROWS, stageSalonListRows } from "./salonListStaging";
+import { registerSalonResearchRoutes } from "./salonResearch";
+import { rejectResearchExecution, isResearchDirectoryRow, RESEARCH_READ_ONLY } from "./salonResearchPolicy";
 import { pipelineEmailQueryScope } from "./pipelineEmailSummary";
 import salonSearchPilot from "../reports/salon-next-100-summary.json" with { type: "json" };
 
@@ -164,6 +166,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Setup auth middleware - From Replit Auth blueprint
   await setupAuth(app);
   registerDirectoryEligibilityRoutes(app, isAuthenticated);
+  registerSalonResearchRoutes(app, isAuthenticated, isAdmin);
 
   // Helper function to get user ID or null for admin (admin sees all data)
   const getUserIdForQuery = (user: any): string | null => {
@@ -2991,6 +2994,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             : typeof sourceData["Public email (review-only when marked)"] === "string"
               ? sourceData["Public email (review-only when marked)"] as string
               : null,
+          generalContactFormUrl: (row.evidence as any)?.generalContactForm?.status === "reviewed_structure_only"
+            ? row.contactRequestFormUrl : null,
           suggestedFirstName: typeof sourceData.uploadedFirstNameSuggestion === "string"
             ? sourceData.uploadedFirstNameSuggestion as string : null,
           suggestedLastName: typeof sourceData.uploadedLastNameSuggestion === "string"
@@ -3158,7 +3163,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   });
 
-  app.post("/api/salon-enrichment/batches/:id/verify", isAuthenticated, async (req: any, res) => {
+  app.post("/api/salon-enrichment/batches/:id/verify", isAuthenticated, rejectResearchExecution, async (req: any, res) => {
     if (req.body?.confirmed !== true) {
       return res.status(400).json({ message: "Confirm the estimated provider usage before starting list verification" });
     }
@@ -3236,7 +3241,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/salon-enrichment/batches/:id/start", isAuthenticated, async (req: any, res) => {
+  app.post("/api/salon-enrichment/batches/:id/start", isAuthenticated, rejectResearchExecution, async (req: any, res) => {
     const userId = req.user.claims.sub as string;
     const current = await storage.getSalonEnrichmentBatch(req.params.id, userId);
     if (!current) return res.status(404).json({ message: "Batch not found" });
@@ -3260,7 +3265,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json(batch);
   });
 
-  app.post("/api/salon-enrichment/batches/:id/resume", isAuthenticated, async (req: any, res) => {
+  app.post("/api/salon-enrichment/batches/:id/resume", isAuthenticated, rejectResearchExecution, async (req: any, res) => {
     const current = await storage.getSalonEnrichmentBatch(req.params.id, req.user.claims.sub);
     if (!current) return res.status(404).json({ message: "Batch not found" });
     if (current.fileName === "salon-public-web-review" && ["completed", "paused"].includes(current.status)) {
@@ -3303,7 +3308,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ updated: count });
   });
 
-  app.post("/api/salon-enrichment/batches/:id/rows/retry", isAuthenticated, async (req: any, res) => {
+  app.post("/api/salon-enrichment/batches/:id/rows/retry", isAuthenticated, rejectResearchExecution, async (req: any, res) => {
     const actorScope = req.user.claims.role === "admin" ? null : req.user.claims.sub;
     const batch = await storage.getSalonEnrichmentBatch(req.params.id, actorScope);
     const rows = batch ? await storage.getSalonEnrichmentRows(req.params.id, batch.userId) : [];
@@ -3450,6 +3455,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const input = ownerNameSearchInput.parse(req.body);
       const rows = await getOwnedOwnerNameRows(input.rowIds, req.user.claims.sub);
       if (!rows) return res.status(404).json({ message: "One or more salon rows were not found or are not owned by you" });
+      if (rows.some(isResearchDirectoryRow)) return res.status(409).json({ message: RESEARCH_READ_ONLY });
       if (rows.some(row => salonOwnerNameLookupBlockedByRowStatus(row.status))) {
         return res.status(409).json({ message: "Wait for ordinary salon enrichment to complete before starting owner-name lookup" });
       }

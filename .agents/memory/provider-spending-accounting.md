@@ -8,3 +8,9 @@ Track initiated provider attempts independently of saved or returned research re
 **Why:** A later cache, usage, or reservation error once reset a row's displayed usage after an earlier paid search. Deriving the remaining batch allowance from that result let a later row reuse spent credits and exceed the confirmed cap.
 
 **How to apply:** Record each attempt immediately before invoking the provider. Use that independent count for the remaining batch budget, including timeouts and concurrent deletion. Preserve candidates already collected when later infrastructure fails. If an unexpected error makes continued processing unsafe, stop rather than giving later rows a fresh allowance. Test faults after a successful phrase, not only provider failures on the first request.
+
+An immediate SerpApi account-counter delta of zero does not establish that a lookup was free or nonbillable.
+
+**Why:** During a Place-ID comparison, successful responses initially left the account counter unchanged; later snapshots reflected usage. Account-wide counters can lag and may also include concurrent application traffic.
+
+**How to apply:** Keep initiated attempts, returned/cached results, observed credit-counter changes, and cash charges separate. Reconcile account totals after the run and state attribution uncertainty instead of treating each immediate counter delta as a definitive per-row bill.
