@@ -34,12 +34,43 @@ async function until(expression,label) {
 const button=(text,scope="document")=>`Array.from(${scope}.querySelectorAll('button')).find(e=>e.textContent.trim()===${JSON.stringify(text)})`;
 const article="document.querySelector('article')";
 async function click(text,scope="document"){await until(button(text,scope),text);await evaluate(`${button(text,scope)}.click()`);await pause(150);}
+function fixtureOwnerName(businessName,found=false){
+  return {status:"needs_review",selectedCandidateId:null,approvedAt:null,usePersonalName:false,
+    providerCalls:found?1:0,pagesFetched:found?1:0,candidates:[
+      {id:"foreign-owner",firstName:"Rachel",lastName:null,role:"Unconfirmed search-result mention",
+        roleConfirmed:false,businessMatched:false,confidence:"low",sources:[{kind:"organic_summary",
+          url:"https://fixture.example/other",excerpt:"LEXY'S PET PARLOR — Rachel, the owner."}]},
+      ...(found?[{id:"matched-owner",firstName:"Avery",lastName:"Smith",role:"founder",
+        roleConfirmed:false,businessMatched:false,confidence:"low",sources:[{kind:"organic_page",
+          url:"https://fixture.example/interview",excerpt:`My name is Avery Smith, and I'm the founder of ${businessName}.`}]}]:[]),
+    ]};
+}
 async function reviewThroughScheduling(entry) {
   await click("Review details",article);
   await evaluate(`(()=>{const e=${article}.querySelector('textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(e,'Inspected source, matched this exact location and general contact email.');e.dispatchEvent(new Event('input',{bubbles:true}));})()`);
   for(const text of ["I inspected the source","I confirm this source"])await evaluate(`Array.from(${article}.querySelectorAll('label')).find(e=>e.textContent.includes(${JSON.stringify(text)})).querySelector('[role=checkbox]').click()`);
   await click("Approve email",article);
   await until("document.querySelector('article').innerText.includes('approved')","approval");
+  const contactAction = await evaluate(`(()=>{
+    const action=${button("Add approved lead to Contacts",article)};
+    const panel=action.closest("section");
+    const owner=${article}.querySelector('[aria-label^="Owner name review"]');
+    return {height:action.getBoundingClientRect().height,disabled:action.disabled,
+      prominentPanel:panel.getAttribute("aria-labelledby")?.startsWith("crm-action-"),
+      beforeOwner:!owner||Boolean(action.compareDocumentPosition(owner)&Node.DOCUMENT_POSITION_FOLLOWING),
+      count:Array.from(${article}.querySelectorAll("button")).filter(e=>e.textContent.trim()==="Add approved lead to Contacts").length};
+  })()`);
+  assert.ok(contactAction.height>=44,"Contacts action has a large touch target");
+  assert.equal(contactAction.disabled,false,"approved eligible lead can be added");
+  assert.equal(contactAction.prominentPanel,true,"action is in the prominent Contacts panel");
+  assert.equal(contactAction.beforeOwner,true,"action appears before the long owner review");
+  assert.equal(contactAction.count,1,"only one primary Contacts action");
+  await until("document.querySelector('article').innerText.includes('Unrelated search-result suggestions have been hidden')","unrelated saved suggestions hidden");
+  assert.equal((await evaluate(`${article}.innerText`)).includes("Rachel"),false);
+  await click("Retry owner search",article);
+  await click("Confirm & search",article);
+  await until("document.querySelector('article').innerText.includes('Avery Smith')","new owner result appears without navigation");
+  assert.equal((await evaluate(`${article}.innerText`)).includes("Rachel"),false);
   await click("Add approved lead to Contacts",article);
   if(entry==="upload"){
     await until("document.querySelector('article').innerText.includes('Possible duplicate contacts')","multiple duplicate choices");
@@ -48,7 +79,7 @@ async function reviewThroughScheduling(entry) {
   }
   await until("document.querySelector('article').innerText.includes('Open contact')","contact link");
   await click("Create Pipeline deal",article);
-  await until("document.querySelector('article').innerText.includes('Open Pipeline deal')","deal link");
+  await until("document.querySelector('article').innerText.includes('Open pipeline deal')","deal link");
   assert.deepEqual(writes,[entry,"review","crm","pipeline"]);
   await evaluate(`${article}.querySelector('[role=combobox]').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))`);
   await until("document.querySelector('[role=option]')","sequence choices");
@@ -78,7 +109,7 @@ async function api(url,method,body) {
     writes.push("upload");return {batch:batches[0],stagedCount:3};
   }
   if(method==="GET"&&batches.some(batch=>url.pathname===`/api/leads/${batch.id}`)){
-    return {batch:batches.find(batch=>url.pathname===`/api/leads/${batch.id}`),rows:rows.map(r=>({...leadView(r),dealId:r.dealId||null})),total:rows.length,nextOffset:null,linkedRows:[]};
+    return {batch:batches.find(batch=>url.pathname===`/api/leads/${batch.id}`),rows:rows.map(r=>({...leadView(r),ownerName:r.evidence?.ownerName,dealId:r.dealId||null})),total:rows.length,nextOffset:null,linkedRows:[]};
   }
   if(method==="GET"&&url.pathname==="/api/lead-discovery/jobs")return [
     {id:"fixture-search-job",state:"TX",zipCodes:"78701",status:"completed",totalBusinessesFound:1,createdAt:"2026-10-04T12:00:00Z"},
@@ -93,6 +124,16 @@ async function api(url,method,body) {
     rows=[{...unifiedUploadRow(raw,0,"fixture-owner"),id:"fixture-search-row",batchId:"fixture-search-batch",serpCallsUsed:0}];
     const batch={id:"fixture-search-batch",name:"Saved search fixture",status:"completed",totalRows:1,createdAt:"2026-10-04T12:00:00Z"};
     batches.push(batch);writes.push("search-stage");return {batch,stagedCount:1,linkedCount:0};
+  }
+  if(method==="POST"&&url.pathname==="/api/salon-owner-names/estimate"){
+    assert.equal(body.searchesPerRow,1);assert.equal(body.rowIds.length,1);
+    return {maxProviderCalls:1,maxPages:4,remainingCredits:100,allowed:true,searchesPerRow:1};
+  }
+  if(method==="POST"&&url.pathname==="/api/salon-owner-names/search"){
+    assert.equal(body.confirmed,true);assert.equal(body.maxProviderCalls,1);assert.equal(body.searchesPerRow,1);
+    const target=rows.find(item=>item.id===body.rowIds[0]);assert.ok(target);
+    target.evidence={...target.evidence,ownerName:fixtureOwnerName(target.businessName,true)};
+    return {callsUsed:1,results:[{rowId:target.id,ownerName:target.evidence.ownerName}]};
   }
   if(method==="GET"&&url.pathname.endsWith("/estimate"))return {eligibleRows:1,maxProviderCalls:2,active:researchActive};
   if(method==="POST"&&url.pathname==="/api/leads/fixture-batch/research"){
@@ -115,7 +156,7 @@ async function api(url,method,body) {
   if(row&&method==="POST"){
     assert.equal(body.confirmed,true);
     if(url.pathname.endsWith("/review")){
-      const evidence=historicalApprovalEvidence(row,body);row.email=evidence.value;row.identityMatchStatus="strong";row.reviewStatus="approved";row.status="enriched";row.evidence={...row.evidence,email:evidence};
+      const evidence=historicalApprovalEvidence(row,body);row.email=evidence.value;row.identityMatchStatus="strong";row.reviewStatus="approved";row.status="enriched";row.evidence={...row.evidence,email:evidence,ownerName:fixtureOwnerName(row.businessName)};
       writes.push("review");return row;
     }
     if(url.pathname.endsWith("/crm")){

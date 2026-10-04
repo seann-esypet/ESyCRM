@@ -26,3 +26,9 @@ Keep owner discovery broader than owner approval. An interview that names the bu
 **Why:** The user found an owner through a simple Google search while the CRM exhausted its bounded crawl on website pages. Public interviews can contain useful ownership statements without the address needed for automatic identity verification.
 
 **How to apply:** Prefer business/locality discovery and relevant ownership sources within the existing cap, reserving capacity for organic evidence rather than spending every attempt on website paths. Preserve strict approval, mailbox attribution, and personal-greeting safeguards instead of increasing spending or treating search snippets as verified evidence.
+
+An approved salon identity and a targeted Google query do not establish that every returned search result belongs to that salon.
+
+**Why:** The user showed an owner lookup suggesting people from other businesses even though the selected salon had strong, approved identity evidence. Search providers can return unrelated results; marking their names “unconfirmed” still creates confusing review work.
+
+**How to apply:** Independently check discovery relevance before extracting people or using the limited page budget. Keep unrelated stored summary suggestions out of the review UI without silently editing saved evidence or Contacts. Relevance remains distinct from verified ownership and exact-location approval.

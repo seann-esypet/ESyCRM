@@ -15,6 +15,7 @@ import { storage } from "./storage";
 import { isResearchDirectoryRow, RESEARCH_READ_ONLY } from "./salonResearchPolicy";
 import { getSerpUsageStatus } from "./lead-discovery";
 import { ownerDiscoveryLocation, ownerInterviewDiscoveryText, prioritizeOwnerResults } from "./salonOwnerDiscovery";
+import { mentionsOwnerBusiness } from "@shared/salonOwnerDiscoveryRelevance";
 
 const MAX_ROWS_PER_REQUEST = 5;
 const MAX_PAGES_PER_ROW = 4;
@@ -113,6 +114,7 @@ const NON_PERSON_NAME_TOKENS = new Set([
   "customer", "customers", "client", "clients", "employee", "employees", "appointment",
   "appointments", "hours", "faq", "welcome", "click", "here", "meet", "former",
   "formerly", "previous", "previously", "was", "were", "not", "ex",
+  "i", "i'm", "i’m", "i've", "i’ve", "my", "we", "we're", "we’re", "he", "she", "they", "you",
 ]);
 
 function normalizedPersonName(
@@ -782,8 +784,8 @@ export function salonOwnerSearchQueries(row: SalonEnrichmentRow): ReturnType<typ
   const legacy = queryParts(row);
   const availableLocation = ownerDiscoveryLocation(row);
   const phrases = [
+    { ...legacy, query: `"${row.businessName}"${availableLocation ? ` ${availableLocation}` : ""} (owner OR founder)` },
     { ...legacy, query: `Who is the owner of "${row.businessName}"${availableLocation ? ` in ${availableLocation}` : ""}?` },
-    { ...legacy, query: `"${row.businessName}"${availableLocation ? ` ${availableLocation}` : ""} (owner OR founder OR proprietor)` },
     legacy,
   ];
   return phrases.filter((item, index) =>
@@ -1013,6 +1015,9 @@ async function performLookup(
     return page;
   };
   const verifiedOwnerFound = () => candidates.some(candidate => candidate.roleConfirmed && candidate.businessMatched);
+  const limitMessage = () => Date.now() >= deadline
+    ? "Owner lookup incomplete: the lookup time limit has been reached"
+    : `Owner lookup incomplete: the page limit has been reached (${pages.attempted} attempts, ${pages.count} pages loaded). Failed pages also count toward this limit.`;
   let homepage: { html: string; url: string; matched: boolean } | null = null;
 
   try {
@@ -1040,7 +1045,7 @@ async function performLookup(
     for (const phrase of salonOwnerSearchQueries(row).slice(0, searchesPerRow)) {
       if (verifiedOwnerFound()) break;
       if (pages.attempted >= MAX_PAGES_PER_ROW || Date.now() >= deadline) {
-        errors.push("Owner lookup incomplete: the page or lookup time limit has been reached");
+        errors.push(limitMessage());
         break;
       }
       const search = await organicSearch(phrase, maxProviderCalls - progress.calls, deadline, progress);
@@ -1053,6 +1058,9 @@ async function performLookup(
       // Summaries suggest candidates only; fetched matched pages establish roles.
       for (const result of prioritizeOwnerResults(row, search.results)) {
         const summary = [result.title, result.snippet].filter(Boolean).join(" — ");
+        // An ownership phrase alone is not relevance to this salon. Do not
+        // display other businesses' people or spend page attempts on them.
+        if (!mentionsOwnerBusiness(row.businessName, summary)) continue;
         if (summary) {
           mergeCandidates(candidates, extractSalonOwnerSummaryCandidates(summary, {
             url: result.link || "https://www.google.com/search",
@@ -1071,7 +1079,7 @@ async function performLookup(
         await inspectOnce(resultUrl, false, true);
       }
       if (!verifiedOwnerFound() && organicPages.some(url => !inspectedUrls.has(pageKey(url)))) {
-        errors.push("Owner lookup incomplete: the page or lookup time limit has been reached");
+        errors.push(limitMessage());
       }
     }
   } catch (error) {

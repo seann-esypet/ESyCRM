@@ -3,6 +3,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { OwnerNameResult } from "@shared/salonOwnerName";
+import { relevantOwnerCandidate } from "@shared/salonOwnerDiscoveryRelevance";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -54,6 +55,7 @@ export function OwnerNameReview({
   }, [ownerName?.selectedCandidateId, ownerName?.usePersonalName, ownerName?.approvedAt, contactName?.firstName, contactName?.lastName, contactName?.useBusinessNameForEmail]);
 
   const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/leads"] });
     queryClient.invalidateQueries({ queryKey: ["/api/salon-search-report"] });
     queryClient.invalidateQueries({ queryKey: ["/api/salon-enrichment/batches"] });
     queryClient.invalidateQueries({ queryKey: ["/api/contacts"] });
@@ -101,14 +103,16 @@ export function OwnerNameReview({
     queryFn: () => jsonRequest("GET", `/api/salon-owner-names/rows/${rowId}/preview?sequenceId=${encodeURIComponent(previewSequenceId)}`),
     enabled: previewOpen && Boolean(previewSequenceId),
   });
-  const candidates = ownerName?.candidates ?? [];
+  const storedCandidates = ownerName?.candidates ?? [];
+  const candidates = storedCandidates.filter(candidate => relevantOwnerCandidate(candidate, businessName));
+  const unrelatedCandidatesHidden = storedCandidates.length - candidates.length;
   const lookupError = ownerName?.error && /timeout|timed out|aborted.*time\s*out/i.test(ownerName.error)
     ? "The owner lookup timed out before completing. Your reviewed email is unchanged. Retry later; a retry may use another lookup credit."
     : ownerName?.error;
   const selectedCandidate = candidates.find(candidate => candidate.id === candidateId);
   const canApprove = Boolean(selectedCandidate?.roleConfirmed && selectedCandidate.businessMatched &&
     selectedCandidate.sources.some(source => /^(website|organic)_(homepage|about|team|page)$/.test(source.kind) && source.url && source.excerpt.trim()));
-  const approved = Boolean(ownerName?.approvedAt && ownerName.selectedCandidateId && ownerName.selectedCandidateId === candidateId);
+  const approved = Boolean(selectedCandidate && ownerName?.approvedAt && ownerName.selectedCandidateId && ownerName.selectedCandidateId === candidateId);
 
   return (
     <section className="mt-4 rounded-lg border-2 border-slate-400 bg-muted/20 p-3 dark:border-slate-600 sm:p-4" aria-label={`Owner name review for ${businessName}`}>
@@ -118,7 +122,7 @@ export function OwnerNameReview({
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <h4 className="text-sm font-semibold">Owner / addressee</h4>
-              <Badge variant={approved ? "default" : "outline"}>{approved ? "Owner approved" : (ownerName?.status ?? "not_searched").replaceAll("_", " ")}</Badge>
+              <Badge variant={approved ? "default" : "outline"}>{approved ? "Owner approved" : unrelatedCandidatesHidden > 0 && !candidates.length ? "No matching candidates" : (ownerName?.status ?? "not_searched").replaceAll("_", " ")}</Badge>
               {onSelectedForBatchChange && canSearch && <label className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
                 <Checkbox checked={selectedForBatch} onCheckedChange={value => onSelectedForBatchChange(value === true)} aria-label={`Select ${businessName} for owner search`} />
                 Batch search
@@ -137,6 +141,7 @@ export function OwnerNameReview({
       {searchMutation.isPending && <p role="status" className="mt-3 rounded-md border-2 border-slate-400 bg-background p-3 text-sm dark:border-slate-600">Checking business pages and, if needed, the search provider. Please wait for this lookup to finish before retrying.</p>}
       {!searchMutation.isPending && lookupError && <Alert variant="destructive" className="mt-3 border-2 border-red-400 dark:border-red-600"><AlertTriangle className="h-4 w-4" /><AlertDescription>{lookupError}</AlertDescription></Alert>}
       {ownerName && <p className="mt-2 text-[11px] text-muted-foreground">Lookup usage · {ownerName.providerCalls} provider call{ownerName.providerCalls === 1 ? "" : "s"} · {ownerName.pagesFetched} pages{ownerName.lookedUpAt ? ` · ${new Date(ownerName.lookedUpAt).toLocaleString()}` : ""}</p>}
+      {unrelatedCandidatesHidden > 0 && <p className="mt-2 text-xs text-muted-foreground">Unrelated search-result suggestions have been hidden. They did not mention {businessName}. No saved contact name was changed.</p>}
 
       {candidates.length > 0 ? (
         <div className="mt-3 space-y-2">
@@ -163,7 +168,7 @@ export function OwnerNameReview({
             </article>;
           })}
         </div>
-      ) : <p className="mt-3 rounded-md border-2 border-dashed border-slate-400 p-3 text-xs text-muted-foreground dark:border-slate-600">{ownerName?.status === "not_found" ? "No owner candidate was found. Emails should use the business-name fallback." : ownerName?.status === "excluded" ? "This row is excluded from owner lookup." : ownerName?.status === "failed" ? "Search did not finish. Your reviewed email is unchanged; retry is optional and may use another lookup credit." : "No candidates yet. Search is always an explicit, budget-confirmed action."}</p>}
+      ) : <p className="mt-3 rounded-md border-2 border-dashed border-slate-400 p-3 text-xs text-muted-foreground dark:border-slate-600">{unrelatedCandidatesHidden > 0 ? "The saved search found no owner candidate tied to this salon. A new search is optional and requires budget confirmation." : ownerName?.status === "not_found" ? "No owner candidate was found. Emails should use the business-name fallback." : ownerName?.status === "excluded" ? "This row is excluded from owner lookup." : ownerName?.status === "failed" ? "Search did not finish. Your reviewed email is unchanged; retry is optional and may use another lookup credit." : "No candidates yet. Search is always an explicit, budget-confirmed action."}</p>}
 
       {candidates.length > 0 && <div className="mt-3 flex flex-col gap-3 border-t-2 border-slate-400 pt-3 dark:border-slate-600">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">

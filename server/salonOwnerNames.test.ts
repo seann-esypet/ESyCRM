@@ -20,6 +20,7 @@ import {
 import type { SalonOwnerNameDependencies } from "./salonOwnerNames";
 import { ownerNameRowsInput, ownerNameSearchInput } from "./salonOwnerNameSearchInput";
 import { ownerDiscoveryLocation, prioritizeOwnerResults } from "./salonOwnerDiscovery";
+import { mentionsOwnerBusiness, relevantOwnerCandidate } from "@shared/salonOwnerDiscoveryRelevance";
 
 const identity = {
   businessName: "Curly Tails",
@@ -465,9 +466,9 @@ test("cached search results are free, remain unconfirmed, and do not reserve or 
   const row = orchestrationRow({ websiteUrl: null });
   const deps = mockDependencies(row, {
     cached: [{
-      title: "A Dog's Tail team",
+      title: "Curly Tails team",
       link: "https://www.nextdoor.com/public/",
-      snippet: "A Dog's Tail team mentions Jacqueline as a neighborhood favorite.",
+      snippet: "Curly Tails team mentions Jacqueline as a neighborhood favorite.",
     }],
   });
   try {
@@ -661,9 +662,9 @@ test("owner discovery starts with business and city while preserving the exact-a
   const row = orchestrationRow();
   const queries = salonOwnerSearchQueries(row);
   assert.equal(queries.length, 3);
-  assert.equal(queries[0].query, 'Who is the owner of "Curly Tails" in North Richland Hills, TX?');
+  assert.equal(queries[0].query, '"Curly Tails" North Richland Hills, TX (owner OR founder)');
   assert.doesNotMatch(queries[0].query, /5651|76117/);
-  assert.equal(queries[1].query, '"Curly Tails" North Richland Hills, TX (owner OR founder OR proprietor)');
+  assert.equal(queries[1].query, 'Who is the owner of "Curly Tails" in North Richland Hills, TX?');
   assert.equal(queries[2].query, '"Curly Tails" "5651 Tourist Dr, North Richland Hills, TX, 76117" owner salon');
   assert.equal(queries[2].cacheKey, "salon-owner-organic:curly tails:5651 tourist dr north richland hills tx 76117");
   assert.equal(new Set(queries.map(item => item.cacheKey)).size, 3);
@@ -675,7 +676,7 @@ test("owner discovery starts with business and city while preserving the exact-a
 test("formatted upload addresses supply locality for discovery without changing identity fields", () => {
   const row = orchestrationRow({ address: "1511 Washington Blvd, Detroit, MI 48226", address1: null, city: null, zipCode: null, state: "MI" });
   assert.equal(ownerDiscoveryLocation(row), "Detroit, MI");
-  assert.equal(salonOwnerSearchQueries(row)[0].query, 'Who is the owner of "Curly Tails" in Detroit, MI?');
+  assert.equal(salonOwnerSearchQueries(row)[0].query, '"Curly Tails" Detroit, MI (owner OR founder)');
   assert.equal(row.city, null);
   assert.equal(row.zipCode, null);
   assert.equal(ownerDiscoveryLocation(orchestrationRow({ address: "5651 Tourist Dr", city: null, state: null })), "");
@@ -688,6 +689,66 @@ test("business-specific owner interviews outrank generic results without trustin
     { title: "Meet Jane Smith of Curly Tails", snippet: "I’m the founder of Curly Tails.", link: "https://fixture.example/interview/jane" },
   ];
   assert.equal(prioritizeOwnerResults(orchestrationRow(), results)[0], results[2]);
+});
+
+test("LC's owner discovery ignores unrelated salon names and reserves fetched evidence for Tonya", async () => {
+  await withTestProvider(async () => {
+    const row = orchestrationRow({
+      businessName: "LC'S Detroit Pet Salon",
+      address: "1511 Washington Blvd, Detroit, MI 48226", address1: null,
+      city: null, state: "MI", zipCode: null, websiteUrl: "https://booking.example/",
+    });
+    const interview = "https://voyagemichigan.com/interview/story-lesson-highlights-with-tonya-smith-of-detroit-highlight";
+    const statement = "My name is Tonya Smith, and I’m the founder of LC’S Detroit Pet Salon and LC’S Foundation.";
+    const seen: string[] = [];
+    const deps = mockDependencies(row, {
+      fetchProvider: async () => providerResponse([
+        { title: "LEXY'S PET PARLOR", snippet: "Rachel, the owner knows and loves dogs.", link: "https://fixture.example/lexys" },
+        { title: "Meet the Vote 4 the Best Pet Grooming Winner", snippet: "Glenn Gosine, the owner of Peticured Pet Nail Specialists.", link: "https://fixture.example/peticured" },
+        { title: "Luke Fassbender's 25-Year Journey", snippet: "Luke Fassbender’s journey from pet groomer to store owner.", link: "https://fixture.example/luke" },
+        { title: "Story & Lesson Highlights with Tonya Smith of Detroit", snippet: statement, link: interview },
+      ]),
+      fetchPage: async url => {
+        seen.push(url);
+        if (url !== interview) throw new Error("Public page returned HTTP 404");
+        return { url, html: `<article><p>${statement}</p><p>Detroit, Michigan</p></article>` };
+      },
+    });
+    try {
+      const result = await lookupSalonOwnerName(row.id, row.userId, 1, 1);
+      assert.deepEqual(seen, ["https://booking.example/", interview]);
+      assert.deepEqual(result?.candidates.map(item => [item.firstName, item.lastName]), [["Tonya", "Smith"]]);
+      assert.equal(result?.candidates[0].sources.some(item => item.kind === "organic_page" && item.url === interview), true);
+      // Business discovery is not proof of the exact street location or approval.
+      assert.equal(result?.candidates[0].businessMatched, false);
+      assert.equal(result?.candidates[0].roleConfirmed, false);
+      assert.equal(result?.approvedAt, null);
+      assert.equal(result?.usePersonalName, false);
+      assert.equal(result?.providerCalls, 1);
+      assert.equal(deps.observed.pageAttempts, 2);
+      assert.doesNotMatch(result?.error || "", /page limit/);
+    } finally { deps.restore(); }
+  });
+});
+
+test("discovery matches apostrophe variants and hides only unrelated stored summary suggestions", () => {
+  const business = "LC'S Detroit Pet Salon";
+  for (const mention of ["LC’S Detroit Pet Salon", "LCS Detroit Pet Salon", "LC'S Detroit Pet Salon"]) {
+    assert.equal(mentionsOwnerBusiness(business, `Tonya Smith founded ${mention}.`), true);
+  }
+  assert.equal(mentionsOwnerBusiness("Curly Tails", "Curly Tailsworth"), false);
+  assert.equal(mentionsOwnerBusiness("", "Owner Jane Smith"), false);
+  const [unrelated] = extractSalonOwnerSummaryCandidates("Owner: Glenn Gosine of Peticured.", {
+    url: "https://fixture.example/other", excerpt: "", kind: "organic_summary",
+  });
+  assert.ok(unrelated);
+  assert.equal(relevantOwnerCandidate(unrelated, business), false);
+  const [related] = extractSalonOwnerSummaryCandidates(`Owner: Tonya Smith of ${business}.`, {
+    url: "https://fixture.example/lcs", excerpt: "", kind: "organic_summary",
+  });
+  assert.equal(relevantOwnerCandidate(related, business), true);
+  assert.equal(related.roleConfirmed, false);
+  assert.equal(relevantOwnerCandidate({ ...unrelated, sources: [{ ...source, kind: "website_about" }] }, identity.businessName), true);
 });
 
 test("first-person interview ownership requires fetched matched evidence, never a summary or historical claim", () => {
@@ -800,7 +861,7 @@ test("expanded lookup verifies a broader or natural-language result before anoth
         fetchProvider: async url => {
           assert.equal(inspected, false, "never spend after verified fetched evidence");
           const index = queries.findIndex(item => item.query === new URL(String(url)).searchParams.get("q"));
-          return providerResponse(index === winningPhrase ? [{ link: "https://fixture.example/about", snippet: "Owner Jane Smith." }] : []);
+          return providerResponse(index === winningPhrase ? [{ link: "https://fixture.example/about", snippet: "Curly Tails. Owner Jane Smith." }] : []);
         },
         fetchPage: async url => { inspected = true; return matchedPage(url); },
       });
@@ -842,8 +903,8 @@ test("phrase caches are distinct, cached empty results are free, and repeated pa
   const queries = salonOwnerSearchQueries(row);
   const cacheByKey = {
     [queries[0].cacheKey]: [],
-    [queries[1].cacheKey]: [{ link: "https://fixture.example/staff", snippet: "Owner Jane Smith." }],
-    [queries[2].cacheKey]: [{ link: "https://fixture.example/staff#team", snippet: "Owner Jane Smith." }],
+    [queries[1].cacheKey]: [{ link: "https://fixture.example/staff", snippet: "Curly Tails. Owner Jane Smith." }],
+    [queries[2].cacheKey]: [{ link: "https://fixture.example/staff#team", snippet: "Curly Tails. Owner Jane Smith." }],
   };
   const deps = mockDependencies(row, { cacheByKey, fetchPage: async url => matchedPage(url, "Manager: Jane Smith.") });
   try {
@@ -879,7 +940,7 @@ test("zero remaining paid allowance can still reuse a later cached phrase withou
   const row = orchestrationRow({ websiteUrl: null });
   const queries = salonOwnerSearchQueries(row);
   const deps = mockDependencies(row, {
-    cacheByKey: { [queries[2].cacheKey]: [{ link: "https://fixture.example/about" }] },
+    cacheByKey: { [queries[2].cacheKey]: [{ title: "Curly Tails", link: "https://fixture.example/about" }] },
     fetchPage: async url => matchedPage(url),
   });
   try {
@@ -912,7 +973,7 @@ test("later cache, usage and reservation failures preserve earlier candidates an
         orchestrationRow({ id: "next-row", businessName: "Next Salon", websiteUrl: null })];
       const deps = mockDependencies(rows[0], {
         rows, fault: { stage, at: 2 },
-        fetchProvider: async () => providerResponse([{ link: "https://www.nextdoor.com/public/", snippet: "Owner Jane Smith." }]),
+        fetchProvider: async () => providerResponse([{ link: "https://www.nextdoor.com/public/", snippet: "Curly Tails. Owner Jane Smith." }]),
       });
       try {
         const batch = await lookupSalonOwnerNameBatch(rows, rows[0].userId, 2, 3);
@@ -958,7 +1019,7 @@ test("wrong-location fallback pages do not confirm ownership and failed fetch at
     const row = orchestrationRow({ websiteUrl: null });
     const deps = mockDependencies(row, {
       fetchProvider: async () => providerResponse(Array.from({ length: 6 }, (_, index) => ({
-        link: `https://fixture.example/page-${index}`, snippet: "Owner Jane Smith.",
+        link: `https://fixture.example/page-${index}`, snippet: "Curly Tails. Owner Jane Smith.",
       }))),
       fetchPage: async url => url.endsWith("0")
         ? { url, html: "<main>Curly Tails, 999 Wrong St, Dallas, TX 75001. Owner/operator: Jane Smith.</main>" }
@@ -982,7 +1043,7 @@ test("later quota exhaustion or provider timeout preserves prior review candidat
         reserveLimit: quotaFailure ? 1 : undefined,
         providerTimeoutMs: 15,
         fetchProvider: async () => deps.observed.providerAttempts === 1
-          ? providerResponse([{ link: "https://www.nextdoor.com/public/", snippet: "Owner Jane Smith." }])
+          ? providerResponse([{ link: "https://www.nextdoor.com/public/", snippet: "Curly Tails. Owner Jane Smith." }])
           : new Promise(() => {}),
       });
       try {

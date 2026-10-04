@@ -1,4 +1,5 @@
 import type { SalonEnrichmentRow } from "@shared/schema";
+import { mentionsOwnerBusiness } from "@shared/salonOwnerDiscoveryRelevance";
 
 type Identity = Pick<SalonEnrichmentRow, "businessName" | "address" | "city" | "state">;
 type OrganicResult = { title?: string; link?: string; snippet?: string };
@@ -17,7 +18,7 @@ export function prioritizeOwnerResults(row: Identity, results: OrganicResult[]):
   const business = normalized(row.businessName);
   const score = (result: OrganicResult) => {
     const text = [result.title, result.snippet].filter(Boolean).join(" ");
-    const mentionsBusiness = business && normalized(text).includes(business);
+    const mentionsBusiness = business && mentionsOwnerBusiness(row.businessName, text);
     const ownerRole = /\b(?:owner|owners|founder|co-founder|proprietor|owned and operated)\b/i.test(text);
     let path = "";
     try { path = new URL(result.link || "").pathname; } catch { /* Invalid URLs are filtered before fetching. */ }
@@ -41,7 +42,7 @@ export function ownerInterviewDiscoveryText(row: Identity, text: string): string
     for (let size = 1; size <= 3 && index + size <= lines.length; size++) {
       const block = lines.slice(index, index + size).join("\n");
       if (block.length > 4000) continue;
-      if (normalized(block).includes(business) &&
+      if (mentionsOwnerBusiness(row.businessName, block) &&
           /\bmy name is\b/i.test(block) && /\b(?:owner|founder|proprietor)\b/i.test(block)) {
         blocks.push(block);
         index += size - 1;

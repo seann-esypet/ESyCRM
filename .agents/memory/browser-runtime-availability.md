@@ -20,3 +20,9 @@ Workflow fixtures must represent lifecycle changes, not just return successful m
 **Why:** A success-only mocked walkthrough can conceal stale previews and incompatible progress response shapes even while all visible buttons appear to work.
 
 **How to apply:** Wait for the completed confirmation controls rather than generic row-count text. Verify that asynchronous results appear without navigation and that missing or stale previews disable scheduling. Keep fixture verification distinct from real signed-in verification.
+
+Browser fixtures must reproduce complete HTTP response contracts, not just the output of lower-level policy helpers.
+
+**Why:** An otherwise successful Leads browser walkthrough omitted owner review entirely because its fixture lacked metadata added by the real HTTP response. Passing contact-creation checks did not establish that owner review had rendered or refreshed.
+
+**How to apply:** Match the actual endpoint envelope and assert the relevant review panel and its refreshed results are present. Missing fixture fields must not silently turn a feature test into a test of an unrelated path.
