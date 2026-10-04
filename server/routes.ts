@@ -2254,7 +2254,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const result = await storage.bulkCreateEmailSequenceLogs(
         sequenceId, contactIds, userId, scheduledDate,
-        customSubject || undefined, customBody || undefined
+        customSubject || undefined, customBody || undefined, undefined,
+        { manualNewSequence: true }
       );
       
       res.status(201).json({
@@ -2434,9 +2435,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const existingLogs = await storage.getEmailSequenceLogs(userIdForQuery, contactId);
-      const hasSequence1 = existingLogs.some(l => l.sequenceNumber === 1 && l.sequenceTrack === sequenceTrack);
+      const hasSequence1 = existingLogs.some(l => ["pending", "processing", "needs_review"].includes(l.status));
       if (hasSequence1) {
-        return res.status(400).json({ message: "Sequence 1 has already been started for this contact" });
+        return res.status(400).json({ message: "This contact has active outreach. Review it before starting a new sequence." });
       }
 
       const log = await storage.createEmailSequenceLog(
@@ -2448,7 +2449,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           status: "pending",
           scheduledSendAt: new Date(scheduledSendAt),
         },
-        ownerId
+        ownerId, undefined, { manualNewSequence: true }
       );
 
       res.status(201).json(log);

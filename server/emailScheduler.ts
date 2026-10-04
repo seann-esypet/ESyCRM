@@ -1,6 +1,6 @@
 import { storage } from "./storage";
 import { sendSequenceEmail } from "./sendgrid";
-import { claimRecipientSend, recordRecipientOutcome } from "./recipientOutreach";
+import { claimRecipientSend, recordRecipientOutcome, retainedRecipientEvidence } from "./recipientOutreach";
 import type { Contact, EmailSequence, EmailSequenceLog } from "@shared/schema";
 
 /**
@@ -130,7 +130,7 @@ async function shouldSendFollowUpSequence(
  * Only applies to the two auto-track types (no_software, uses_competitor).
  * Sequences 2→3→4→5 are created automatically; the chain stops if the contact replies.
  */
-async function scheduleNextSequence(
+export async function scheduleNextSequence(
   sentLog: EmailSequenceLog,
   sentSequence: EmailSequence,
   sentAt: Date
@@ -141,18 +141,23 @@ async function scheduleNextSequence(
   const nextNumber = sentSequence.sequenceNumber + 1;
   if (sentSequence.strategy === "directory_first" && nextNumber > 4) return;
   if (nextNumber > 5) return;
+  const [run] = await retainedRecipientEvidence([sentLog]);
 
   // Stop the chain if the contact has already replied
   const inboxMessages = await storage.getInboxMessages(null, sentLog.contactId);
-  if (inboxMessages.length > 0) {
+  const runStartedAt = run.sequenceRunStartedAt ? new Date(run.sequenceRunStartedAt).getTime() : null;
+  if (inboxMessages.some(message => runStartedAt === null || !message.receivedAt ||
+    new Date(message.receivedAt).getTime() >= runStartedAt)) {
     console.log(`[AutoChain] Contact ${sentLog.contactId} has replied — not scheduling Sequence ${nextNumber}`);
     return;
   }
 
-  // Don't create a duplicate log if one already exists for this contact + track + sequence number
+  // Past runs must not suppress the new run's follow-ups; duplicates within a run still do.
   const existingLogs = await storage.getEmailSequenceLogs(null, sentLog.contactId);
-  const alreadyScheduled = existingLogs.some(
-    l => l.sequenceNumber === nextNumber && l.sequenceTrack === sentSequence.sequenceTrack
+  const existingEvidence = run.sequenceRunId ? await retainedRecipientEvidence(existingLogs) : existingLogs;
+  const alreadyScheduled = existingEvidence.some(
+    l => l.sequenceNumber === nextNumber && l.sequenceTrack === sentSequence.sequenceTrack &&
+      (!run.sequenceRunId || ("sequenceRunId" in l && l.sequenceRunId === run.sequenceRunId))
   );
   if (alreadyScheduled) return;
 
@@ -177,7 +182,7 @@ async function scheduleNextSequence(
       status: "pending",
       scheduledSendAt: nextSendAt,
     },
-    sentLog.userId
+    sentLog.userId, undefined, run.sequenceRunId ? { sequenceRunId: run.sequenceRunId } : {}
   );
 
   console.log(

@@ -5,6 +5,8 @@ import { PgDialect } from "drizzle-orm/pg-core";
 import { db } from "./db";
 import { claimRecipientSend, recipientHistory, recordRecipientOutcome, reserveRecipientLog, reconcileRecipientOutcome } from "./recipientOutreach";
 import { normalizeRecipient, recipientConflict, latestRecipientEvents, type RecipientEvent } from "./recipientPolicy";
+import { storage } from "./storage";
+import { scheduleNextSequence } from "./emailScheduler";
 
 test("normalization never guesses aliases; sent intro allows only its intended later steps", () => {
   assert.equal(normalizeRecipient("  Team@Fixture.Example "), "team@fixture.example");
@@ -16,6 +18,16 @@ test("normalization never guesses aliases; sent intro allows only its intended l
   assert.match(recipientConflict(event.recipient, 2, "salon_custom", event.userId, event.contactId, [event], new Set())!, /preceding/);
   assert.match(recipientConflict(event.recipient, 2, event.sequenceTrack, "owner2", "contact2", [event], new Set())!, /preceding/);
   assert.equal(latestRecipientEvents([{ ...event, state: "attempted" }, event])[0].state, "sent");
+  assert.equal(recipientConflict(event.recipient, 1, event.sequenceTrack, event.userId, event.contactId,
+    [event], new Set(), undefined, "new-run"), null, "manual runs can start despite previous sends");
+  assert.match(recipientConflict(event.recipient, 1, event.sequenceTrack, event.userId, event.contactId,
+    [{ ...event, state: "scheduled" }], new Set([event.logId]), undefined, "new-run")!, /Already scheduled/);
+  for (const state of ["attempted", "uncertain"] as const) {
+    assert.match(recipientConflict(event.recipient, 1, event.sequenceTrack, event.userId, event.contactId,
+      [{ ...event, state }], new Set(), undefined, "new-run")!, /Uncertain delivery/);
+  }
+  assert.match(recipientConflict(event.recipient, 2, event.sequenceTrack, event.userId, event.contactId,
+    [event], new Set(), undefined, "new-run")!, /preceding/, "old runs cannot authorize a new follow-up");
 });
 test("transactional address reservations cover concurrent owners, sends, edits, follow-ups and failed status save", async () => {
   const database = db as any, original = { transaction: database.transaction, select: database.select };
@@ -29,8 +41,8 @@ test("transactional address reservations cover concurrent owners, sends, edits, 
     if (!condition) return true;
     const query = dialect.sqlToQuery(condition);
     if (query.sql.includes('lower(trim(')) return normalizeRecipient(row.email) === query.params[0];
-    const field = query.sql.includes('"type"') ? "type" : "id";
-    return row[field] === query.params[0];
+    const columns = [...query.sql.matchAll(/"(\w+)"\s*=\s*\$\d+/g)];
+    return columns.every((match, index) => row[match[1].replace(/_([a-z])/g, (_, letter) => letter.toUpperCase())] === query.params[index]);
   };
   const tx: any = {
     execute: async () => { locks++; },
@@ -95,6 +107,70 @@ test("transactional address reservations cover concurrent owners, sends, edits, 
     memory.email_sequence_logs.push({id:"unknown-history",contactId:"legacy",userId:"legacyOwner",status:"sent",sequenceNumber:1});
     assert.equal((await recipientHistory("legacy@fixture.example","legacyOwner")).label,"Uncertain history");
     await assert.rejects(()=>reserveRecipientLog(input("legacy"),"legacyOwner"), /Uncertain history/);
+    const manual = { manualNewSequence: true };
+    for (const status of ["pending", "processing", "needs_review"]) {
+      memory.email_sequence_logs.find(l=>l.id==="unknown-history").status=status;
+      await assert.rejects(()=>reserveRecipientLog(input("legacy"),"legacyOwner",undefined,manual), /Uncertain history/);
+    }
+    memory.email_sequence_logs.find(l=>l.id==="unknown-history").status="sent";
+    await assert.rejects(()=>reserveRecipientLog(input("legacy"),"wrong-owner",undefined,manual), /same CRM owner/);
+    await assert.rejects(()=>reserveRecipientLog(input("legacy"),"legacyOwner","different@fixture.example",manual), /changed during enrollment/);
+
+    // Exercise the real bulk storage path used by Start New Sequence, not a mocked success.
+    const crm = storage as any;
+    const methods = ["getContact", "getEmailSequence", "getSalonReportSendRejection",
+      "getInboxMessages", "getEmailSequenceLogs", "getEmailSequencesByTrack"];
+    const originals = Object.fromEntries(methods.map(method=>[method,crm[method]]));
+    const template = (step: number) => ({id:`template-${step}`,userId:"legacyOwner",strategy:"directory_first",
+      sequenceTrack:"directory_general",sequenceNumber:step,isActive:"true",daysAfterNoReply:7});
+    try {
+      crm.getContact=async(id:string)=>memory.contacts.find(c=>c.id===id);
+      crm.getEmailSequence=async()=>template(1);
+      crm.getSalonReportSendRejection=async()=>null;
+      const enroll = () => crm.bulkCreateEmailSequenceLogs("template-1",["legacy"],"legacyOwner",
+        new Date(Date.now()+60_000),undefined,undefined,undefined,manual);
+      const scheduled = await enroll();
+      assert.equal(scheduled.successful.length,1);
+      const newLog = scheduled.successful[0];
+      const evidence = memory.activities.map(a=>JSON.parse(a.description)).find(e=>e.logId===newLog.id);
+      assert.equal(evidence.sequenceRunId,newLog.id);
+      assert.equal(evidence.recipient,"legacy@fixture.example");
+      assert.match((await enroll()).failed[0].error,/already in/);
+      memory.contacts.push({id:"legacy-other",userId:"anotherOwner",email:"legacy@fixture.example"});
+      await assert.rejects(()=>reserveRecipientLog(input("legacy-other"),"anotherOwner",undefined,manual), /Already scheduled/,
+        "manual enrollment still protects the same address across CRM owners");
+      assert.ok("recipient" in await claimRecipientSend(newLog.id), "historical missing snapshots also do not block the scheduler");
+      await assert.rejects(()=>reserveRecipientLog(input("legacy"),"legacyOwner",undefined,manual), /Uncertain delivery/);
+      await recordRecipientOutcome(newLog.id,true,"fixture-new-run");
+      assert.equal(memory.email_sequence_logs.find(l=>l.id==="unknown-history").status,"sent", "past history is preserved");
+
+      // A completed older run's step 2 and reply must not suppress this new run's step 2.
+      memory.email_sequence_logs.push({id:"old-step-2",contactId:"legacy",userId:"legacyOwner",
+        status:"sent",sequenceNumber:2,sequenceTrack:"directory_general",sequenceId:"template-2"});
+      crm.getInboxMessages=async()=>[{receivedAt:new Date("2020-01-01")}];
+      crm.getEmailSequenceLogs=async()=>memory.email_sequence_logs.filter(l=>l.contactId==="legacy");
+      crm.getEmailSequencesByTrack=async()=>[template(2),template(3)];
+      crm.getEmailSequence=async(id:string)=>template(Number(id.split("-").at(-1)));
+      await scheduleNextSequence(newLog,template(1) as any,new Date());
+      const next = memory.email_sequence_logs.find(l=>l.contactId==="legacy"&&l.sequenceNumber===2&&l.status==="pending");
+      assert.ok(next, "the new run gets its own follow-up");
+      assert.equal(memory.activities.map(a=>JSON.parse(a.description)).find(e=>e.logId===next.id).sequenceRunId,newLog.id);
+      const count=memory.email_sequence_logs.length;
+      await scheduleNextSequence(newLog,template(1) as any,new Date());
+      assert.equal(memory.email_sequence_logs.length,count, "a run's follow-up cannot be queued twice");
+      assert.ok("recipient" in await claimRecipientSend(next.id));
+      await recordRecipientOutcome(next.id,true,"fixture-new-followup");
+      crm.getInboxMessages=async()=>[{receivedAt:new Date(Date.now()+60_000)}];
+      await scheduleNextSequence(next,template(2) as any,new Date());
+      assert.equal(memory.email_sequence_logs.length,count, "new replies still stop the new run");
+
+      // Completing this run permits another explicit run, even using the same template.
+      crm.getEmailSequence=async()=>template(1);
+      const later = await enroll();
+      assert.equal(later.successful.length,1);
+      memory.contacts.find(c=>c.id==="legacy").email="changed-after-manual-enrollment@fixture.example";
+      assert.match((await claimRecipientSend(later.successful[0].id) as {rejection:string}).rejection,/changed/);
+    } finally { for(const method of methods) crm[method]=originals[method]; }
     assert.ok(locks>=6);
   } finally { database.transaction=original.transaction;database.select=original.select; }
 });

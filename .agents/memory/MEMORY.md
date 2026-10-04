@@ -12,3 +12,4 @@
 - [Post-merge data safety](post-merge-data-safety.md) — automatic setup rebuilds the app; merging code does not authorize database pushes, research, imports, or outreach.
 - [Google Places demo access](google-places-demo-access.md) — the user says the demo key may expire and billing needs updating if it stops working.
 - [Published salon research](published-salon-research.md) — one stored directory with incremental progress; manual review, approved import, then pipeline.
+- [Manual sequence restarts](manual-sequence-restarts.md) — past outreach is not a permanent ban on a manually chosen future sequence; retain active-send safeguards.

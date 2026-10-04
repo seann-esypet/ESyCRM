@@ -169,7 +169,7 @@ function response(request) {
   if (url.pathname === "/api/email-sequence-logs") {
     if (failLogs) return { status: 503, body: { message: "Fixture history failure" } };
     const id = url.searchParams.get("contactId");
-    return { body: id === "empty" ? scheduled ? [historyLog("empty", "pending")] : [] : [historyLog(id)] };
+    return { body: id === "empty" ? scheduled ? [historyLog("empty", "pending")] : [] : [historyLog(id, id === "pending" ? "pending" : "sent")] };
   }
   if (url.pathname === "/api/email-sequences") return { body: [{
     id: "sequence-1", subject: "Fixture sequence", strategy: "legacy", sequenceNumber: 1,
@@ -271,6 +271,17 @@ try {
   await prominentStatus("card");
   await evaluate("document.documentElement.classList.remove('dark')");
   console.log("PASS combined filters, view switching and administrator owner selection");
+
+  await evaluate(`document.querySelector('[data-testid="deal-card-sent"] button[aria-label="Email history"]').click()`);
+  await until(`!!document.querySelector('[data-testid="button-initiate-sequence"]')`, "completed history allows a new manual sequence");
+  await evaluate(`Array.from(document.querySelectorAll('[role="dialog"] button')).find(el=>el.textContent.trim()==='Close').click()`);
+  await until(`!document.querySelector('[role="dialog"]')`, "completed-history dialog closed");
+  await evaluate(`document.querySelector('[data-testid="deal-card-pending"] button[aria-label="Email history"]').click()`);
+  await until(`!!document.querySelector('[data-testid="button-reschedule-log-pending"]')`, "active history loaded");
+  assert.equal(await evaluate(`!!document.querySelector('[data-testid="button-initiate-sequence"]')`), false, "active outreach cannot be started twice");
+  await evaluate(`Array.from(document.querySelectorAll('[role="dialog"] button')).find(el=>el.textContent.trim()==='Close').click()`);
+  await until(`!document.querySelector('[role="dialog"]')`, "active-history dialog closed");
+  console.log("PASS completed history permits new manual enrollment while active history blocks duplicates");
 
   await evaluate(`document.querySelector('[data-testid="deal-card-empty"] button[aria-label="Email history"]').click()`);
   await until(`!!document.querySelector('[data-testid="button-initiate-sequence"]')`, "history dialog");

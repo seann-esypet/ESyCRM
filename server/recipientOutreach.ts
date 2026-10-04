@@ -3,7 +3,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { db } from "./db";
 import { activities, contacts, emailSequenceLogs } from "@shared/schema";
 import type { InsertEmailSequenceLog } from "@shared/schema";
-import { normalizeRecipient, recipientConflict, latestRecipientEvents, type RecipientEvent } from "./recipientPolicy";
+import { normalizeRecipient, recipientConflict, latestRecipientEvents, type RecipientEvent, type RecipientEnrollmentOptions } from "./recipientPolicy";
 
 const EVENT_TYPE = "recipient_outreach_evidence";
 async function state(tx: any) {
@@ -21,13 +21,13 @@ async function append(tx: any, event: RecipientEvent) {
   // Evidence deliberately has no contact FK: edits, merges and deletion must not erase the recipient snapshot.
   await tx.insert(activities).values({ userId: event.userId, type: EVENT_TYPE, description: JSON.stringify(event) });
 }
-function legacyConflict(logs: any[], events: RecipientEvent[], matchingContacts: any[], exclude?: string) {
+function legacyConflict(logs: any[], events: RecipientEvent[], matchingContacts: any[], exclude?: string, allowHistorical = false) {
   const known = new Set(events.map(event => event.logId));
   const ids = new Set(matchingContacts.map(contact => contact.id));
   return logs.some(log => log.id !== exclude && !known.has(log.id) && ids.has(log.contactId) &&
-    ["pending", "processing", "sent", "replied", "needs_review"].includes(log.status));
+    (allowHistorical ? ["pending", "processing", "needs_review"] : ["pending", "processing", "sent", "replied", "needs_review"]).includes(log.status));
 }
-export async function reserveRecipientLog(input: InsertEmailSequenceLog, userId: string, expectedRecipient?: string | null) {
+export async function reserveRecipientLog(input: InsertEmailSequenceLog, userId: string, expectedRecipient?: string | null, options: RecipientEnrollmentOptions = {}) {
   return db.transaction(async tx => {
     const [contact] = await tx.select().from(contacts).where(eq(contacts.id, input.contactId)).for("update");
     if (contact?.userId !== userId) throw new Error("Contact and sequence must belong to the same CRM owner.");
@@ -36,17 +36,19 @@ export async function reserveRecipientLog(input: InsertEmailSequenceLog, userId:
     if (!recipient) throw new Error("An email address is required.");
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`outreach:${recipient}`}))`);
     const current = await state(tx);
+    const id = randomUUID();
+    const sequenceRunId = input.sequenceNumber === 1 && options.manualNewSequence ? id : options.sequenceRunId;
     const matching = await tx.select().from(contacts).where(sql`lower(trim(${contacts.email})) = ${recipient}`);
-    if (legacyConflict(current.logs, current.events, matching)) {
+    if (legacyConflict(current.logs, current.events, matching, undefined, !!sequenceRunId)) {
       throw new Error("Uncertain history: existing outreach has no retained recipient address. Review it before enrollment.");
     }
     const conflict = recipientConflict(recipient, input.sequenceNumber, input.sequenceTrack || "salon_no_software",
-      userId, input.contactId, current.events, current.active);
+      userId, input.contactId, current.events, current.active, undefined, sequenceRunId);
     if (conflict) throw new Error(conflict);
-    const id = randomUUID();
     const [log] = await tx.insert(emailSequenceLogs).values({ ...input, id, userId }).returning();
     await append(tx, { logId: id, recipient, contactId: input.contactId, userId,
       sequenceTrack: log.sequenceTrack, sequenceNumber: log.sequenceNumber, state: "scheduled", at: new Date().toISOString(),
+      ...(sequenceRunId ? { sequenceRunId } : {}),
       ...(log.scheduledSendAt ? { scheduledSendAt: new Date(log.scheduledSendAt).toISOString() } : {}) });
     return log;
   });
@@ -77,12 +79,14 @@ export async function recipientHistoryReader(viewer: string | null) {
 export async function recipientHistory(email: string | null | undefined, viewer: string | null) {
   return (await recipientHistoryReader(viewer))(email);
 }
-export async function retainedRecipientEvidence(logs: { id: string }[]) {
+export async function retainedRecipientEvidence<T extends { id: string }>(logs: T[]) {
   const current = await state(db), events = latestRecipientEvents(current.events);
   return logs.map(log => {
     const event = events.find(event => event.logId === log.id);
     return { ...log, recipientAddress: event?.recipient || null,
-      recipientEvidence: event ? event.state : "unknown_historical_recipient" };
+      recipientEvidence: event ? event.state : "unknown_historical_recipient",
+      sequenceRunId: event?.sequenceRunId,
+      sequenceRunStartedAt: event?.sequenceRunId ? current.events.find(item => item.logId === event.sequenceRunId)?.at : undefined };
   });
 }
 export async function claimRecipientSend(logId: string, expectedRecipient?: string | null): Promise<{ recipient: string } | { rejection: string }> {
@@ -96,6 +100,7 @@ export async function claimRecipientSend(logId: string, expectedRecipient?: stri
     const current = await state(tx);
     const own = current.events.filter((event: RecipientEvent) => event.logId === logId);
     const snapshot = own[0]?.recipient;
+    const sequenceRunId = own[0]?.sequenceRunId;
     let rejection = (snapshot && normalizeRecipient(snapshot) !== recipient) ||
       (expectedRecipient && normalizeRecipient(expectedRecipient) !== recipient) ? "Contact email changed after scheduling or evidence validation. Review and explicitly schedule the new address." : null;
     if (contact?.userId !== log.userId) rejection = "Contact ownership changed after scheduling. Review this outreach.";
@@ -103,15 +108,16 @@ export async function claimRecipientSend(logId: string, expectedRecipient?: stri
       rejection = "This delivery may already have been accepted. Reconciliation is required; it will not be retried automatically.";
     }
     const matching = await tx.select().from(contacts).where(sql`lower(trim(${contacts.email})) = ${recipient}`);
-    if (!rejection && legacyConflict(current.logs, current.events, matching, logId)) rejection = "Uncertain legacy recipient history requires review.";
+    if (!rejection && legacyConflict(current.logs, current.events, matching, logId, !!sequenceRunId)) rejection = "Uncertain legacy recipient history requires review.";
     if (!rejection) rejection = recipientConflict(recipient, log.sequenceNumber, log.sequenceTrack,
-      log.userId, log.contactId, current.events, current.active, logId);
+      log.userId, log.contactId, current.events, current.active, logId, sequenceRunId);
     if (rejection) {
       await tx.update(emailSequenceLogs).set({ status: "needs_review", errorMessage: rejection }).where(eq(emailSequenceLogs.id, logId));
       return { rejection };
     }
     await append(tx, { logId, recipient, contactId: log.contactId, userId: log.userId, sequenceTrack: log.sequenceTrack,
-      sequenceNumber: log.sequenceNumber, state: "attempted", at: new Date().toISOString() });
+      sequenceNumber: log.sequenceNumber, state: "attempted", at: new Date().toISOString(),
+      ...(sequenceRunId ? { sequenceRunId } : {}) });
     await tx.update(emailSequenceLogs).set({ status: "processing", processingStartedAt: new Date() }).where(eq(emailSequenceLogs.id, logId));
     return { recipient };
   });
@@ -164,6 +170,7 @@ export async function reconcileRecipientOutcome(logId: string, owner: string | n
       sequenceTrack: log.sequenceTrack, sequenceNumber: log.sequenceNumber, state: input.outcome === "accepted" ? "sent" : "failed",
       at: new Date().toISOString(), reviewedBy: actor, reviewNote: String(input.note).trim(),
       source: "manual_provider_review", ...(input.outcome === "accepted" ? { messageId: String(input.providerMessageId).trim(), acceptedAt:acceptedAt!.toISOString() } : {}) };
+    if (prior?.sequenceRunId) event.sequenceRunId = prior.sequenceRunId;
     await append(tx,event);
     const [updated] = await tx.update(emailSequenceLogs).set({ status: input.outcome === "accepted" ? "sent" : "failed",
       ...(input.outcome === "accepted" ? { brevoMessageId: event.messageId, sentAt: acceptedAt } : {}),

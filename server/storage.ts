@@ -70,6 +70,7 @@ import {
 import { normalizePhoneNumber, normalizeName, normalizeEmail } from "@shared/utils";
 import { db } from "./db";
 import { reserveRecipientLog } from "./recipientOutreach";
+import type { RecipientEnrollmentOptions } from "./recipientPolicy";
 import { eq, desc, and, sql, gte, lte, or, ne, inArray, isNull } from "drizzle-orm";
 import { DIRECTORY_FIRST_STRATEGY, DIRECTORY_TRACKS, directoryEmailSequenceTemplates } from "./directoryEmailSequences";
 import { importableSalonEmail } from "./bookingPageEmail";
@@ -305,8 +306,8 @@ export interface IStorage {
   // Email Sequence Logs
   getEmailSequenceLogs(userId: string | null, contactId?: string): Promise<EmailSequenceLog[]>;
   getEmailSequenceLogById(id: string, userId: string | null): Promise<EmailSequenceLog | undefined>;
-  createEmailSequenceLog(log: InsertEmailSequenceLog, userId: string, expectedRecipient?: string): Promise<EmailSequenceLog>;
-  bulkCreateEmailSequenceLogs(sequenceId: string, contactIds: string[], userId: string | null, scheduledSendAt?: Date | null, customSubject?: string, customBody?: string, expectedRecipients?: Record<string,string>): Promise<{ successful: EmailSequenceLog[], failed: Array<{ contactId: string, error: string }> }>;
+  createEmailSequenceLog(log: InsertEmailSequenceLog, userId: string, expectedRecipient?: string, options?: RecipientEnrollmentOptions): Promise<EmailSequenceLog>;
+  bulkCreateEmailSequenceLogs(sequenceId: string, contactIds: string[], userId: string | null, scheduledSendAt?: Date | null, customSubject?: string, customBody?: string, expectedRecipients?: Record<string,string>, options?: RecipientEnrollmentOptions): Promise<{ successful: EmailSequenceLog[], failed: Array<{ contactId: string, error: string }> }>;
   updateEmailSequenceLog(id: string, log: Partial<InsertEmailSequenceLog>, userId: string | null): Promise<EmailSequenceLog | undefined>;
   deleteEmailSequenceLog(id: string, userId: string | null): Promise<boolean>;
   
@@ -1342,7 +1343,7 @@ export class DatabaseStorage implements IStorage {
     return log;
   }
 
-  async createEmailSequenceLog(insertLog: InsertEmailSequenceLog, userId: string, expectedRecipient?:string): Promise<EmailSequenceLog> {
+  async createEmailSequenceLog(insertLog: InsertEmailSequenceLog, userId: string, expectedRecipient?:string, options: RecipientEnrollmentOptions = {}): Promise<EmailSequenceLog> {
     const contact = await this.getContact(insertLog.contactId, null);
     if (!contact) throw new Error("Contact not found");
     const rejection = await this.getSalonReportSendRejection(contact.id, userId, contact.userId, contact.email);
@@ -1352,10 +1353,10 @@ export class DatabaseStorage implements IStorage {
     if (sequence.sequenceNumber !== insertLog.sequenceNumber || (insertLog.sequenceTrack && sequence.sequenceTrack !== insertLog.sequenceTrack)) {
       throw new Error("Sequence step or audience changed; refresh the enrollment preview.");
     }
-    return reserveRecipientLog({ ...insertLog, sequenceTrack:sequence.sequenceTrack }, userId, expectedRecipient??contact.email);
+    return reserveRecipientLog({ ...insertLog, sequenceTrack:sequence.sequenceTrack }, userId, expectedRecipient??contact.email, options);
   }
 
-  async bulkCreateEmailSequenceLogs(sequenceId: string, contactIds: string[], userId: string | null, scheduledSendAt?: Date | null, customSubject?: string, customBody?: string, expectedRecipients?:Record<string,string>): Promise<{ successful: EmailSequenceLog[], failed: Array<{ contactId: string, error: string }> }> {
+  async bulkCreateEmailSequenceLogs(sequenceId: string, contactIds: string[], userId: string | null, scheduledSendAt?: Date | null, customSubject?: string, customBody?: string, expectedRecipients?:Record<string,string>, options: RecipientEnrollmentOptions = {}): Promise<{ successful: EmailSequenceLog[], failed: Array<{ contactId: string, error: string }> }> {
     const successful: EmailSequenceLog[] = [];
     const failed: Array<{ contactId: string, error: string }> = [];
     
@@ -1457,7 +1458,8 @@ export class DatabaseStorage implements IStorage {
             eq(emailSequenceLogs.sequenceId, sequenceId)
           ));
         
-        if (existingLogs.length > 0) {
+        const newManualRun = options.manualNewSequence && sequence.sequenceNumber === 1;
+        if (existingLogs.some(log => !newManualRun || ["pending", "processing", "needs_review"].includes(log.status))) {
           failed.push({
             contactId,
             error: "Contact is already in this email sequence"
@@ -1477,7 +1479,7 @@ export class DatabaseStorage implements IStorage {
             ...(scheduledSendAt ? { scheduledSendAt } : {}),
             ...(customSubject ? { customSubject } : {}),
             ...(customBody ? { customBody } : {}),
-          }, sequenceOwnerId,expectedRecipients?.[contactId]);
+          }, sequenceOwnerId,expectedRecipients?.[contactId], options);
         
         successful.push(log);
       } catch (error) {

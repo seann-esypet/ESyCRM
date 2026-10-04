@@ -396,9 +396,8 @@ export default function Deals() {
     initiateMutation.mutate({ contactId: emailHistoryContactId, scheduledSendAt });
   };
 
-  const contactTrack = `${emailHistoryContact?.businessType || "salon"}_${emailHistoryContact?.usesSoftware === "Yes" ? "uses_competitor" : "no_software"}`;
-  const hasSequence1ForTrack = sequenceLogs?.some(
-    l => l.sequenceNumber === 1 && l.sequenceTrack === contactTrack
+  const hasActiveOutreach = sequenceLogs?.some(
+    l => ["pending", "processing", "needs_review"].includes(l.status)
   ) ?? false;
   const canInitiateSequence = !!emailHistoryContactId
     && !!emailHistoryContact
@@ -406,7 +405,7 @@ export default function Deals() {
     && isLogsSuccess
     && !isFetchingLogs
     && !isLogsError
-    && !hasSequence1ForTrack;
+    && !hasActiveOutreach;
 
   const handleEdit = (deal: Deal) => {
     setSelectedDeal(deal);
