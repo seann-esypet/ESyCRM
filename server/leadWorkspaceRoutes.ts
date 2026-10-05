@@ -13,6 +13,7 @@ import { recoveredLeadEvidence } from "./leadWorkspaceSavedEvidence";
 import { renderLeadSequencePreview } from "./leadSequencePreview";
 import { salonCrmDuplicates, salonCrmDuplicateReasons } from "./salonCrmDuplicates";
 import { leadRecipient } from "@shared/leadWorkflowState";
+import { controlFullResearch } from "./fullResearchQueue";
 
 const scope = (req: any) => req.user.claims.role === "admin" ? null : req.user.claims.sub as string;
 function confirmed(req: any) { if (req.body?.confirmed !== true) throw new Error("Confirm this action before continuing."); }
@@ -177,6 +178,16 @@ export function registerLeadWorkspaceRoutes(app: Express, auth: RequestHandler) 
         rowId:item.duplicate.id,batchId:item.duplicate.batchId,protected:item.duplicate.reviewStatus==="approved"||!!item.duplicate.importedContactId})) };
   });
   route("get", "/api/leads/:id/estimate", req => leadResearchEstimate(req.params.id, scope(req)));
+  async function fullResearchControl(req: any, action: string) {
+    confirmed(req);
+    const batch = await storage.getSalonEnrichmentBatch(req.params.id, scope(req));
+    if (!batch) throw new Error("Saved list not found or inaccessible.");
+    return controlFullResearch(batch.id, batch.userId, action, req.body);
+  }
+  route("post", "/api/leads/:id/full-research", req => fullResearchControl(req, "start"));
+  for (const action of ["pause", "resume", "recover"]) {
+    route("post", `/api/leads/:id/full-research/${action}`, req => fullResearchControl(req, action));
+  }
   route("post", "/api/leads/:id/research", async req => { confirmed(req); return startLeadResearch(req.params.id, req.user.claims.sub, req.body); });
   route("post", "/api/leads/:id/resume", async req => { confirmed(req); return startLeadResearch(req.params.id, req.user.claims.sub, req.body, true); });
   route("post", "/api/leads/:id/pause", async req => { confirmed(req); return pauseLeadResearch(req.params.id, req.user.claims.sub); });

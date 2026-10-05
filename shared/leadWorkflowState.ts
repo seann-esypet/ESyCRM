@@ -1,11 +1,12 @@
 export type LeadResearchProgress = {
+  fullResearch?: import("./fullResearch").FullResearchProgress;
   leadResearch?: {
     processedIds?: string[]; rowIds?: string[]; attemptedCalls?: number;
     providerCalls?: number; cacheHits?: number; maxProviderCalls?: number;
   };
 };
-export function leadResearchNeedsRefresh(batch?: { status?: string }, rows: { status?: string }[] = []) {
-  return batch?.status === "running" || rows.some(row => row.status === "processing");
+export function leadResearchNeedsRefresh(batch?: { status?: string; researchProgress?: LeadResearchProgress }, rows: { status?: string }[] = []) {
+  return batch?.status === "running" || !!batch?.researchProgress?.fullResearch?.enabled || rows.some(row => row.status === "processing");
 }
 export function leadRecipient(email: unknown) {
   return typeof email === "string" ? email.trim().toLowerCase() : "";

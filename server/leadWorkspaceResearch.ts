@@ -28,11 +28,15 @@ export async function leadResearchEstimate(id: string, owner: string | null) {
     active: active.has(id) || salonEnrichmentIsActive(id), reason: closed ? RESEARCH_READ_ONLY : null };
 }
 export async function pauseLeadResearch(id: string, owner: string) {
+  const existing = await storage.getSalonEnrichmentBatch(id, owner);
+  if (directoryObject(existing?.researchProgress).fullResearch) throw new Error("Use Pause Full Research for this list.");
   const batch = await storage.updateSalonEnrichmentBatch(id, { status: "paused", pausedAt: new Date() }, owner);
   if (!batch) throw new Error("Saved list not found or not owned by you.");
   return batch;
 }
 export async function recoverLeadResearch(id:string,owner:string){
+  const existing = await storage.getSalonEnrichmentBatch(id, owner);
+  if (directoryObject(existing?.researchProgress).fullResearch) throw new Error("Use Full Research recovery for this list.");
   if(active.has(id)||salonEnrichmentIsActive(id))throw new Error("A worker is active. Pause it and wait for the current row; do not recover live work.");
   return db.transaction(async tx=>{
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`lead-research:${id}`}))`);
@@ -52,6 +56,7 @@ export async function startLeadResearch(id: string, owner: string, input: any, r
   const existing = await storage.getSalonEnrichmentBatch(id, owner);
   if (!existing) throw new Error("Saved list not found or not owned by you.");
   const metadata = directoryObject(existing.researchProgress), previous = directoryObject(metadata.leadResearch);
+  if (metadata.fullResearch) throw new Error("Use this list's Full Research controls. Its cumulative paid-request limits cannot be reset by the manual tool.");
   const rowLimit = resume ? Number(previous.rowLimit) : Number(input.rowLimit);
   const maxProviderCalls = resume ? Number(previous.maxProviderCalls) : Number(input.maxProviderCalls);
   if (!Number.isInteger(rowLimit) || rowLimit < 1 || rowLimit > 100 ||
@@ -67,6 +72,7 @@ export async function startLeadResearch(id: string, owner: string, input: any, r
     if (isResearchDirectoryBatch(batch) || rows.some(isResearchDirectoryRow)) throw new Error(RESEARCH_READ_ONLY);
     if (rows.some(row => row.status === "processing")) throw new Error("A prior row is still processing; reconcile its state before retrying.");
     const source = directoryObject(batch.researchProgress), prior = directoryObject(source.leadResearch);
+    if (source.fullResearch) throw new Error("Use Full Research controls to retain this list's paid-request accounting.");
     if (resume && (!prior.runId || !["paused", "failed"].includes(batch.status))) throw new Error("There is no paused research batch to resume.");
     const selectedIds = resume ? prior.rowIds as string[] : rows.filter(unresolved).slice(0, rowLimit).map(row => row.id);
     if (!selectedIds?.length) throw new Error("No unresolved rows are available.");

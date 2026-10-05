@@ -1138,6 +1138,22 @@ export async function lookupSalonOwnerName(
   return lookupSalonOwnerNameTracked(rowId, userId, providerAllowance, searchesPerRow, newOwnerLookupProgress());
 }
 
+/** Candidate research only: shares the queue's durable paid-request guard and
+ * never approves names, updates Contacts, or changes greeting preferences. */
+export async function researchSalonOwnerCandidates(
+  row: SalonEnrichmentRow,
+  beforeProvider: () => Promise<void>,
+): Promise<OwnerNameResult> {
+  const progress = { ...newOwnerLookupProgress(), beforeProvider };
+  try {
+    return (await performLookup(row, 3, 3, progress)).ownerName;
+  } catch (error) {
+    return { ...EMPTY_OWNER_NAME_RESULT, status: progress.candidates.length ? "needs_review" : "failed",
+      candidates: progress.candidates, providerCalls: progress.calls, pagesFetched: progress.pages.count,
+      lookedUpAt: new Date().toISOString(), error: error instanceof Error ? error.message : "Name research failed." };
+  }
+}
+
 async function lookupSalonOwnerNameTracked(
   rowId: string, userId: string, providerAllowance: number | boolean, searchesPerRow: 1 | 3,
   progress: OwnerLookupProgress,

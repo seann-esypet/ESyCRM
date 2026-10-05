@@ -14,3 +14,4 @@
 - [Published salon research](published-salon-research.md) — one stored directory with incremental progress; manual review, approved import, then pipeline.
 - [Manual sequence restarts](manual-sequence-restarts.md) — past outreach is not a permanent ban on a manually chosen future sequence; retain active-send safeguards.
 - [CRM plan scope](crm-plan-scope.md) — directory and pay-as-you-go assignments do not authorize billing, new commission rates, or historical financial changes.
+- [Full Research authorization](full-research-authorization.md) — initial per-list limits are 20 businesses/hour, 40 requests/hour, 200 total; building controls does not authorize paid searches.

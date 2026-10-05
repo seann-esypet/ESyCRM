@@ -107,7 +107,76 @@ async function reviewThroughScheduling(entry) {
   await until("document.querySelector('article').innerText.includes('Already scheduled')","retained scheduling history");
   assert.deepEqual(writes,[entry,"review","crm","pipeline","schedule"]);
 }
+async function fullResearchUiCase(origin){
+  writes.length=0;
+  const batch={id:"fixture-full-list",name:"Full Research fixture",status:"completed",totalRows:1,createdAt:new Date().toISOString()};
+  batches.push(batch);
+  rows=[{...unifiedUploadRow({Business:"Full Research Fixture Grooming",Address:"1 Main Street Austin TX",State:"TX"},0,"fixture-owner"),id:"fixture-full-row",batchId:batch.id,serpCallsUsed:0}];
+  const selector=id=>`document.querySelector('[data-testid="${id}"]')`;
+  const load=async()=>{await send("Page.navigate",{url:origin+"/leads/"+batch.id});await until(selector("full-research-panel"),"Full Research controls");await pause(150);};
+  const press=async id=>{await until(`${selector(id)}&&!${selector(id)}.disabled`,id);await evaluate(`${selector(id)}.click()`);await pause(100);};
+  await load();
+  assert.equal(await evaluate(`${selector("full-research-start")}.disabled`),true);
+  assert.equal(await evaluate(`${selector("full-research-businesses-hour")}.value`),"20");
+  assert.equal(await evaluate(`${selector("full-research-paid-hour")}.value`),"40");
+  assert.equal(await evaluate(`${selector("full-research-paid-total")}.value`),"200");
+  assert.deepEqual(writes,[]);
+  await press("full-research-consent");await press("full-research-start");
+  await until(selector("full-research-pause"),"waiting hourly can be paused");
+  assert.deepEqual(writes,["full-start"]);
+  assert.equal(await evaluate("document.body.innerText.includes('Review estimate & research')"),false);
+  await press("full-research-pause");await until(selector("full-research-resume"),"separate resume confirmation");
+  assert.equal(await evaluate(`${selector("full-research-resume")}.disabled`),true);
+  await evaluate("document.getElementById('full-research-resume-confirmation').click()");
+  await press("full-research-resume");await until(selector("full-research-pause"),"resumed hourly queue");
+  const run=batch.researchProgress.fullResearch;
+  run.enabled=false;run.status="budget_exhausted";
+  run.attempts=Array.from({length:200},()=>({rowId:rows[0].id,tool:"business_search",at:new Date().toISOString()}));
+  await load();
+  await evaluate(`(()=>{const e=${selector("full-research-paid-total")};Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'300');e.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+  await press("full-research-consent");
+  assert.equal(await evaluate(`${selector("full-research-start")}.disabled`),true);
+  await press("full-research-budget-increase-consent");await press("full-research-start");
+  await until(selector("full-research-pause"),"higher explicitly authorized total");
+  assert.equal(batch.researchProgress.fullResearch.attempts.length,200);
+  assert.equal(batch.researchProgress.fullResearch.limits.paidCallsPerList,300);
+  batch.researchProgress.fullResearch={...batch.researchProgress.fullResearch,enabled:false,status:"interrupted",currentRowId:rows[0].id};
+  await load();await until(selector("full-research-recover"),"interruption recovery");
+  assert.equal(await evaluate(`${selector("full-research-recover")}.disabled`),true);
+  assert.equal(await evaluate(`!!${selector("full-research-resume")}`),false);
+  await evaluate("document.getElementById('full-research-recover-confirmation').click()");
+  await press("full-research-recover");await until(selector("full-research-resume"),"recovery requires separate resume");
+  assert.deepEqual(writes,["full-start","full-pause","full-resume","full-start","full-recover"]);
+  assert.ok(rows.every(row=>!row.importedContactId&&row.reviewStatus!=="approved"));
+  for(const [label,width,height,mobile] of [["desktop",1365,900,false],["mobile",402,874,true]]){
+    await send("Emulation.setDeviceMetricsOverride",{width,height,deviceScaleFactor:1,mobile});
+    await load();
+    assert.equal(await evaluate("document.documentElement.scrollWidth>window.innerWidth"),false);
+    await send("Page.captureScreenshot",{format:"jpeg",quality:65}).then(r=>writeFile(`reports/workflow-fixtures/${role}-full-research-${label}.jpg`,Buffer.from(r.data,"base64")));
+  }
+}
 async function api(url,method,body) {
+  if(method==="POST"&&/^\/api\/leads\/[^/]+\/full-research(?:\/(?:pause|resume|recover))?$/.test(url.pathname)){
+    assert.equal(body.confirmed,true);
+    const batch=batches.find(item=>url.pathname.startsWith(`/api/leads/${item.id}/full-research`));assert.ok(batch);
+    let run=batch.researchProgress?.fullResearch;
+    const action=url.pathname.split("/").at(-1);
+    if(action==="full-research"){
+      assert.equal(body.businessesPerHour,20);assert.equal(body.paidCallsPerHour,40);
+      assert.ok(body.paidCallsPerList===200||body.paidCallsPerList===300);
+      run={...run,status:"waiting_hourly",enabled:true,
+        limits:{businessesPerHour:body.businessesPerHour,paidCallsPerHour:body.paidCallsPerHour,paidCallsPerList:body.paidCallsPerList},
+        processedIds:run?.processedIds??[],startedRows:run?.startedRows??[],
+        attempts:run?.attempts??[],currentRowId:null,nextRunAt:new Date(Date.now()+3600000).toISOString(),error:null};
+      writes.push("full-start");
+    }else{
+      assert.ok(run);
+      run={...run,enabled:action==="resume",status:action==="resume"?"waiting_hourly":"paused",
+        currentRowId:action==="recover"?null:run.currentRowId};
+      writes.push(`full-${action}`);
+    }
+    batch.researchProgress={...batch.researchProgress,fullResearch:run};batch.status="paused";return batch;
+  }
   if(url.pathname==="/api/auth/user")return {id:"fixture-owner",role,firstName:"Fixture",lastName:"Salesperson",email:"fixture@example.invalid"};
   if(method==="GET"&&url.pathname==="/api/leads")return batches;
   if(method==="POST"&&url.pathname==="/api/leads/upload-preview"){
@@ -252,6 +321,7 @@ try {
     await send("Page.navigate",{url:origin+"/leads/fixture-search-batch"});
     await until("document.querySelector('article')?.innerText.includes('Fixture Search Grooming')","search-source review");
     await reviewThroughScheduling("search-stage");
+    await fullResearchUiCase(origin);
   }
   assert.deepEqual(errors,[]);
    console.log("PASS: administrator/salesperson fixture upload AND saved search → review → CRM → Pipeline → separately confirmed scheduling, mobile layouts, legacy routes. All API traffic intercepted; no real records or providers used.");
