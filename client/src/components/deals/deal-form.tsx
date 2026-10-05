@@ -13,6 +13,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { getContactDisplay } from "@/lib/contact-display";
 import { ToastAction } from "@/components/ui/toast";
 import { useLocation } from "wouter";
+import { DEAL_PLANS } from "@shared/dealPlans";
 
 interface DealFormProps {
   deal?: Deal;
@@ -204,10 +205,9 @@ export default function DealForm({ deal, initialContact, onSuccess, onCancel, on
                     </SelectTrigger>
                   </FormControl>
                   <SelectContent>
-                    <SelectItem value="Solo - $79/mo or $2 / Appoint">Solo - $79/mo or $2 / Appoint</SelectItem>
-                    <SelectItem value="Salon - $149/mo or $3 / Appoint">Salon - $149/mo or $3 / Appoint</SelectItem>
-                    <SelectItem value="Signature - $229/mo">Signature - $229/mo</SelectItem>
-                    <SelectItem value="Unknown">Unknown</SelectItem>
+                    {DEAL_PLANS.map(plan => (
+                      <SelectItem key={plan} value={plan}>{plan}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
                 <FormMessage />

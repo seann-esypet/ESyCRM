@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/select";
 import type { Deal, Contact } from "@shared/schema";
 import { getCommissionAmounts } from "@shared/utils";
+import { DEAL_PLANS } from "@shared/dealPlans";
 import { pipelineContactOwnerName } from "@shared/pipelineContactName";
 import ContactForm from "@/components/contacts/contact-form";
 import DealTaskPanel from "@/components/tasks/deal-task-panel";
@@ -764,9 +765,9 @@ export default function DealWorkspace() {
                         <UiSelectValue placeholder="Select plan…" />
                       </UiSelectTrigger>
                       <UiSelectContent>
-                        <UiSelectItem value="Solo - $79/mo or $2 / Appoint">Solo - $79/mo or $2 / Appoint</UiSelectItem>
-                        <UiSelectItem value="Salon - $149/mo or $3 / Appoint">Salon - $149/mo or $3 / Appoint</UiSelectItem>
-                        <UiSelectItem value="Signature - $229/mo">Signature - $229/mo</UiSelectItem>
+                        {DEAL_PLANS.map(plan => (
+                          <UiSelectItem key={plan} value={plan}>{plan}</UiSelectItem>
+                        ))}
                       </UiSelectContent>
                     </UiSelect>
                     <div className="flex gap-1">
@@ -1018,9 +1019,9 @@ export default function DealWorkspace() {
                   <UiSelectValue placeholder="Select plan…" />
                 </UiSelectTrigger>
                 <UiSelectContent>
-                  <UiSelectItem value="Solo - $79/mo or $2 / Appoint">Solo - $79/mo or $2 / Appoint</UiSelectItem>
-                  <UiSelectItem value="Salon - $149/mo or $3 / Appoint">Salon - $149/mo or $3 / Appoint</UiSelectItem>
-                  <UiSelectItem value="Signature - $229/mo">Signature - $229/mo</UiSelectItem>
+                  {DEAL_PLANS.map(plan => (
+                    <UiSelectItem key={plan} value={plan}>{plan}</UiSelectItem>
+                  ))}
                 </UiSelectContent>
               </UiSelect>
             </div>

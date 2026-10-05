@@ -13,3 +13,4 @@
 - [Google Places demo access](google-places-demo-access.md) — the user says the demo key may expire and billing needs updating if it stops working.
 - [Published salon research](published-salon-research.md) — one stored directory with incremental progress; manual review, approved import, then pipeline.
 - [Manual sequence restarts](manual-sequence-restarts.md) — past outreach is not a permanent ban on a manually chosen future sequence; retain active-send safeguards.
+- [CRM plan scope](crm-plan-scope.md) — directory and pay-as-you-go assignments do not authorize billing, new commission rates, or historical financial changes.

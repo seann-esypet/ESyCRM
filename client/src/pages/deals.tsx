@@ -19,6 +19,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import type { Deal, Contact, User, EmailSequenceLog, EmailSequence, InboxMessage } from "@shared/schema";
 import { getCommissionAmounts } from "@shared/utils";
+import { DEAL_PLANS } from "@shared/dealPlans";
 import { matchesPipelineEmailFilters, pipelineSequenceLabels } from "@shared/pipelineEmailSummary";
 import type { PipelineEmailSummaries } from "@shared/pipelineEmailSummary";
 import PipelineEmailStatus from "@/components/deals/pipeline-email-status";
@@ -1370,9 +1371,9 @@ export default function Deals() {
                   <SelectValue placeholder="Select plan…" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="Solo - $79/mo or $2 / Appoint">Solo - $79/mo or $2 / Appoint</SelectItem>
-                  <SelectItem value="Salon - $149/mo or $3 / Appoint">Salon - $149/mo or $3 / Appoint</SelectItem>
-                  <SelectItem value="Signature - $229/mo">Signature - $229/mo</SelectItem>
+                  {DEAL_PLANS.map(plan => (
+                    <SelectItem key={plan} value={plan}>{plan}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
