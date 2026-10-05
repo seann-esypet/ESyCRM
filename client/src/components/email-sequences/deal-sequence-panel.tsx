@@ -452,6 +452,7 @@ function SequenceComposerDialog({ contact, open, onOpenChange, onSuccess }: Comp
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/email-sequence-logs"] });
       if (data.successful > 0) {
+        queryClient.invalidateQueries({ queryKey: ["/api/deals/email-summaries"] });
         toast({
           title: "Sequence scheduled",
           description: `${contact.firstName} will receive Sequence #${selectedSeq?.sequenceNumber} on ${sendDate} at ${sendTime} ET.`,

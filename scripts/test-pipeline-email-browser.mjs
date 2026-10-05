@@ -104,6 +104,7 @@ let failLogs = false;
 let scheduled = false;
 let summaryReads = 0;
 let fakeMutations = 0;
+const readCounts = {};
 const contact = (id, email = `${id}@example.test`, userId = "owner-a") => ({
   id, email, userId, firstName: "Fixture", lastName: id, company: id,
   usesSoftware: "No", businessType: "salon", status: "pipeline",
@@ -142,6 +143,14 @@ function response(request) {
   const url = new URL(request.url);
   const owner = scope(url);
   if (request.method !== "GET") {
+    if (url.pathname === "/api/email-sequence-logs/bulk") {
+      const payload = JSON.parse(request.postData);
+      assert.deepEqual(payload.contactIds, ["empty"]);
+      assert.equal(payload.sequenceId, "sequence-1");
+      assert.ok(Number.isFinite(Date.parse(payload.scheduledSendAt)));
+      fakeMutations++; scheduled = true;
+      return { body: { successful: 1, failed: 0, errors: [], logs: [historyLog("empty", "pending")] } };
+    }
     if (url.pathname === "/api/email-sequence-logs/initiate") {
       fakeMutations++; scheduled = true;
       return { body: historyLog("empty", "pending") };
@@ -151,6 +160,11 @@ function response(request) {
       return { body: historyLog("sent", "pending") };
     }
     throw new Error(`Unexpected mutation blocked: ${request.method} ${url.pathname}`);
+  }
+  readCounts[url.pathname] = (readCounts[url.pathname] || 0) + 1;
+  if (url.pathname.startsWith("/api/deal-workspace/")) {
+    const id = url.pathname.split("/").at(-1);
+    return { body: { deal: deals.find(item => item.id === id), contact: contacts.find(item => item.id === id), activities: [] } };
   }
   if (url.pathname === "/api/auth/user") return { body: {
     id: "owner-a", role, email: "fixture-owner@example.test", firstName: "Fixture", lastName: "Owner",
@@ -236,6 +250,35 @@ try {
   await evaluate("document.documentElement.classList.remove('dark')");
   console.log("PASS table status, missing contact/address, uncertain history and shared-contact counts");
 
+  // Exercise the actual workspace button after scheduling, without reloading the page.
+  const pipelineRoots = ["/api/deals", "/api/deals/email-summaries", "/api/contacts", "/api/deals/unread-replies"];
+  const beforeReturn = { ...readCounts };
+  await click('[data-testid="link-deal-workspace-empty"]');
+  await until(`!!document.querySelector('[data-testid="tab-sequences"]')`, "deal workspace");
+  await evaluate(`document.querySelector('[data-testid="tab-sequences"]').dispatchEvent(new MouseEvent('mousedown',{button:0,bubbles:true}))`);
+  await click('[data-testid="button-new-sequence"]');
+  await until(`!!document.querySelector('[data-testid="select-sequence"]')`, "composer sequence templates loaded");
+  await evaluate(`(() => { const el=document.querySelector('[data-testid="select-sequence"]'); el.focus(); el.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true})); })()`);
+  await until(`!!document.querySelector('[role="option"]')`, "sequence options");
+  await evaluate(`(() => { const el=document.querySelector('[role="option"]'); el.focus(); el.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true})); })()`);
+  await input('[data-testid="input-send-date"]', "2027-01-10");
+  await input('[data-testid="input-send-time"]', "09:00");
+  await click('[data-testid="button-schedule"]');
+  await until(`!document.querySelector('[role="dialog"]')`, "workspace scheduling completed");
+  await click('[data-testid="button-back-pipeline"]');
+  await until(`document.querySelector('[data-testid="deal-row-empty"]')?.innerText.includes('Scheduled')`, "fresh Scheduled status after returning to Pipeline");
+  for (const root of pipelineRoots) assert.ok(readCounts[root] > beforeReturn[root], `${root} was refreshed on return`);
+
+  // Also prove the button refreshes independently of scheduling's invalidation.
+  await click('[data-testid="link-deal-workspace-empty"]');
+  await until(`!!document.querySelector('[data-testid="button-back-pipeline"]')`, "workspace reopened");
+  scheduled = false; // Simulate a remote status change in the isolated fixture.
+  const beforeSecondReturn = summaryReads;
+  await click('[data-testid="button-back-pipeline"]');
+  await until(`document.querySelector('[data-testid="deal-row-empty"]')?.innerText.includes('Not in a sequence')`, "button refresh without another mutation");
+  assert.ok(summaryReads > beforeSecondReturn);
+  console.log("PASS workspace scheduling and Pipeline-button refresh update status without a browser reload");
+
   await click('[data-testid="sort-title"]');
   assert.equal(await evaluate(`document.querySelector('[data-testid^="deal-row-"]').getAttribute('data-testid')`), "deal-row-empty");
   await input('[data-testid="search-input"]', "sent@example.test");
@@ -286,12 +329,13 @@ try {
   await evaluate(`document.querySelector('[data-testid="deal-card-empty"] button[aria-label="Email history"]').click()`);
   await until(`!!document.querySelector('[data-testid="button-initiate-sequence"]')`, "history dialog");
   const before = summaryReads;
+  const beforeMutations = fakeMutations;
   await click('[data-testid="button-initiate-sequence"]');
   await input('[data-testid="input-initiate-date"]', "2027-01-10");
   await input('[data-testid="input-initiate-time"]', "09:00");
   await click('[data-testid="button-submit-initiate"]');
   await until(`document.querySelector('[data-testid="deal-card-empty"]')?.innerText.includes('Scheduled')`, "summary refresh after mocked initiation");
-  assert.equal(fakeMutations, 1);
+  assert.equal(fakeMutations, beforeMutations + 1);
   assert.ok(summaryReads > before);
   await until(`!!document.querySelector('[data-testid="button-reschedule-log-empty"]')`, "reschedule action");
   const beforeReschedule = summaryReads;
@@ -299,7 +343,7 @@ try {
   await input('[data-testid="input-reschedule-date-log-empty"]', "2027-01-12");
   await click('[data-testid="button-submit-reschedule-log-empty"]');
   await until(`!document.querySelector('[data-testid="button-submit-reschedule-log-empty"]')`, "mocked reschedule completed");
-  assert.equal(fakeMutations, 2);
+  assert.equal(fakeMutations, beforeMutations + 2);
   assert.ok(summaryReads > beforeReschedule);
   await evaluate(`Array.from(document.querySelectorAll('[role="dialog"] button')).find(el=>el.textContent.trim()==='Close').click()`);
   await until(`!document.querySelector('[role="dialog"]')`, "history dialog closed before mobile checks");

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useRoute, useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import { refreshPipelineQueries } from "@/lib/pipeline-query-refresh";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { format, formatDistanceToNow } from "date-fns";
@@ -120,6 +121,10 @@ export default function DealWorkspace() {
   const { toast } = useToast();
   const { user } = useAuth();
   const dealId = params?.id ?? "";
+  const returnToPipeline = () => {
+    void refreshPipelineQueries(queryClient);
+    setLocation("/deals");
+  };
   const [activeTab, setActiveTab] = useState("activity");
   const [editContactOpen, setEditContactOpen] = useState(false);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
@@ -294,7 +299,7 @@ export default function DealWorkspace() {
       <div className="flex-1 flex flex-col items-center justify-center gap-4">
         <AlertCircle className="h-8 w-8 text-destructive" />
         <p className="text-muted-foreground">Deal not found</p>
-        <Button variant="outline" onClick={() => setLocation("/deals")}>Back to Pipeline</Button>
+        <Button variant="outline" onClick={returnToPipeline}>Back to Pipeline</Button>
       </div>
     );
   }
@@ -318,7 +323,7 @@ export default function DealWorkspace() {
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => setLocation("/deals")}
+          onClick={returnToPipeline}
           className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
           data-testid="button-back-pipeline"
         >
