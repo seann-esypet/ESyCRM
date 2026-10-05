@@ -105,6 +105,10 @@ let scheduled = false;
 let summaryReads = 0;
 let fakeMutations = 0;
 const readCounts = {};
+let testingContactCreation = true;
+let failDealCreation = false;
+let fixtureDealCreates = 0;
+let fixtureDeals = [];
 const contact = (id, email = `${id}@example.test`, userId = "owner-a") => ({
   id, email, userId, firstName: "Fixture", lastName: id, company: id,
   usesSoftware: "No", businessType: "salon", status: "pipeline",
@@ -117,6 +121,9 @@ const deal = (id, contactId = id, userId = "owner-a") => ({
 });
 const deals = [...contacts.map(c => deal(c.id, c.id, c.userId)),
   deal("shared-sent", "sent"), deal("no-contact", null), deal("unavailable", "missing")];
+const directContact = { ...contact("direct", null, "owner-b"), status: "active", company: "Direct Contact Salon" };
+const anotherContact = { ...contact("another"), status: "active" };
+const archivedContact = { ...contact("archived"), archivedAt: date };
 const base = id => ({
   contactId: id, contactState: "available", email: contacts.find(c => c.id === id)?.email ?? null,
   sequenceStatus: "not_enrolled", logCount: 0, sentCount: 0, latestSentAt: null,
@@ -143,6 +150,18 @@ function response(request) {
   const url = new URL(request.url);
   const owner = scope(url);
   if (request.method !== "GET") {
+    if (testingContactCreation && url.pathname === "/api/deals") {
+      assert.equal(request.method, "POST");
+      const payload = JSON.parse(request.postData);
+      assert.equal(payload.contactId, "direct");
+      assert.equal(payload.title, "Direct Contact Salon");
+      if (failDealCreation) return { status: 503, body: { message: "Fixture deal save failed" } };
+      fixtureDealCreates++;
+      const created = { ...deal("direct-deal", "direct", "owner-b"), ...payload };
+      fixtureDeals.push(created);
+      directContact.status = "pipeline";
+      return { body: created, status: 201, delay: 500 };
+    }
     if (url.pathname === "/api/email-sequence-logs/bulk") {
       const payload = JSON.parse(request.postData);
       assert.deepEqual(payload.contactIds, ["empty"]);
@@ -172,8 +191,12 @@ function response(request) {
   if (url.pathname === "/api/admin/users") return { body: [
     { id: "owner-a", firstName: "Owner", lastName: "A" }, { id: "owner-b", firstName: "Owner", lastName: "B" },
   ] };
-  if (url.pathname === "/api/deals") return { body: deals.filter(d => !owner || d.userId === owner) };
-  if (url.pathname === "/api/contacts") return { body: contacts.filter(c => !owner || c.userId === owner) };
+  if (url.pathname === "/api/deals") return { body: [...deals, ...fixtureDeals].filter(d => !owner || d.userId === owner) };
+  if (url.pathname === "/api/contacts") {
+    const list = testingContactCreation ? [...contacts, directContact, anotherContact, archivedContact] : contacts;
+    return { body: list.filter(c => (!owner || c.userId === owner) &&
+      (url.searchParams.get("showArchived") === "true" ? !!c.archivedAt : !c.archivedAt)) };
+  }
   if (url.pathname === "/api/deals/email-summaries") {
     summaryReads++;
     if (failSummaries) return { status: 503, body: { message: "Fixture summary failure" } };
@@ -213,6 +236,7 @@ try {
     } else if (message.method === "Fetch.requestPaused") {
       try {
         const result = response(message.params.request);
+        if (result.delay) await pause(result.delay);
         await send("Fetch.fulfillRequest", {
           requestId: message.params.requestId, responseCode: result.status ?? 200,
           responseHeaders: [{ name: "Content-Type", value: "application/json" }],
@@ -231,7 +255,60 @@ try {
   await send("Fetch.enable", { patterns: [{ urlPattern: "*://*/api/*" }] });
   await send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1100, deviceScaleFactor: 1, mobile: false });
   const origin = process.env.REPLIT_DEV_DOMAIN ? `https://${process.env.REPLIT_DEV_DOMAIN}` : "http://127.0.0.1:5000";
-  await send("Page.navigate", { url: `${origin}/deals` });
+  await send("Page.navigate", { url: `${origin}/contacts` });
+  await until(`!!document.querySelector('[data-testid="button-create-deal-direct"]')`, "Contacts create deal action");
+  assert.equal(await evaluate(`document.querySelector('[data-testid="button-create-selected-deal"]').disabled`), true);
+  await click('[data-testid="select-contact-direct"]');
+  await click('[data-testid="select-contact-another"]');
+  assert.equal(await evaluate(`document.querySelector('[data-testid="button-create-selected-deal"]').disabled`), true);
+  await click('[data-testid="select-contact-another"]');
+  await click('[data-testid="button-create-selected-deal"]');
+  await until(`!!document.querySelector('[data-testid="contact-create-deal-dialog"]')`, "selected-contact deal dialog");
+  assert.equal(await evaluate(`document.querySelector('[data-testid="input-title"]').value`), "Direct Contact Salon");
+  assert.equal(await evaluate(`document.querySelector('[data-testid="select-contact"]').disabled`), true);
+  await captureFixture("contacts-create-dialog");
+  await send("Emulation.setDeviceMetricsOverride", { width: 402, height: 874, deviceScaleFactor: 1, mobile: true });
+  assert.equal(await evaluate(`(() => { const r=document.querySelector('[data-testid="contact-create-deal-dialog"]').getBoundingClientRect(); return r.left>=0 && r.right<=window.innerWidth+2; })()`), true);
+  await captureFixture("contacts-create-dialog-mobile");
+  await send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1100, deviceScaleFactor: 1, mobile: false });
+  await click('[data-testid="button-cancel"]');
+  await until(`!document.querySelector('[data-testid="contact-create-deal-dialog"]')`, "cancel without creating");
+  assert.equal(fixtureDealCreates, 0);
+
+  await click('[data-testid="button-create-deal-empty"]');
+  await until(`document.querySelector('[role="dialog"]')?.innerText.includes('already has 1 deal')`, "existing-deal warning");
+  await click('[data-testid="button-cancel"]');
+  await until(`!document.querySelector('[data-testid="contact-create-deal-dialog"]')`, "warning dialog closed");
+  await click('[data-testid="button-toggle-archived"]');
+  await until(`!!document.querySelector('[data-testid="contact-row-archived"]')`, "archived Contacts");
+  assert.equal(await evaluate(`!!document.querySelector('[data-testid="button-create-deal-archived"]')`), false);
+  await click('[data-testid="select-contact-archived"]');
+  assert.equal(await evaluate(`document.querySelector('[data-testid="button-create-selected-deal"]').disabled`), true);
+  await click('[data-testid="button-toggle-archived"]');
+  await until(`!!document.querySelector('[data-testid="button-create-deal-direct"]')`, "active Contacts restored");
+
+  await click('[data-testid="button-create-deal-direct"]');
+  await until(`!!document.querySelector('[data-testid="button-submit"]')`, "row deal dialog");
+  failDealCreation = true;
+  await click('[data-testid="button-submit"]');
+  await until(`document.querySelector('[data-testid="deal-submit-error"]')?.innerText.includes('Fixture deal save failed')`, "failed save remains open");
+  assert.equal(fixtureDealCreates, 0);
+  failDealCreation = false;
+  await click('[data-testid="button-submit"]');
+  await until(`document.querySelector('[data-testid="button-submit"]')?.disabled`, "pending submit disabled");
+  assert.equal(await evaluate(`document.querySelector('[data-testid="button-cancel"]').disabled`), true);
+  await click('[data-testid="button-submit"]'); // Disabled click must not duplicate the request.
+  await until(`!document.querySelector('[data-testid="contact-create-deal-dialog"]')`, "deal saved and dialog closed");
+  assert.equal(fixtureDealCreates, 1);
+  await until(`document.querySelector('[data-testid="badge-pipeline-direct"]')?.innerText.includes('In Pipeline')`, "Contacts Pipeline badge refreshed");
+  assert.equal(await evaluate(`document.querySelector('[data-testid="select-contact-direct"]').checked`), false);
+  await evaluate(`Array.from(document.querySelectorAll('button')).find(el=>el.textContent.trim()==='View Pipeline').click()`);
+  await until(`!!document.querySelector('[data-testid="deal-row-direct-deal"]')`, "created contact deal in Pipeline");
+  assert.match(await evaluate(`document.querySelector('[data-testid="deal-row-direct-deal"]').innerText`), /Direct Contact Salon/);
+  console.log("PASS Contacts selection and row deal creation, prefill, cancel, existing-deal warning, archive guard, retry, duplicate-submit guard and fresh Pipeline navigation");
+  testingContactCreation = false;
+  fixtureDeals = [];
+  await send("Page.reload", { ignoreCache: true });
   await until(`document.querySelector('[data-testid="deal-row-empty"]')?.innerText.includes('Not in a sequence')`, "loaded Pipeline");
   const row = id => `document.querySelector('[data-testid="deal-row-${id}"]')?.innerText`;
   assert.match(await evaluate(row("empty")), /No recorded emails sent/);
@@ -381,7 +458,7 @@ try {
   assert.equal(await evaluate(`!!document.querySelector('[data-testid="button-initiate-sequence"]')`), false);
   console.log("PASS salesperson owner controls and failed history cannot offer initiation");
   assert.deepEqual(errors, []);
-  console.log(`Browser fixture checks passed; ${fakeMutations} intercepted mock mutation, zero real API mutations.`);
+  console.log(`Browser fixture checks passed; ${fakeMutations} scheduling fixtures and ${fixtureDealCreates} deal-creation fixture, zero real API mutations.`);
 } finally {
   ws?.close();
   chrome.kill("SIGTERM");

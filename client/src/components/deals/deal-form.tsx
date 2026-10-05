@@ -9,26 +9,40 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
 import { insertDealSchema, type Deal, type InsertDeal, type Contact } from "@shared/schema";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest } from "@/lib/queryClient";
+import { getContactDisplay } from "@/lib/contact-display";
+import { ToastAction } from "@/components/ui/toast";
+import { useLocation } from "wouter";
 
 interface DealFormProps {
   deal?: Deal;
-  onSuccess: () => void;
+  initialContact?: Contact;
+  onSuccess: () => void | Promise<void>;
   onCancel: () => void;
+  onPendingChange?: (isPending: boolean) => void;
 }
 
-export default function DealForm({ deal, onSuccess, onCancel }: DealFormProps) {
+export default function DealForm({ deal, initialContact, onSuccess, onCancel, onPendingChange }: DealFormProps) {
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   
   const { data: contacts } = useQuery<Contact[]>({
     queryKey: ["/api/contacts"],
   });
+  const { data: deals } = useQuery<Deal[]>({
+    queryKey: ["/api/deals"],
+    enabled: !deal,
+  });
+  const availableContacts = contacts ?? [];
+  const contactOptions = initialContact && !availableContacts.some(contact => contact.id === initialContact.id)
+    ? [...availableContacts, initialContact]
+    : availableContacts;
 
   const form = useForm<InsertDeal>({
     resolver: zodResolver(insertDealSchema),
     defaultValues: {
-      title: deal?.title || "",
-      contactId: deal?.contactId || "",
+      title: deal?.title || (initialContact ? initialContact.company || getContactDisplay(initialContact).name : ""),
+      contactId: deal?.contactId || initialContact?.id || "",
       value: deal?.value || "",
       plan: deal?.plan || "",
       stage: deal?.stage || "new_lead_unqualified",
@@ -42,6 +56,11 @@ export default function DealForm({ deal, onSuccess, onCancel }: DealFormProps) {
   });
 
   const selectedStage = form.watch("stage");
+  const selectedContactId = form.watch("contactId");
+  const selectedContact = contactOptions.find(contact => contact.id === selectedContactId);
+  const selectedContactDeals = selectedContactId
+    ? (deals ?? []).filter(existingDeal => existingDeal.contactId === selectedContactId)
+    : [];
   const previousStageRef = useRef(selectedStage);
 
   // Clear conditional date fields only when stage actually changes during this edit session
@@ -81,23 +100,18 @@ export default function DealForm({ deal, onSuccess, onCancel }: DealFormProps) {
       }
     },
     onSuccess: async () => {
-      // When creating a new deal with a contact, change contact status to "pipeline"
-      const contactId = form.getValues("contactId");
-      if (!deal && contactId) {
-        try {
-          await apiRequest("PATCH", `/api/contacts/${contactId}`, { status: "pipeline" });
-          // Refresh contacts list to show updated status
-          queryClient.invalidateQueries({ queryKey: ["/api/contacts"] });
-        } catch (e) {
-          // Silently ignore - deal creation succeeded
-        }
-      }
-      
+      await onSuccess();
       toast({
         title: deal ? "Deal updated" : "Deal created",
         description: `${form.getValues("title")} has been ${deal ? "updated" : "added"} successfully.`,
+        ...(!deal && initialContact ? {
+          action: (
+            <ToastAction altText="View Pipeline" onClick={() => setLocation("/deals")}>
+              View Pipeline
+            </ToastAction>
+          ),
+        } : {}),
       });
-      onSuccess();
     },
     onError: (error) => {
       toast({
@@ -109,8 +123,14 @@ export default function DealForm({ deal, onSuccess, onCancel }: DealFormProps) {
   });
 
   const onSubmit = (data: InsertDeal) => {
+    if (mutation.isPending) return;
+    onPendingChange?.(true);
     mutation.mutate(data);
   };
+
+  useEffect(() => {
+    onPendingChange?.(mutation.isPending);
+  }, [mutation.isPending, onPendingChange]);
 
   return (
     <Form {...form}>
@@ -140,16 +160,20 @@ export default function DealForm({ deal, onSuccess, onCancel }: DealFormProps) {
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Contact</FormLabel>
-                <Select onValueChange={field.onChange} defaultValue={field.value || ""}>
+                <Select
+                  onValueChange={field.onChange}
+                  value={field.value || ""}
+                  disabled={!!initialContact || mutation.isPending}
+                >
                   <FormControl>
                     <SelectTrigger data-testid="select-contact">
                       <SelectValue placeholder="Select a contact" />
                     </SelectTrigger>
                   </FormControl>
                   <SelectContent>
-                    {contacts?.map((contact) => (
+                    {contactOptions.map((contact) => (
                       <SelectItem key={contact.id} value={contact.id}>
-                        {contact.firstName} {contact.lastName} - {contact.company || "No company"}
+                        {getContactDisplay(contact).name} - {contact.company || "No company"}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -191,6 +215,13 @@ export default function DealForm({ deal, onSuccess, onCancel }: DealFormProps) {
             )}
           />
         </div>
+
+        {!deal && selectedContact && selectedContactDeals.length > 0 && (
+          <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm text-foreground" role="status" data-testid="warning-contact-existing-deals">
+            <p className="font-medium">{getContactDisplay(selectedContact).name} already has {selectedContactDeals.length} {selectedContactDeals.length === 1 ? "deal" : "deals"}.</p>
+            <p className="mt-0.5 text-muted-foreground">You can still create another opportunity if it represents a separate sale.</p>
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-4">
           <FormField
@@ -351,17 +382,23 @@ export default function DealForm({ deal, onSuccess, onCancel }: DealFormProps) {
         />
 
         <div className="flex justify-end space-x-3">
+          {mutation.isError && (
+            <p className="mr-auto self-center text-sm text-destructive" role="alert" data-testid="deal-submit-error">
+              {mutation.error instanceof Error ? mutation.error.message : `Failed to ${deal ? "update" : "create"} deal. Please try again.`}
+            </p>
+          )}
           <Button 
             type="button" 
             variant="outline" 
             onClick={onCancel}
+            disabled={mutation.isPending}
             data-testid="button-cancel"
           >
             Cancel
           </Button>
           <Button 
             type="submit" 
-            disabled={mutation.isPending}
+            disabled={mutation.isPending || (!!initialContact && !!initialContact.archivedAt)}
             data-testid="button-submit"
           >
             {mutation.isPending ? "Saving..." : deal ? "Update Deal" : "Create Deal"}

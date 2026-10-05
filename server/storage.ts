@@ -79,6 +79,7 @@ import { directoryEligibility } from "@shared/directoryEligibility";
 import { isRetryableStagedSalonRow } from "./salonListStaging";
 import { salonCrmDuplicates } from "./salonCrmDuplicates";
 import { deleteContactSafely } from "./contactDeletion";
+import { createDealRecord } from "./dealCreation";
 import { deleteSalonReviewRowSafely } from "./salonReviewDeletion";
 import { loadPipelineEmailSummaries } from "./pipelineEmailSummary";
 import type { PipelineEmailSummaries } from "@shared/pipelineEmailSummary";
@@ -896,32 +897,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createDeal(insertDeal: InsertDeal, userId: string): Promise<Deal> {
-    const dealData: any = {
-      ...insertDeal,
-      userId,
-      value: insertDeal.value && insertDeal.value.trim() ? insertDeal.value : null,
-      expectedCloseDate: insertDeal.expectedCloseDate ? new Date(insertDeal.expectedCloseDate) : null,
-      demoScheduledDate: insertDeal.demoScheduledDate ? new Date(insertDeal.demoScheduledDate) : null,
-      demoCompletedDate: insertDeal.demoCompletedDate ? new Date(insertDeal.demoCompletedDate) : null,
-      wonDate: insertDeal.wonDate ? new Date(insertDeal.wonDate) : null,
-      contactId: insertDeal.contactId && insertDeal.contactId.trim() ? insertDeal.contactId : null,
-      stageChangedAt: new Date(), // Set initial timestamp when deal is created
-    };
-    
-    const [deal] = await db
-      .insert(deals)
-      .values(dealData)
-      .returning();
-    
-    // Create activity
-    await this.createActivity({
-      type: "deal_created",
-      description: `New deal "${deal.title}" created`,
-      dealId: deal.id,
-      contactId: deal.contactId || undefined,
-    }, userId);
-    
-    return deal;
+    return createDealRecord(db, insertDeal, userId);
   }
 
   async updateDeal(id: string, updateData: Partial<InsertDeal>, userId: string | null): Promise<Deal | undefined> {

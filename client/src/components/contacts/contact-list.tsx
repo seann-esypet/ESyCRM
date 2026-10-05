@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Edit, Mail, Phone, Users, Building, MapPin, Globe, User, Briefcase, FileText, Archive, ArchiveRestore, ChevronUp, ChevronDown, ChevronsUpDown, Trash2 } from "lucide-react";
+import { Edit, Mail, Phone, Users, Building, MapPin, Globe, User, Briefcase, FileText, Archive, ArchiveRestore, ChevronUp, ChevronDown, ChevronsUpDown, Trash2, Plus } from "lucide-react";
 import type { Contact, Deal, User as UserType } from "@shared/schema";
 import { getContactDisplay } from "@/lib/contact-display";
 import { contactDeletionLabel } from "@/lib/contact-deletion";
@@ -38,6 +38,7 @@ interface ContactListProps {
   onToggleSelectVisible: () => void;
   onDelete: (contact: Contact) => void;
   onDeleteSelected: () => void;
+  onCreateDeal: (contact: Contact) => void;
 }
 
 const getStageLabel = (stage: string) => {
@@ -81,8 +82,19 @@ function SortIcon({ col, sortColumn, sortDir }: { col: "name" | "company" | "las
     : <ChevronDown className="h-3.5 w-3.5 ml-1 text-primary" />;
 }
 
-export default function ContactList({ contacts, deals, isLoading, isAdmin, adminUsers, showArchived, sortColumn, sortDir, onSortChange, onEdit, onArchive, onUnarchive, onStatusChange, onAssign, selectedContactIds, isDeleting, onToggleSelection, onToggleSelectVisible, onDelete, onDeleteSelected }: ContactListProps) {
+export default function ContactList({ contacts, deals, isLoading, isAdmin, adminUsers, showArchived, sortColumn, sortDir, onSortChange, onEdit, onArchive, onUnarchive, onStatusChange, onAssign, selectedContactIds, isDeleting, onToggleSelection, onToggleSelectVisible, onDelete, onDeleteSelected, onCreateDeal }: ContactListProps) {
   const [viewContact, setViewContact] = useState<Contact | null>(null);
+  const selectedContacts = contacts.filter(contact => selectedContactIds.has(contact.id));
+  const canCreateSelectedDeal = selectedContactIds.size === 1 && selectedContacts.length === 1 && !selectedContacts[0].archivedAt;
+  const selectionExplanation = selectedContactIds.size === 0
+    ? "Select one active contact to create a deal."
+    : selectedContactIds.size > 1
+      ? "Create Deal is available only when exactly one contact is selected."
+      : selectedContacts.length === 0
+        ? "The selected contact is not available in the current list. Clear the selection and try again."
+      : selectedContacts[0]?.archivedAt
+        ? "Archived contacts cannot be used to create a deal. Restore this contact first."
+        : "Create a deal for the selected contact.";
 
   const formatDate = (date: string | Date | null) => {
     if (!date) return "Never";
@@ -173,16 +185,32 @@ export default function ContactList({ contacts, deals, isLoading, isAdmin, admin
           Select all {contacts.length} visible
           {selectedContactIds.size > 0 && <span> · {selectedContactIds.size} selected</span>}
         </label>
-        <Button
-          variant="destructive"
-          size="sm"
-          disabled={isDeleting || selectedContactIds.size === 0}
-          onClick={onDeleteSelected}
-          data-testid="delete-selected-contacts"
-        >
-          <Trash2 className="mr-2 h-4 w-4" />
-          Delete Selected
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!canCreateSelectedDeal || isDeleting}
+            onClick={() => canCreateSelectedDeal && onCreateDeal(selectedContacts[0])}
+            aria-describedby="create-selected-deal-help"
+            data-testid="button-create-selected-deal"
+          >
+            <Plus className="mr-2 h-4 w-4" />
+            Create Deal
+          </Button>
+          <span id="create-selected-deal-help" className="sr-only" aria-live="polite">
+            {selectionExplanation}
+          </span>
+          <Button
+            variant="destructive"
+            size="sm"
+            disabled={isDeleting || selectedContactIds.size === 0}
+            onClick={onDeleteSelected}
+            data-testid="delete-selected-contacts"
+          >
+            <Trash2 className="mr-2 h-4 w-4" />
+            Delete Selected
+          </Button>
+        </div>
       </div>
       <Card data-testid="contacts-table">
         <CardContent className="p-0">
@@ -303,14 +331,27 @@ export default function ContactList({ contacts, deals, isLoading, isAdmin, admin
                   <TableCell className="text-right">
                     <div className="flex justify-end space-x-2">
                       {!contact.archivedAt && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => onEdit(contact)}
-                          data-testid={`edit-contact-${contact.id}`}
-                        >
-                          <Edit className="h-4 w-4" />
-                        </Button>
+                        <>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => onCreateDeal(contact)}
+                            aria-label={`Create deal for ${getContactDisplay(contact).name}`}
+                            data-testid={`button-create-deal-${contact.id}`}
+                          >
+                            <Briefcase className="h-4 w-4 sm:mr-1.5" />
+                            <span className="hidden sm:inline">Create Deal</span>
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => onEdit(contact)}
+                            aria-label={`Edit ${getContactDisplay(contact).name}`}
+                            data-testid={`edit-contact-${contact.id}`}
+                          >
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                        </>
                       )}
                       {contact.archivedAt ? (
                         <Button

@@ -5,6 +5,7 @@ import { SalonOwnerNameStorageConflict, storage } from "./storage";
 import { setupAuth, isAuthenticated, isAdmin } from "./replitAuth";
 import { insertContactSchema, insertContactGroupSchema, insertDealSchema, insertTaskSchema, insertEmailSequenceSchema, insertLeadDiscoveryJobSchema, insertCommissionSchema, insertSalonEnrichmentBatchSchema, insertSalonEnrichmentRowSchema, type InsertContact } from "@shared/schema";
 import { ContactDeletionConflict } from "./contactDeletion";
+import { createDealForActor, DealCreationError } from "./dealCreation";
 import { SalonReviewDeletionConflict } from "./salonReviewDeletion";
 import {
   EMPTY_OWNER_NAME_RESULT,
@@ -1454,9 +1455,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const userId = req.user.claims.sub;
       const dealData = insertDealSchema.parse(req.body);
-      const deal = await storage.createDeal(dealData, userId);
+      const deal = await createDealForActor(storage, dealData, {
+        id: userId, isAdmin: req.user.role === "admin",
+      });
       res.status(201).json(deal);
     } catch (error) {
+      if (error instanceof DealCreationError) {
+        return res.status(error.status).json({ message: error.message });
+      }
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Invalid deal data", errors: error.errors });
       }

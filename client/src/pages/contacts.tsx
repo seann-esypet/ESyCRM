@@ -4,6 +4,7 @@ import Header from "@/components/layout/header";
 import ContactList from "@/components/contacts/contact-list";
 import ContactForm from "@/components/contacts/contact-form";
 import ContactImport from "@/components/contacts/contact-import";
+import DealForm from "@/components/deals/deal-form";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -20,6 +21,8 @@ export default function Contacts() {
   const { toast } = useToast();
   
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [dealContact, setDealContact] = useState<Contact | undefined>();
+  const [isCreatingDeal, setIsCreatingDeal] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedContact, setSelectedContact] = useState<Contact | undefined>();
@@ -159,6 +162,26 @@ export default function Contacts() {
   const handleFormSuccess = () => {
     handleFormClose();
     queryClient.invalidateQueries({ queryKey: ["/api/contacts"] });
+  };
+
+  const handleCreateDeal = (contact: Contact) => {
+    if (contact.archivedAt) return;
+    setDealContact(contact);
+    setIsCreatingDeal(false);
+  };
+
+  const handleDealCreated = async () => {
+    const refreshPrefixes = ["/api/deals", "/api/contacts", "/api/deals/email-summaries", "/api/dashboard"];
+    await queryClient.invalidateQueries({
+      predicate: query => {
+        const key = query.queryKey[0];
+        return typeof key === "string" && refreshPrefixes.some(prefix =>
+          key === prefix || key.startsWith(`${prefix}/`) || key.startsWith(`${prefix}?`));
+      },
+    });
+    setSelectedContactIds(new Set());
+    setDealContact(undefined);
+    setIsCreatingDeal(false);
   };
 
   const handleExport = () => {
@@ -408,6 +431,7 @@ export default function Contacts() {
           onDeleteSelected={() => openDeleteConfirmation(
             sortedContacts.filter(contact => selectedContactIds.has(contact.id))
           )}
+          onCreateDeal={handleCreateDeal}
         />
       </main>
 
@@ -462,6 +486,36 @@ export default function Contacts() {
             onSuccess={handleFormSuccess}
             onCancel={handleFormClose}
           />
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!dealContact}
+        onOpenChange={(open) => {
+          if (open) return;
+          if (!isCreatingDeal) {
+            setDealContact(undefined);
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" data-testid="contact-create-deal-dialog">
+          <DialogHeader>
+            <DialogTitle>Create Deal</DialogTitle>
+            <DialogDescription>
+              Create a pipeline opportunity linked to {dealContact?.company || (dealContact ? `${dealContact.firstName} ${dealContact.lastName}`.trim() : "this contact")}.
+            </DialogDescription>
+          </DialogHeader>
+          {dealContact && (
+            <DealForm
+              key={dealContact.id}
+              initialContact={dealContact}
+              onSuccess={handleDealCreated}
+              onCancel={() => {
+                if (!isCreatingDeal) setDealContact(undefined);
+              }}
+              onPendingChange={setIsCreatingDeal}
+            />
+          )}
         </DialogContent>
       </Dialog>
 
