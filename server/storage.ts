@@ -390,6 +390,7 @@ export interface IStorage {
   getOrCreateSerpUsage(monthYear: string): Promise<SerpUsage>;
   incrementSerpUsage(monthYear: string): Promise<SerpUsage>;
   reserveSerpCall(monthYear: string, maxCallsPerHour: number): Promise<string | null>;
+  getNextSerpCallAt(maxCallsPerHour: number): Promise<string>;
   releaseSerpCall(reservationId: string, monthYear: string): Promise<void>;
   updateSerpQuota(monthYear: string, quota: number, hardStopAt: number): Promise<SerpUsage | undefined>;
   
@@ -2753,6 +2754,16 @@ export class DatabaseStorage implements IStorage {
           .where(eq(serpUsage.monthYear, monthYear));
       }
     });
+  }
+
+  async getNextSerpCallAt(maxCallsPerHour: number): Promise<string> {
+    const now = Date.now();
+    // The Nth newest reservation must expire before another call at limit N.
+    const [reservation] = await db.select({ createdAt: serpCallReservations.createdAt })
+      .from(serpCallReservations)
+      .where(gte(serpCallReservations.createdAt, new Date(now - 60 * 60 * 1000)))
+      .orderBy(desc(serpCallReservations.createdAt)).offset(maxCallsPerHour - 1).limit(1);
+    return new Date(reservation ? reservation.createdAt.getTime() + 60 * 60 * 1000 + 1000 : now + 60000).toISOString();
   }
 
   async updateSerpQuota(monthYear: string, quota: number, hardStopAt: number): Promise<SerpUsage | undefined> {

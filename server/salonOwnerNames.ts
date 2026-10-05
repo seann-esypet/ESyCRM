@@ -12,6 +12,7 @@ import {
   type SalonOwnerNameSource,
 } from "@shared/salonOwnerName";
 import { storage } from "./storage";
+import { providerHourlyLimit, type SerpRequestPolicy } from "./serpRequestPolicy";
 import { isResearchDirectoryRow, RESEARCH_READ_ONLY } from "./salonResearchPolicy";
 import { getSerpUsageStatus } from "./lead-discovery";
 import { ownerDiscoveryLocation, ownerInterviewDiscoveryText, prioritizeOwnerResults } from "./salonOwnerDiscovery";
@@ -37,6 +38,7 @@ type OrganicResult = OwnerSearchResult;
 type OwnerLookupProgress = {
   calls: number;
   beforeProvider?: () => Promise<void>;
+  requestPolicy?: SerpRequestPolicy;
   candidates: SalonOwnerNameCandidate[];
   pages: { count: number; attempted: number };
 };
@@ -823,10 +825,13 @@ async function organicSearch(
   if (!apiKey) return { results: [], calls: 0, error: "SERPAPI_API_KEY is not configured" };
 
   const status = await runtime.getUsageStatus();
-  const maxCallsPerHour = status.config.maxSerpCallsPerHour ?? 5;
+  const maxCallsPerHour = providerHourlyLimit(status.config.maxSerpCallsPerHour ?? 5, progress.requestPolicy);
   const monthYear = getMonthYear();
   const reservationId = await runtime.storage.reserveSerpCall(monthYear, maxCallsPerHour);
-  if (!reservationId) return { results: [], calls: 0, error: "SERP quota or hourly limit reached" };
+  if (!reservationId) {
+    await progress.requestPolicy?.onReservationBlocked();
+    return { results: [], calls: 0, error: "SERP quota or hourly limit reached" };
+  }
   let requestAttempted = false;
   const controller = new AbortController();
   let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -887,10 +892,10 @@ async function organicSearch(
 }
 
 // Same bounded deployed public-search service/cache as owner research; no agent tools.
-export async function searchSalonContactPages(row: SalonEnrichmentRow, remainingCalls: number, beforeProvider: () => Promise<void>) {
+export async function searchSalonContactPages(row: SalonEnrichmentRow, remainingCalls: number, beforeProvider: () => Promise<void>, requestPolicy?: SerpRequestPolicy) {
   const parts=queryParts(row), location=[row.address1||row.address,row.city,row.state,row.zipCode].filter(Boolean).join(" ");
   const query=`"${row.businessName}" ${location} contact email`;
-  const progress={...newOwnerLookupProgress(),beforeProvider};
+  const progress={...newOwnerLookupProgress(),beforeProvider,requestPolicy};
   const result=await organicSearch({...parts,query,cacheKey:`salon-contact-organic:${normalized(query)}`},remainingCalls,Date.now()+PROVIDER_TIMEOUT_MS,progress);
   return {...result,results:result.results.filter(item=>!item.summaryKind&&item.title&&item.link&&businessAndLocationMatch(row,`${item.title} ${item.snippet||""}`))
     .map(item=>({title:item.title!,link:item.link!,address:`${item.title} ${item.snippet||""}`,snippet:item.snippet}))};
@@ -1143,8 +1148,9 @@ export async function lookupSalonOwnerName(
 export async function researchSalonOwnerCandidates(
   row: SalonEnrichmentRow,
   beforeProvider: () => Promise<void>,
+  requestPolicy?: SerpRequestPolicy,
 ): Promise<OwnerNameResult> {
-  const progress = { ...newOwnerLookupProgress(), beforeProvider };
+  const progress = { ...newOwnerLookupProgress(), beforeProvider, requestPolicy };
   try {
     return (await performLookup(row, 3, 3, progress)).ownerName;
   } catch (error) {

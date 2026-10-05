@@ -8,6 +8,7 @@ import WebSocket from "ws";
 import Papa from "papaparse";
 import { unifiedUploadRow, leadView, historicalApprovalEvidence } from "../server/leadWorkspacePolicy.ts";
 import { renderLeadSequencePreview } from "../server/leadSequencePreview.ts";
+import { leadResearchResults, filterLeadResearchRows } from "../server/leadResearchResults.ts";
 const profile = await mkdtemp(join(tmpdir(),"leads-browser-"));
 const chrome = spawn("chromium",["--headless","--no-sandbox","--disable-dev-shm-usage","--remote-debugging-port=0",`--user-data-dir=${profile}`,"about:blank"],{stdio:"ignore"});
 const pending=new Map(),errors=[],writes=[];
@@ -155,6 +156,51 @@ async function fullResearchUiCase(origin){
     await send("Page.captureScreenshot",{format:"jpeg",quality:65}).then(r=>writeFile(`reports/workflow-fixtures/${role}-full-research-${label}.jpg`,Buffer.from(r.data,"base64")));
   }
 }
+async function researchedRowsUiCase(origin) {
+  const batch={id:"fixture-researched-list",name:"Uploaded research visibility fixture",status:"paused",totalRows:756,
+    researchProgress:{workflow:"unified_leads",fullResearch:{status:"paused",enabled:false,
+      limits:{businessesPerHour:20,paidCallsPerHour:40,paidCallsPerList:200},attempts:[],startedRows:[],processedIds:[],
+      error:"SERP quota or hourly limit reached (20/hour). Please wait.",currentRowId:null,nextRunAt:null}}};
+  batches=[batch];writes.length=0;
+  rows=Array.from({length:756},(_,index)=>({
+    ...unifiedUploadRow({Business:index<750?`Untouched business ${index}`:`Researched grooming ${index-749}`,
+      Address:"1 Main Street Austin TX",State:"TX"},index,"fixture-owner"),
+    id:`fixture-visible-${index}`,batchId:batch.id,serpCallsUsed:0,
+  }));
+  const attempted=rows.slice(750);
+  batch.researchProgress.fullResearch.startedRows=attempted.map(row=>({id:row.id,at:new Date().toISOString()}));
+  batch.researchProgress.fullResearch.processedIds=attempted.map(row=>row.id);
+  for(const row of attempted.slice(0,5)){row.status="enriched";row.identityMatchStatus="strong";}
+  attempted[5].status="failed";attempted[5].lastError=batch.researchProgress.fullResearch.error;
+  await send("Emulation.setDeviceMetricsOverride",{width:1365,height:900,deviceScaleFactor:1,mobile:false});
+  await send("Page.navigate",{url:origin+"/leads/"+batch.id});
+  await until(button("Show researched businesses"),"researched view action");
+  await until("document.querySelectorAll('article').length===100","all-view paginated rows");
+  assert.equal(await evaluate("document.querySelector('article').innerText.includes('Not researched')"),true);
+  await click("Show researched businesses");
+  await until("document.querySelectorAll('article').length===6","six attempted businesses found beyond the first page");
+  assert.equal(await evaluate("location.search.includes('view=researched')"),true);
+  assert.equal(await evaluate("Array.from(document.querySelectorAll('article')).filter(e=>e.innerText.includes('Research complete')).length"),5);
+  assert.equal(await evaluate("Array.from(document.querySelectorAll('article')).filter(e=>e.innerText.includes('Stopped at hourly limit')).length"),1);
+  assert.equal(await evaluate("document.body.innerText.includes('Untouched business')"),false);
+  assert.equal(await evaluate(`Boolean(${button("Load more candidates")})`),false);
+  await send("Page.navigate",{url:origin+"/leads/"+batch.id+"?view=researched"});
+  await until("document.querySelectorAll('article').length===6","direct researched-view URL");
+  await evaluate(`(()=>{const e=document.querySelector('input[placeholder="Search this list…"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'Researched grooming 6');e.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+  await until("document.querySelectorAll('article').length===1","search scoped to researched results");
+  assert.equal(await evaluate("document.querySelector('article').innerText.includes('Stopped at hourly limit')"),true);
+  await send("Page.navigate",{url:origin+"/leads/"+batch.id+"?view=needs_review"});
+  await until("document.querySelectorAll('article').length===5","completed researched businesses awaiting review");
+  assert.equal(await evaluate("document.body.innerText.includes('Researched grooming 6')"),false);
+  await send("Emulation.setDeviceMetricsOverride",{width:402,height:874,deviceScaleFactor:1,mobile:true});
+  await send("Page.navigate",{url:origin+"/leads/"+batch.id+"?view=researched"});
+  await until("document.querySelectorAll('article').length===6","mobile researched results");
+  assert.equal(await evaluate("document.documentElement.scrollWidth>window.innerWidth"),false);
+  await evaluate(`document.querySelector('[aria-label="Choose businesses to show"]').scrollIntoView()`);
+  await send("Page.captureScreenshot",{format:"jpeg",quality:65})
+    .then(r=>writeFile(`reports/workflow-fixtures/${role}-researched-results-mobile.jpg`,Buffer.from(r.data,"base64")));
+  assert.deepEqual(writes,[],"finding/review-filtering results never initiates research or outreach");
+}
 async function api(url,method,body) {
   if(method==="POST"&&/^\/api\/leads\/[^/]+\/full-research(?:\/(?:pause|resume|recover))?$/.test(url.pathname)){
     assert.equal(body.confirmed,true);
@@ -189,7 +235,13 @@ async function api(url,method,body) {
     writes.push("upload");return {batch:batches[0],stagedCount:3};
   }
   if(method==="GET"&&batches.some(batch=>url.pathname===`/api/leads/${batch.id}`)){
-    return {batch:batches.find(batch=>url.pathname===`/api/leads/${batch.id}`),rows:rows.map(r=>({...leadView(r),ownerName:r.evidence?.ownerName,dealId:r.dealId||null})),total:rows.length,nextOffset:null,linkedRows:[]};
+    const batch=batches.find(batch=>url.pathname===`/api/leads/${batch.id}`);
+    const research=leadResearchResults(rows,batch.researchProgress);
+    const selected=filterLeadResearchRows(rows,research.states,url.searchParams.get("view")||"all",url.searchParams.get("search")||"");
+    const offset=Number(url.searchParams.get("offset")||0),limit=Math.min(100,Number(url.searchParams.get("limit")||50));
+    return {batch,researchSummary:research.summary,
+      rows:selected.slice(offset,offset+limit).map(r=>({...leadView(r),researchState:research.states.get(r.id),ownerName:r.evidence?.ownerName,dealId:r.dealId||null})),
+      total:selected.length,nextOffset:offset+limit<selected.length?offset+limit:null,linkedRows:[]};
   }
   if(method==="GET"&&url.pathname==="/api/lead-discovery/jobs")return [
     {id:"fixture-search-job",state:"TX",zipCodes:"78701",status:"completed",totalBusinessesFound:1,createdAt:"2026-10-04T12:00:00Z"},
@@ -322,9 +374,10 @@ try {
     await until("document.querySelector('article')?.innerText.includes('Fixture Search Grooming')","search-source review");
     await reviewThroughScheduling("search-stage");
     await fullResearchUiCase(origin);
+    await researchedRowsUiCase(origin);
   }
   assert.deepEqual(errors,[]);
-   console.log("PASS: administrator/salesperson fixture upload AND saved search → review → CRM → Pipeline → separately confirmed scheduling, mobile layouts, legacy routes. All API traffic intercepted; no real records or providers used.");
+   console.log("PASS: administrator/salesperson fixture upload AND saved search → review → CRM → Pipeline → separately confirmed scheduling, Full Research controls, researched-only filtering beyond pagination and mobile layouts. All API traffic intercepted; no real records or providers used.");
 } finally {
   ws?.close();chrome.kill("SIGTERM");await pause(200);await rm(profile,{recursive:true,force:true});
 }

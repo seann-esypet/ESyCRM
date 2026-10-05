@@ -1,6 +1,9 @@
 import { fullResearchLimitsSchema, type FullResearchProgress, type FullResearchLimits } from "@shared/fullResearch";
 
 export const FULL_RESEARCH_HOUR = 60 * 60 * 1000;
+export function isHourlyResearchError(message: string | null | undefined) {
+  return /hourly (?:serp |shared provider |provider-call budget )?limit|hourly shared provider allowance/i.test(message || "");
+}
 export function readFullResearch(value: unknown): FullResearchProgress | null {
   if (value == null) return null;
   const run = value as FullResearchProgress;

@@ -7,8 +7,9 @@ import { directoryObject } from "@shared/directoryEligibility";
 import { fullResearchLimitsSchema, type FullResearchProgress } from "@shared/fullResearch";
 import { isResearchDirectoryBatch, isResearchDirectoryRow, RESEARCH_READ_ONLY } from "./salonResearchPolicy";
 import { salonEnrichmentIsActive } from "./salonEnrichment";
-import { researchFullRow } from "./fullResearchRow";
-import { readFullResearch, newFullResearch, researchAllowance, reserveResearchPaidCall, hasResearchLease, type FullResearchBlock } from "./fullResearchPolicy";
+import { researchFullRow, fullResearchRowTools } from "./fullResearchRow";
+import { getSerpUsageStatus } from "./lead-discovery";
+import { readFullResearch, newFullResearch, researchAllowance, reserveResearchPaidCall, hasResearchLease, isHourlyResearchError, type FullResearchBlock } from "./fullResearchPolicy";
 
 const LEASE_MS = 10 * 60 * 1000;
 const active = new Set<string>();
@@ -76,6 +77,12 @@ export async function controlFullResearch(id: string, owner: string, action: str
     const run = prior || newFullResearch(limits, now);
     run.limits = limits;
     if (run.attempts.length >= limits.paidCallsPerList) throw new Error("Approve a higher TOTAL paid-request cap. Earlier requests are not refunded or reset.");
+    // Older workers marked an hourly-blocked business complete. Repair only
+    // on explicitly confirmed resume, without resetting any paid history.
+    if (action === "resume") {
+      const throttled = rows.filter(row => eligible(row) && row.status === "failed" && isHourlyResearchError(row.lastError));
+      run.processedIds = run.processedIds.filter(rowId => !throttled.some(row => row.id === rowId));
+    }
     if (!rows.some(row => eligible(row) && !run.processedIds.includes(row.id))) throw new Error("No remaining reviewable businesses in this list.");
     run.enabled = true; run.status = "running"; run.error = null; run.nextRunAt = null;
     await save(tx, batch, run);
@@ -99,7 +106,7 @@ async function processQueue(id: string, owner: string) {
       await save(tx, batch, run); return false;
     }
     run.lease = { token, expiresAt: new Date(Date.now() + LEASE_MS).toISOString() };
-    await save(tx, batch, run); return true;
+    await save(tx, batch, run); return run.limits.paidCallsPerHour;
   });
   if (!acquired) return;
   const heartbeat = setInterval(() => {
@@ -147,6 +154,16 @@ async function processQueue(id: string, owner: string) {
           return result;
         });
         if (block) { blocked = block; throw new Error(block.message); }
+      }, fullResearchRowTools, {
+        hourlyLimit: acquired,
+        onReservationBlocked: async () => {
+          const usage = await getSerpUsageStatus();
+          blocked = usage.isQuotaReached
+            ? { status: "paused", nextRunAt: null, message: "The shared provider account budget is exhausted. Review its quota before resuming; list spending remains counted." }
+            : { status: "waiting_hourly", nextRunAt: await storage.getNextSerpCallAt(acquired),
+              message: "Hourly shared provider allowance reached. Research will continue automatically when allowance becomes available." };
+          throw new Error(blocked.message);
+        },
       });
       await locked(id, owner, async (tx, batch, run) => {
         if (!run || run.lease?.token !== token || !hasResearchLease(run, Date.now())) throw new Error("Research lease lost before saving results. Recover interrupted work.");
@@ -170,12 +187,17 @@ async function processQueue(id: string, owner: string) {
             ...patch, ...(fresh.email && !patch.email ? { email: fresh.email } : {}),
             evidence: merged, updatedAt: new Date(),
             serpCallsUsed: run.attempts.filter(attempt => attempt.rowId === row.id).length,
-            sourceData: { ...directoryObject(fresh.sourceData), stagingState: "verification_attempted" },
+            ...(blocked ? { status: "pending", lastError: blocked.message,
+              sourceData: { ...directoryObject(fresh.sourceData), stagingState: "verification_attempted",
+                fullResearchState: blocked.status === "waiting_hourly" ? "waiting_hourly" : "paused" } }
+              : { sourceData: { ...directoryObject(fresh.sourceData), stagingState: "verification_attempted", fullResearchState: "researched" } }),
           }).where(eq(salonEnrichmentRows.id, row.id));
         }
         if (!blocked) run.processedIds = [...new Set([...run.processedIds, row.id])];
         run.currentRowId = null;
-        if (blocked) stopFor(run, blocked);
+        if (blocked) stopFor(run, run.status === "paused" && run.error?.startsWith("Paused by you.") ? {
+          status: "paused", nextRunAt: null, message: "Paused by you. No new paid requests will start.",
+        } : blocked);
         // Genuine provider/infrastructure failures need explicit review, not hourly paid retry loops.
         if (!blocked && patch.status === "failed") {
           run.enabled = false; run.status = "paused"; run.error = patch.lastError || "A research tool failed. Review before resuming.";
@@ -200,22 +222,27 @@ async function processQueue(id: string, owner: string) {
   }
 }
 
+export function fullResearchIsDue(run: FullResearchProgress, now: number) {
+  return run.enabled && ["running", "waiting_hourly"].includes(run.status) &&
+    !hasResearchLease(run, now) && (!run.nextRunAt || Date.parse(run.nextRunAt) <= now);
+}
+let checking = false;
+export async function tickFullResearchScheduler() {
+  if (checking) return;
+  checking = true;
+  try {
+    const batches = await db.select().from(salonEnrichmentBatches)
+      .where(sql`${salonEnrichmentBatches.researchProgress}->'fullResearch'->>'enabled' = 'true'`);
+    for (const batch of batches) {
+      const run = readFullResearch(directoryObject(batch.researchProgress).fullResearch);
+      if (run && fullResearchIsDue(run, Date.now())) launch(batch.id, batch.userId);
+    }
+  } catch (error) {
+    console.error("[Full Research] Scheduler could not read its queue; no new lookup was started.", error instanceof Error ? error.message : "unknown failure");
+  } finally { checking = false; }
+}
 export function startFullResearchScheduler() {
-  let checking = false;
-  const tick = async () => {
-    if (checking) return;
-    checking = true;
-    try {
-      const batches = await db.select().from(salonEnrichmentBatches)
-        .where(sql`${salonEnrichmentBatches.researchProgress}->'fullResearch'->>'enabled' = 'true'`);
-      for (const batch of batches) {
-        const run = readFullResearch(directoryObject(batch.researchProgress).fullResearch);
-        if (run && !hasResearchLease(run, Date.now()) && (!run.nextRunAt || Date.parse(run.nextRunAt) <= Date.now())) launch(batch.id, batch.userId);
-      }
-    } catch (error) {
-      console.error("[Full Research] Scheduler could not read its queue; no new lookup was started.", error instanceof Error ? error.message : "unknown failure");
-    } finally { checking = false; }
-  };
+  const tick = tickFullResearchScheduler;
   const timer = setInterval(() => { void tick(); }, 60000);
   timer.unref();
   void tick();

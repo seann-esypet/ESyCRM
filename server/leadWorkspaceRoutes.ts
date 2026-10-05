@@ -10,6 +10,7 @@ import { historicalApprovalEvidence, leadView, sameLead, leadIdentityIndex, unif
 import { recipientHistory, recipientHistoryReader, reconcileRecipientOutcome } from "./recipientOutreach";
 import { leadResearchEstimate, startLeadResearch, pauseLeadResearch, recoverLeadResearch } from "./leadWorkspaceResearch";
 import { recoveredLeadEvidence } from "./leadWorkspaceSavedEvidence";
+import { leadResearchResults, filterLeadResearchRows } from "./leadResearchResults";
 import { renderLeadSequencePreview } from "./leadSequencePreview";
 import { salonCrmDuplicates, salonCrmDuplicateReasons } from "./salonCrmDuplicates";
 import { leadRecipient } from "@shared/leadWorkflowState";
@@ -48,7 +49,11 @@ export function registerLeadWorkspaceRoutes(app: Express, auth: RequestHandler) 
     if (!batch) throw new Error("Saved list not found or not accessible.");
     const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 50));
     const offset = Math.max(0, Number(req.query.offset) || 0);
-    const all = await storage.getSalonEnrichmentRows(batch.id, batch.userId, { search: typeof req.query.search === "string" ? req.query.search : undefined });
+    const view = typeof req.query.view === "string" ? req.query.view : "all";
+    if (!["all", "researched", "needs_review", "ready_for_contacts"].includes(view)) throw new Error("Choose a supported business list view.");
+    const savedRows = await storage.getSalonEnrichmentRows(batch.id, batch.userId);
+    const research = leadResearchResults(savedRows, batch.researchProgress);
+    const all = filterLeadResearchRows(savedRows, research.states, view, typeof req.query.search === "string" ? req.query.search : "");
     const rowLinks = directoryObject(batch.researchProgress).linkedRows;
     const linkedRows = Array.isArray(rowLinks) ? (await Promise.all(rowLinks.map(async (link: any) => {
       const row = await storage.getSalonEnrichmentRow(String(link.rowId), batch.userId);
@@ -59,12 +64,12 @@ export function registerLeadWorkspaceRoutes(app: Express, auth: RequestHandler) 
     const rows = await Promise.all(all.slice(offset, offset + limit).map(async saved => {
       const row = recoveredLeadEvidence(saved);
       const contact = row.importedContactId ? await storage.getContact(row.importedContactId, batch.userId) : undefined;
-      return { ...leadView(row), ownerName: getSalonOwnerNameResult(row),
+      return { ...leadView(row), researchState: research.states.get(row.id), ownerName: getSalonOwnerNameResult(row),
         contactName: contact ? { firstName: contact.firstName, lastName: contact.lastName, useBusinessNameForEmail: contact.useBusinessNameForEmail } : null,
         dealId: ownedDeals.find(deal => deal.contactId === row.importedContactId)?.id || null,
         recipientHistory: history(row.email || leadView(row).candidateEmail) };
     }));
-    return { batch, rows, linkedRows, total: all.length, nextOffset: offset + limit < all.length ? offset + limit : null };
+    return { batch, rows, linkedRows, researchSummary: research.summary, total: all.length, nextOffset: offset + limit < all.length ? offset + limit : null };
   });
   const uploadPreview = async (req: any) => {
     if (!Array.isArray(req.body?.rows)) throw new Error("The upload needs a rows array.");

@@ -8,7 +8,7 @@ import { salonEnrichmentBatches, salonEnrichmentRows } from "@shared/schema";
 import { FULL_RESEARCH_DEFAULTS } from "@shared/fullResearch";
 import { newFullResearch } from "./fullResearchPolicy";
 import { unifiedUploadRow } from "./leadWorkspacePolicy";
-import { controlFullResearch } from "./fullResearchQueue";
+import { controlFullResearch, tickFullResearchScheduler, fullResearchIsDue } from "./fullResearchQueue";
 import { fullResearchRowTools } from "./fullResearchRow";
 import { EMPTY_OWNER_NAME_RESULT } from "@shared/salonOwnerName";
 
@@ -23,7 +23,8 @@ function fixture(count: number, fail: boolean | number = false, cachedBusinessSe
     ...unifiedUploadRow({ Business: `Fixture Grooming ${i}`, Address: "1 Main Street Austin TX", State: "TX" }, i, batch.userId),
     id: `fixture-row-${i}`, batchId: batch.id, serpCallsUsed: 0,
   }));
-  let transactions = 0, providerAttempts = 0;
+  let transactions = 0, providerAttempts = 0, sharedThrottle = false, accountExhausted = false;
+  const hourlyPolicies: number[] = [];
   let tail = Promise.resolve();
   const matches = (table: any, record: any, condition?: SQL) => {
     if (!condition) return true;
@@ -62,8 +63,13 @@ function fixture(count: number, fail: boolean | number = false, cachedBusinessSe
       return query;
     },
   };
-  const original = { transaction: db.transaction, get: storage.getSalonEnrichmentBatch,
+  const original = { transaction: db.transaction, select: db.select, get: storage.getSalonEnrichmentBatch,
+    usage: storage.getOrCreateSerpUsage, config: storage.getOrCreateLeadDiscoveryConfig, next: storage.getNextSerpCallAt,
     refresh: storage.refreshSalonEnrichmentBatchCounts, tools: { ...fullResearchRowTools } };
+  (db as any).select = tx.select;
+  storage.getOrCreateSerpUsage = async () => ({ usedCredits: accountExhausted ? 200 : 0, hardStopAt: 200, monthlyQuota: 250 } as any);
+  storage.getOrCreateLeadDiscoveryConfig = async () => ({ maxSerpCallsPerHour: 20 } as any);
+  storage.getNextSerpCallAt = async () => new Date(Date.now() + 60000).toISOString();
   (db as any).transaction = (action: any) => {
     const result = tail.then(async () => { transactions++; return action(tx); });
     tail = result.then(() => undefined, () => undefined);
@@ -82,11 +88,14 @@ function fixture(count: number, fail: boolean | number = false, cachedBusinessSe
   Object.assign(fullResearchRowTools, {
     crawlWebsite: async () => { throw new Error("Unexpected website crawl in provider fixture"); },
     searchWithSerpApi: async (_q: any, _z: any, _s: any, _t: any, options: any) => {
+      hourlyPolicies.push(options.requestPolicy.hourlyLimit);
+      if (sharedThrottle) await options.requestPolicy.onReservationBlocked();
       if (cachedBusinessSearch) return { results: [], fromCache: true };
       await provider(options.beforeProviderRequest);
       return { results: [], fromCache: false };
     },
-    searchSalonContactPages: async (_row: any, _remaining: any, before: any) => {
+    searchSalonContactPages: async (_row: any, _remaining: any, before: any, policy: any) => {
+      hourlyPolicies.push(policy.hourlyLimit);
       await provider(before); return { results: [], calls: 1, error: null };
     },
     enrichRow: async (row: any, options: any) => {
@@ -98,12 +107,15 @@ function fixture(count: number, fail: boolean | number = false, cachedBusinessSe
           usesSoftware: { value: "Yes", sourceUrl: "https://fixture.example" },
         } };
     },
-    researchSalonOwnerCandidates: async (_row: any, before: any) => {
+    researchSalonOwnerCandidates: async (_row: any, before: any, policy: any) => {
+      hourlyPolicies.push(policy.hourlyLimit);
       await provider(before); return { ...EMPTY_OWNER_NAME_RESULT, status: "needs_review", candidates: [] };
     },
   });
   return {
-    batch, rows, get transactions() { return transactions; }, get providerAttempts() { return providerAttempts; },
+    batch, rows, hourlyPolicies,
+    setSharedThrottle(value: boolean, quota = false) { sharedThrottle = value; accountExhausted = quota; },
+    get transactions() { return transactions; }, get providerAttempts() { return providerAttempts; },
     async settled() {
       for (let i = 0; i < 400; i++) {
         if (batch.researchProgress.fullResearch && !batch.researchProgress.fullResearch.lease &&
@@ -116,6 +128,10 @@ function fixture(count: number, fail: boolean | number = false, cachedBusinessSe
     },
     restore() {
       (db as any).transaction = original.transaction;
+      (db as any).select = original.select;
+      storage.getOrCreateSerpUsage = original.usage;
+      storage.getOrCreateLeadDiscoveryConfig = original.config;
+      storage.getNextSerpCallAt = original.next;
       storage.getSalonEnrichmentBatch = original.get;
       storage.refreshSalonEnrichmentBatchCounts = original.refresh;
       Object.assign(fullResearchRowTools, original.tools);
@@ -242,5 +258,102 @@ test("Full Research controls and worker use only isolated records/providers", as
       assert.equal(env.providerAttempts, 3);
       assert.equal(env.batch.researchProgress.fullResearch.status, "completed");
     } finally { env.restore(); }
+  });
+  await t.test("all research tools receive the confirmed 40/hour allowance, not legacy 20/hour", async () => {
+    const env = fixture(1);
+    try {
+      await controlFullResearch(env.batch.id, env.batch.userId, "start", { confirmed: true, ...FULL_RESEARCH_DEFAULTS });
+      await env.settled();
+      assert.deepEqual(env.hourlyPolicies, [40, 40, 40]);
+    } finally { env.restore(); }
+  });
+  await t.test("shared hourly throttling waits without charging or marking the blocked business complete, then scheduler continues", async () => {
+    const env = fixture(1);
+    try {
+      env.setSharedThrottle(true);
+      await controlFullResearch(env.batch.id, env.batch.userId, "start", { confirmed: true, ...FULL_RESEARCH_DEFAULTS });
+      await env.settled();
+      const run = env.batch.researchProgress.fullResearch;
+      assert.equal(run.status, "waiting_hourly");
+      assert.equal(run.enabled, true);
+      assert.ok(Date.parse(run.nextRunAt) > Date.now());
+      assert.equal(run.attempts.length, 0);
+      assert.equal(run.processedIds.length, 0);
+      assert.equal(env.rows[0].status, "pending");
+      assert.equal(env.rows[0].sourceData.fullResearchState, "waiting_hourly");
+      await tickFullResearchScheduler();
+      assert.equal(env.providerAttempts, 0, "must not resume before its next allowance");
+      env.setSharedThrottle(false);
+      run.nextRunAt = new Date(Date.now() - 1).toISOString();
+      await tickFullResearchScheduler();
+      await wait(20);
+      await env.settled();
+      assert.equal(env.providerAttempts, 3);
+      assert.equal(env.batch.researchProgress.fullResearch.status, "completed");
+      assert.deepEqual(env.batch.researchProgress.fullResearch.processedIds, [env.rows[0].id]);
+    } finally { env.restore(); }
+  });
+  await t.test("scheduler resumes mid-list paid hourly waits and preserves earlier calls/results", async () => {
+    const env = fixture(2);
+    try {
+      await controlFullResearch(env.batch.id, env.batch.userId, "start",
+        { confirmed: true, ...FULL_RESEARCH_DEFAULTS, paidCallsPerHour: 4 });
+      await env.settled();
+      const run = env.batch.researchProgress.fullResearch;
+      assert.equal(run.status, "waiting_hourly");
+      assert.equal(run.attempts.length, 4);
+      assert.deepEqual(run.processedIds, [env.rows[0].id]);
+      assert.ok(env.rows[0].email);
+      run.attempts.forEach((call: any) => { call.at = new Date(Date.now() - 3600001).toISOString(); });
+      run.nextRunAt = new Date(Date.now() - 1).toISOString();
+      await tickFullResearchScheduler();
+      await wait(20);
+      await env.settled();
+      assert.equal(env.batch.researchProgress.fullResearch.status, "completed");
+      assert.equal(env.batch.researchProgress.fullResearch.attempts.length, 7, "earlier calls must never reset");
+      assert.equal(env.batch.researchProgress.fullResearch.processedIds.length, 2);
+      assert.equal(env.rows[0].serpCallsUsed, 3, "completed row was not researched again");
+    } finally { env.restore(); }
+  });
+  await t.test("the shared monthly hard stop pauses rather than automatically retrying or raising budget", async () => {
+    const env = fixture(1);
+    try {
+      env.setSharedThrottle(true, true);
+      await controlFullResearch(env.batch.id, env.batch.userId, "start", { confirmed: true, ...FULL_RESEARCH_DEFAULTS });
+      await env.settled();
+      assert.equal(env.batch.researchProgress.fullResearch.status, "paused");
+      assert.equal(env.batch.researchProgress.fullResearch.enabled, false);
+      assert.equal(env.providerAttempts, 0);
+      await tickFullResearchScheduler();
+      assert.equal(env.providerAttempts, 0);
+    } finally { env.restore(); }
+  });
+  await t.test("confirmed resume recovers old hourly-blocked processed IDs without resetting paid attempts", async () => {
+    const env = fixture(2);
+    try {
+      const run = newFullResearch(FULL_RESEARCH_DEFAULTS, Date.now());
+      run.status = "paused"; run.enabled = false;
+      run.startedRows = env.rows.map(row => ({ id: row.id, at: new Date().toISOString() }));
+      run.processedIds = env.rows.map(row => row.id);
+      run.attempts = [{ rowId: env.rows[0].id, tool: "business_search", at: new Date(Date.now() - 3600001).toISOString() }];
+      env.batch.researchProgress.fullResearch = run;
+      env.rows[0].status = "enriched";
+      env.rows[1].status = "failed";
+      env.rows[1].lastError = "SERP quota or hourly limit reached (20/hour). Please wait.";
+      await controlFullResearch(env.batch.id, env.batch.userId, "resume", { confirmed: true });
+      await env.settled();
+      assert.equal(env.providerAttempts, 3);
+      assert.equal(env.rows[0].serpCallsUsed, 0);
+      assert.equal(env.batch.researchProgress.fullResearch.attempts.length, 4);
+      assert.equal(env.batch.researchProgress.fullResearch.status, "completed");
+    } finally { env.restore(); }
+  });
+  await t.test("automatic continuation never activates disabled or terminal runs", () => {
+    const run = newFullResearch(FULL_RESEARCH_DEFAULTS, Date.now());
+    assert.equal(fullResearchIsDue(run, Date.now()), true);
+    for (const status of ["paused", "interrupted", "completed", "budget_exhausted"] as const) {
+      assert.equal(fullResearchIsDue({ ...run, status }, Date.now()), false);
+    }
+    assert.equal(fullResearchIsDue({ ...run, enabled: false }, Date.now()), false);
   });
 });

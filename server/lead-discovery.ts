@@ -1,4 +1,5 @@
 import { storage } from "./storage";
+import { providerHourlyLimit, type SerpRequestPolicy } from "./serpRequestPolicy";
 import type { LeadDiscoveryJob, LeadDiscoveryResult, InsertLeadDiscoveryResult, SerpUsage, LeadDiscoveryConfig } from "@shared/schema";
 import { parseAddressString } from "@shared/utils";
 import { fetchPublicPage, type SalonFetchRuntime } from "./salonPublicFetch";
@@ -252,7 +253,7 @@ export async function searchWithSerpApi(
   zipCode: string,
   state: string,
   queryTemplate: string,
-  options?: { placeId?: string; beforeProviderRequest?: () => void | Promise<void> },
+  options?: { placeId?: string; beforeProviderRequest?: () => void | Promise<void>; requestPolicy?: SerpRequestPolicy },
 ): Promise<{ results: SerpApiResult[]; fromCache: boolean }> {
   const apiKey = process.env.SERPAPI_API_KEY;
   if (!apiKey) {
@@ -271,10 +272,13 @@ export async function searchWithSerpApi(
     throw new Error("SERP quota reached – upgrade required");
   }
 
-  const maxCallsPerHour = status.config.maxSerpCallsPerHour || 5;
+  const maxCallsPerHour = providerHourlyLimit(status.config.maxSerpCallsPerHour || 5, options?.requestPolicy);
   const monthYear = getCurrentMonthYear();
   const reservationId = await storage.reserveSerpCall(monthYear, maxCallsPerHour);
-  if (!reservationId) throw new Error(`SERP quota or hourly limit reached (${maxCallsPerHour}/hour). Please wait.`);
+  if (!reservationId) {
+    await options?.requestPolicy?.onReservationBlocked();
+    throw new Error(`SERP quota or hourly limit reached (${maxCallsPerHour}/hour). Please wait.`);
+  }
 
   let billableCallMade = false;
   try {

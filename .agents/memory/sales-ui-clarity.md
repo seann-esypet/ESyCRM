@@ -9,6 +9,12 @@ The user needs salespeople to understand what a feature is and what they should 
 
 **How to apply:** Make the ordinary list-upload path obvious, state accepted file formats, and distinguish uploading the user's list from loading sample leads or importing a pre-checked report. Keep review, contact creation, and outreach as clearly explained separate actions.
 
+Make the Leads workflow very obvious and step by step for salespeople: “You just uploaded…”, “These are the researched businesses…”, “These businesses still need review…”, and “Next step…”.
+
+**Why:** The user said researched and untouched rows all looked the same, they did not know where to start, and asked for explicit progress wording and directions for salespeople.
+
+**How to apply:** Present understandable counts and direct actions together. Distinguish uploaded, attempted, completed, blocked, reviewed, and ready-for-Contacts businesses; never imply that a research attempt found an email.
+
 When delivering a research spreadsheet, explicitly say whether it is a research report or an upload-ready file for a specific import screen. If the user asks for an import file, validate it against that screen's recognized headings and keep unapproved findings separate from actionable contact fields.
 
 **Why:** The user uploaded an agent-generated crawler report into the CRM because its intended use was not clear; they then deleted the business-name column while trying to fix the mapping.

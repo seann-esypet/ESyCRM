@@ -27,6 +27,7 @@ import { ArrowLeft, ArrowRight, Building2, Check, ChevronDown, CircleAlert, Cloc
 type LeadBatch = { id: string; name: string; fileName?: string; status: string; totalRows: number; createdAt: string; researchProgress?: LeadResearchProgress & { fullResearch?: FullResearchStatus } };
 type LeadRow = {
   id: string; batchId: string; businessName: string; address?: string; state?: string; websiteUrl?: string;
+  researchState?: "not_started" | "researching" | "researched" | "waiting_hourly" | "failed";
   email?: string; candidateEmail?: string; sourceUrl?: string; evidenceNote?: string; category?: string;
   reviewStatus?: string; status?: string; identityMatchStatus?: string; importedContactId?: string; dealId?: string;
   nextAction?: string; historicalFinding?: unknown; sourceData?: Record<string, unknown>; evidence?: unknown;
@@ -34,7 +35,8 @@ type LeadRow = {
 };
 type LeadHistory = { label:"Already scheduled"|"Previously emailed"|"Uncertain history"|null; history:{status:string;date?:string;contactId?:string;sequenceTrack?:string}[]; crossOwner:boolean };
 type LeadSequence = { id:string; subject?:string; sequenceTrack:string; sequenceNumber:number; isActive:string|boolean; renderedSubject?:string; renderedBody?:string; greetingPreview?:string; previewFingerprint?:string };
-type Detail = { batch: LeadBatch; rows: LeadRow[]; linkedRows?:{rowId:string;batchId:string;businessName:string}[]; nextOffset: number | null; total: number };
+type LeadView = "all" | "researched" | "needs_review" | "ready_for_contacts";
+type Detail = { batch: LeadBatch; rows: LeadRow[]; linkedRows?:{rowId:string;batchId:string;businessName:string}[]; nextOffset: number | null; total: number; researchSummary?: { uploaded:number; notResearched:number; needsReview:number; readyForContacts:number; addedToContacts:number; attempted:number; finished:number; waiting:number; failed:number; emails:number } };
 type CorrectionPreview = { changes:{field:string;before:unknown;after:unknown}[]; protected:boolean; message:string; duplicates:{rowId:string;batchId:string;businessName:string}[] };
 type Estimate = { eligibleRows: number; maxProviderCalls: number; active: boolean; reason?: string | null };
 type Preview = { rows: { rowNumber: number; businessName: string; email?: string; sourceUrl?: string; existingRowId?: string; existingBatchId?: string; protected?: boolean; action: string }[]; inputCount: number; invalidCount: number; duplicateCount: number };
@@ -88,6 +90,19 @@ function localDateTimeValue(date: Date) {
   return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 function pretty(v: unknown): string { return typeof v === "string" ? v : v == null ? "" : JSON.stringify(v, null, 2); }
+function readLeadView(): LeadView {
+  const candidate=new URLSearchParams(window.location.search).get("view");
+  return candidate==="researched"||candidate==="needs_review"||candidate==="ready_for_contacts"?candidate:"all";
+}
+function researchBadge(state: LeadRow["researchState"]) {
+  switch (state) {
+    case "researching": return <Badge variant="secondary">Researching</Badge>;
+    case "researched": return <Badge variant="default">Research complete</Badge>;
+    case "waiting_hourly": return <Badge variant="outline" className="border-amber-400 text-amber-800">Stopped at hourly limit</Badge>;
+    case "failed": return <Badge variant="destructive">Research failed</Badge>;
+    default: return <Badge variant="outline">Not researched</Badge>;
+  }
+}
 function FieldMap({ raw, mapping, setMapping }: { raw: Raw[]; mapping: Record<string,string>; setMapping: (v: Record<string,string>) => void }) {
   const headers = Object.keys(raw[0] ?? {});
   return <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">{fields.map(field => <div key={field} className="space-y-1"><Label className="capitalize">{field.replace(/([A-Z])/g," $1")}{field === "businessName" ? " · required" : ""}</Label><Select value={mapping[field] || "none"} onValueChange={v => setMapping({...mapping,[field]:v==="none"?"":v})}><SelectTrigger><SelectValue placeholder="Not mapped"/></SelectTrigger><SelectContent><SelectItem value="none">Not mapped</SelectItem>{headers.map(h=><SelectItem key={h} value={h}>{h}</SelectItem>)}</SelectContent></Select></div>)}</div>;
@@ -239,7 +254,7 @@ function LeadRowCard({row,onRefresh}:{row:LeadRow;onRefresh:()=>void}) {
   const sourceData=row.sourceData;
   return <article id={`lead-row-${row.id}`} className="rounded-xl border bg-card p-4 shadow-sm">
     <div className="flex flex-wrap items-start justify-between gap-3">
-      <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold">{row.businessName}</h3><Badge variant={row.reviewStatus==="approved"?"default":row.reviewStatus==="rejected"?"destructive":"outline"}>{row.reviewStatus||"needs review"}</Badge>{row.identityMatchStatus&&<Badge variant="secondary">Identity · {row.identityMatchStatus}</Badge>}{!!row.historicalFinding&&<Badge variant="outline">Historical source finding · inspect evidence</Badge>}</div><p className="mt-1 text-sm text-muted-foreground">{[row.address,row.state].filter(Boolean).join(" · ")||"Address not provided"}</p><p className="mt-1 text-xs text-muted-foreground">Added {dateText(row.processedAt)}{row.sourceData?.originalResearchDate?` · Originally researched ${dateText(String(row.sourceData.originalResearchDate))}`:""}{row.category?` · ${row.category}`:""}</p></div>
+       <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold">{row.businessName}</h3>{researchBadge(row.researchState)}<Badge variant={row.reviewStatus==="approved"?"default":row.reviewStatus==="rejected"?"destructive":"outline"}>{row.reviewStatus||"needs review"}</Badge>{row.identityMatchStatus&&<Badge variant="secondary">Identity · {row.identityMatchStatus}</Badge>}{!!row.historicalFinding&&<Badge variant="outline">Historical source finding · inspect evidence</Badge>}</div><p className="mt-1 text-sm text-muted-foreground">{[row.address,row.state].filter(Boolean).join(" · ")||"Address not provided"}</p><p className="mt-1 text-xs text-muted-foreground">Added {dateText(row.processedAt)}{row.sourceData?.originalResearchDate?` · Originally researched ${dateText(String(row.sourceData.originalResearchDate))}`:""}{row.category?` · ${row.category}`:""}</p></div>
       <Button size="sm" variant="ghost" onClick={()=>setOpen(!open)} aria-expanded={open}>{open?"Close details":"Review details"}<ChevronDown className={`ml-1 h-4 w-4 transition-transform ${open?"rotate-180":""}`}/></Button>
     </div>
     <p className="mt-3 rounded-md bg-muted/60 px-3 py-2 text-sm"><span className="font-medium">Next action · </span>{row.nextAction||"Review source evidence and confirm business identity before approving."}</p>
@@ -326,6 +341,7 @@ export default function Leads() {
   const [,setLocation]=useLocation();
   const {toast}=useToast();
   const [search,setSearch]=useState("");
+  const [view,setView]=useState<LeadView>(()=>readLeadView());
   const [limit,setLimit]=useState("100");
   const [rowLimit,setRowLimit]=useState("100");
   const [calls,setCalls]=useState("");
@@ -337,10 +353,20 @@ export default function Leads() {
       window.requestAnimationFrame(()=>document.getElementById("upload-list")?.scrollIntoView({behavior:"smooth",block:"start"}));
     }
   },[id]);
+  useEffect(()=>{
+    setView(readLeadView());
+  },[id]);
+  const changeView=(next:LeadView, scrollTarget?:string)=>{
+    setView(next);
+    const params=new URLSearchParams(window.location.search);
+    if(next==="all")params.delete("view");else params.set("view",next);
+    setLocation(`${window.location.pathname}${params.size?`?${params.toString()}`:""}${window.location.hash}`);
+    if(scrollTarget)window.requestAnimationFrame(()=>document.getElementById(scrollTarget)?.scrollIntoView({behavior:"smooth",block:"start"}));
+  };
   const batches=useQuery<LeadBatch[]>({queryKey:["/api/leads"],queryFn:()=>requestJson("/api/leads"),enabled:!id});
   const detail=useInfiniteQuery<Detail>({
-    queryKey:["/api/leads",id,limit,search],
-    queryFn:({pageParam})=>requestJson(`/api/leads/${encodeURIComponent(id!)}?limit=${limit}&offset=${String(pageParam)}${search?`&search=${encodeURIComponent(search)}`:""}`),
+    queryKey:["/api/leads",id,limit,search,view],
+    queryFn:({pageParam})=>requestJson(`/api/leads/${encodeURIComponent(id!)}?limit=${limit}&offset=${String(pageParam)}&view=${view}${search?`&search=${encodeURIComponent(search)}`:""}`),
     initialPageParam:0,
     getNextPageParam:page=>page.nextOffset??undefined,
     enabled:!!id,
@@ -374,6 +400,8 @@ export default function Leads() {
   },onError:(error:Error)=>toast({title:"Could not save this search",description:error.message,variant:"destructive"})});
   const batchData=detail.data?.pages[0];
   const researchProgress=batchData?.batch.researchProgress?.leadResearch;
+  const summary=batchData?.researchSummary;
+  const fullResearch=batchData?.batch.researchProgress?.fullResearch;
   const validResearchCaps=Boolean(estimate.data&&Number.isInteger(Number(rowLimit))&&Number(rowLimit)>=1&&Number(rowLimit)<=100&&Number(rowLimit)<=estimate.data.eligibleRows&&Number.isInteger(Number(calls))&&Number(calls)>=0&&Number(calls)<=estimate.data.maxProviderCalls);
   const visibleRows=detail.data?.pages.flatMap(page=>page.rows)??[];
   const reload=()=>queryClient.invalidateQueries({queryKey:["/api/leads",id]});
@@ -381,8 +409,54 @@ export default function Leads() {
     {id?<>
       <Link href="/leads" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="h-4 w-4"/>All saved lists</Link>
       {detail.isLoading?<div className="space-y-3"><div className="h-28 animate-pulse rounded-xl bg-muted"/><div className="h-40 animate-pulse rounded-xl bg-muted"/></div>:detail.isError?<Alert variant="destructive"><CircleAlert className="h-4 w-4"/><AlertTitle>Saved list unavailable</AlertTitle><AlertDescription>{(detail.error as Error).message}<Button className="ml-3" size="sm" variant="outline" onClick={()=>detail.refetch()}>Retry</Button></AlertDescription></Alert>:batchData&&<>
-        <section className="relative overflow-hidden rounded-2xl border bg-card p-5 sm:p-7"><div className="absolute -right-12 -top-16 h-64 w-64 rounded-full border-[36px] border-primary/[0.06]"/><div className="relative flex flex-col justify-between gap-5 lg:flex-row lg:items-end"><div><p className="text-xs font-semibold uppercase tracking-[.15em] text-primary">Saved lead list · review before outreach</p><h1 className="mt-2 text-3xl font-semibold tracking-tight">{batchData.batch.name}</h1><p className="mt-2 text-sm text-muted-foreground">{batchData.batch.fileName||"Lead list"} · {batchData.total.toLocaleString()} records · created {dateText(batchData.batch.createdAt)}</p></div><div className="flex flex-wrap gap-2"><Badge variant="secondary">{batchData.batch.status}</Badge></div></div></section>
-         <FullResearchPanel batch={batchData.batch} readOnlyReason={estimate.data?.reason} busy={Boolean(estimate.data?.active||(batchData.batch.status==="running"&&!["running","waiting_hourly"].includes(batchData.batch.researchProgress?.fullResearch?.status??"")))} onChanged={async()=>{await Promise.all([queryClient.invalidateQueries({queryKey:["/api/leads",id]}),queryClient.invalidateQueries({queryKey:["/api/leads",id,"estimate"]}),queryClient.invalidateQueries({queryKey:["/api/leads"]})]);}}/>
+       <section className="relative overflow-hidden rounded-2xl border bg-card p-5 sm:p-7"><div className="absolute -right-12 -top-16 h-64 w-64 rounded-full border-[36px] border-primary/[0.06]"/><div className="relative flex flex-col justify-between gap-5 lg:flex-row lg:items-end"><div><p className="text-xs font-semibold uppercase tracking-[.15em] text-primary">Saved lead list · review before outreach</p><h1 className="mt-2 text-3xl font-semibold tracking-tight">{batchData.batch.name}</h1><p className="mt-2 text-sm text-muted-foreground">{batchData.batch.fileName||"Lead list"} · {batchData.batch.totalRows.toLocaleString()} records · created {dateText(batchData.batch.createdAt)}</p></div><div className="flex flex-wrap gap-2"><Badge variant="secondary">{batchData.batch.status}</Badge></div></div></section>
+          <section aria-labelledby="lead-process-title" className="rounded-2xl border-2 border-primary/20 bg-primary/[0.035] p-4 sm:p-6">
+            <div className="flex flex-wrap items-end justify-between gap-2"><div><p className="text-xs font-semibold uppercase tracking-[.13em] text-primary">Your sales workflow</p><h2 id="lead-process-title" className="mt-1 text-xl font-semibold">What to do next</h2></div><p className="text-xs text-muted-foreground">Research does not approve email or add anyone to Contacts.</p></div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-lg border bg-card p-3"><p className="text-xs font-semibold uppercase tracking-wide text-primary">1 · Your upload</p><p className="mt-1 text-sm">You uploaded <b>{(summary?.uploaded??batchData.batch.totalRows).toLocaleString()}</b> businesses.</p><p className="mt-1 text-xs text-muted-foreground">{(summary?.notResearched??batchData.batch.totalRows).toLocaleString()} still have not been researched. Uploading alone is not a research result.</p></div>
+              <div className="rounded-lg border bg-card p-3"><p className="text-xs font-semibold uppercase tracking-wide text-primary">2 · Research results</p><p className="mt-1 text-sm"><b>{(summary?.attempted??0).toLocaleString()}</b> businesses have been attempted: {(summary?.finished??0).toLocaleString()} finished, {(summary?.waiting??0).toLocaleString()} waiting, {(summary?.failed??0).toLocaleString()} failed.</p><p className="mt-1 text-xs text-muted-foreground">These are research outcomes, not emails. {summary?.emails??0} email suggestions found; a completed lookup may find none.</p></div>
+              <div className="rounded-lg border bg-card p-3"><p className="text-xs font-semibold uppercase tracking-wide text-primary">3 · Your review</p><p className="mt-1 text-sm">These businesses still need review: <b>{(summary?.needsReview??0).toLocaleString()}</b> researched businesses.</p><p className="mt-1 text-xs text-muted-foreground">Check the source and salon suitability yourself. Only approve a real, source-backed business email.</p></div>
+              <div className="rounded-lg border bg-card p-3"><p className="text-xs font-semibold uppercase tracking-wide text-primary">4 · Contacts</p><p className="mt-1 text-sm"><b>{(summary?.readyForContacts??0).toLocaleString()}</b> approved businesses are ready to add. <b>{(summary?.addedToContacts??0).toLocaleString()}</b> already added to Contacts.</p><p className="mt-1 text-xs text-muted-foreground">Approval and grooming eligibility are required first. Adding to Contacts never sends a message.</p></div>
+            </div>
+            <div className="mt-4 flex flex-col gap-3 rounded-lg border bg-card p-3 sm:flex-row sm:items-center sm:justify-between sm:p-4">
+              <div><p className="text-sm font-semibold">Next step</p>
+                {summary&&summary.readyForContacts>0
+                  ? <p className="mt-1 text-sm text-muted-foreground">Your reviewed businesses are ready. Open an approved lead and choose Add approved lead to Contacts.</p>
+                  : summary&&summary.needsReview>0
+                    ? <p className="mt-1 text-sm text-muted-foreground">Open the {summary.needsReview.toLocaleString()} researched businesses needing review. Confirm grooming suitability and inspect the source.{summary.emails===0?" No emails were found yet—find and save a source-backed business email before approval.":" Approve only an email that belongs to this exact business."}</p>
+                  : fullResearch?.status==="paused"
+                  ? <p className="mt-1 text-sm text-muted-foreground">Full Research is paused. To research more businesses, choose Resume in the Full Research controls and confirm there.</p>
+                  : fullResearch?.status==="waiting_hourly"&&fullResearch.enabled
+                    ? <p className="mt-1 text-sm text-muted-foreground">Full Research is on an hourly schedule and continues automatically. Review businesses already researched while it runs.</p>
+                    : summary&&summary.attempted===0
+                      ? <p className="mt-1 text-sm text-muted-foreground">No businesses have been researched yet. Review the limits below, then start only after your explicit in-app confirmation.</p>
+                      : summary&&summary.needsReview===0&&summary.readyForContacts>0
+                        ? <p className="mt-1 text-sm text-muted-foreground">Your reviewed businesses are ready. Add an approved lead to Contacts when you choose.</p>
+                        : summary&&summary.finished>0&&summary.emails===0&&summary.waiting===0
+                          ? <p className="mt-1 text-sm text-muted-foreground">No email suggestions were found. Inspect the researched businesses, confirm grooming suitability, and find a source-backed business email; do not approve an email that is not there.</p>
+                          : summary&&summary.needsReview>0
+                            ? <p className="mt-1 text-sm text-muted-foreground">Review the researched businesses next. Verify each source and email before approval.</p>
+                            : <p className="mt-1 text-sm text-muted-foreground">Review the research limits below before starting. Research begins only after you confirm it in the app.</p>}
+              </div>
+              {summary&&summary.readyForContacts>0
+                ? <Button variant="outline" className="shrink-0" onClick={()=>changeView("ready_for_contacts","lead-candidates")}>Show leads ready for Contacts</Button>
+                : summary&&summary.needsReview>0
+                  ? <Button className="shrink-0" onClick={()=>changeView("needs_review","lead-candidates")}>Show businesses needing review</Button>
+                : fullResearch?.status==="paused"
+                ? <Button variant="outline" className="shrink-0" onClick={()=>document.getElementById("full-research-controls")?.scrollIntoView({behavior:"smooth",block:"start"})}>Go to Resume controls</Button>
+                : fullResearch?.status==="waiting_hourly"&&fullResearch.enabled
+                  ? <Button variant="outline" className="shrink-0" onClick={()=>changeView("researched","lead-candidates")}>Review researched businesses</Button>
+                  : summary&&summary.attempted===0
+                    ? <Button variant="outline" className="shrink-0" onClick={()=>document.getElementById("full-research-controls")?.scrollIntoView({behavior:"smooth",block:"start"})}>Review research limits</Button>
+                    : summary&&summary.needsReview===0&&summary.readyForContacts>0
+                      ? <Button variant="outline" className="shrink-0" onClick={()=>changeView("ready_for_contacts","lead-candidates")}>Show leads ready for Contacts</Button>
+                      : summary&&summary.finished>0&&summary.emails===0&&summary.waiting===0
+                        ? <Button variant="outline" className="shrink-0" onClick={()=>changeView("researched","lead-candidates")}>Inspect researched businesses</Button>
+                        : <Button variant="outline" className="shrink-0" onClick={()=>changeView("needs_review","lead-candidates")}>Show businesses needing review</Button>}
+            </div>
+            {fullResearch?.status==="paused"&&Boolean(summary?.needsReview||summary?.readyForContacts)&&<p className="mt-3 text-xs text-muted-foreground">Research is paused. You can review the saved results now. To research more businesses, use Resume below and confirm once; future hourly waits continue automatically.</p>}
+          </section>
+          <div id="full-research-controls"><FullResearchPanel batch={batchData.batch} readOnlyReason={estimate.data?.reason} busy={Boolean(estimate.data?.active||(batchData.batch.status==="running"&&!["running","waiting_hourly"].includes(batchData.batch.researchProgress?.fullResearch?.status??"")))} onChanged={async()=>{await Promise.all([queryClient.invalidateQueries({queryKey:["/api/leads",id]}),queryClient.invalidateQueries({queryKey:["/api/leads",id,"estimate"]}),queryClient.invalidateQueries({queryKey:["/api/leads"]})]);}}/></div>
          <section className="grid gap-4 lg:grid-cols-[1.15fr_.85fr]">
           {batchData.batch.researchProgress?.fullResearch?<Card><CardHeader><CardTitle className="text-base">Hourly Full Research is configured</CardTitle><p className="text-sm text-muted-foreground">Use the Full Research controls above to pause, resume or approve more requests. Its paid-request history is retained across every restart.</p></CardHeader></Card>:<Card><CardHeader><CardTitle className="text-base">Find contact details</CardTitle><p className="text-sm text-muted-foreground">Check the estimate and confirm the cap before research. Matched pages provide email and name evidence together; extra paid name searches require separate confirmation.</p></CardHeader><CardContent className="space-y-4">
             {estimate.isLoading?<div className="h-14 animate-pulse rounded bg-muted"/>:estimate.isError?<Alert variant="destructive"><AlertDescription>Current research estimate unavailable: {(estimate.error as Error).message}</AlertDescription></Alert>:estimate.data&&<div className="grid grid-cols-3 gap-2 rounded-lg bg-muted/50 p-3 text-sm"><div><b>{estimate.data.eligibleRows}</b><span className="block text-xs text-muted-foreground">eligible rows</span></div><div><b>{estimate.data.maxProviderCalls}</b><span className="block text-xs text-muted-foreground">provider-call cap</span></div><div><b>{estimate.data.active?"Active":"Idle"}</b><span className="block text-xs text-muted-foreground">shared research</span></div></div>}
@@ -398,8 +472,17 @@ export default function Leads() {
           <LeadWorkflowGuide/>
         </section>
         {batchData.linkedRows&&batchData.linkedRows.length>0&&<section className="rounded-xl border bg-muted/20 p-4"><h2 className="font-semibold">Rows linked to this list</h2><p className="mt-1 text-xs text-muted-foreground">These duplicate-only links remain attached to their original saved batch.</p><div className="mt-3 space-y-2">{batchData.linkedRows.map(link=><Link key={`${link.batchId}-${link.rowId}`} href={`/leads/${encodeURIComponent(link.batchId)}#lead-row-${encodeURIComponent(link.rowId)}`} className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-card p-3 text-sm hover:border-primary/50"><span>{link.businessName}</span><span className="inline-flex items-center gap-1 text-xs text-primary">Open original list <ArrowRight className="h-3 w-3"/></span></Link>)}</div></section>}
-        <section className="space-y-3"><div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end"><div><h2 className="text-xl font-semibold">Review candidates</h2><p className="text-sm text-muted-foreground">All saved candidates remain visible. Approval and CRM actions are explicit.</p></div><div className="flex gap-2"><Input className="w-full sm:w-64" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search this list…"/><Select value={limit} onValueChange={setLimit}><SelectTrigger className="w-28"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="50">50 rows</SelectItem><SelectItem value="100">100 rows</SelectItem><SelectItem value="200">200 rows</SelectItem></SelectContent></Select></div></div>
-          {visibleRows.length?visibleRows.map(row=><LeadRowCard key={row.id} row={row} onRefresh={reload}/>):<div className="rounded-xl border border-dashed p-10 text-center"><ListChecks className="mx-auto h-8 w-8 text-muted-foreground"/><p className="mt-3 font-medium">No candidates match this view</p><p className="text-sm text-muted-foreground">Try another search or check the batch again.</p></div>}
+         <section id="lead-candidates" className="scroll-mt-5 space-y-3"><div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end"><div><h2 className="text-xl font-semibold">Review businesses</h2><p className="text-sm text-muted-foreground">Check the source and identity. A research result is not automatically an email or approval.</p></div><div className="flex gap-2"><Input className="w-full sm:w-64" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search this list…"/><Select value={limit} onValueChange={setLimit}><SelectTrigger className="w-28"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="50">50 rows</SelectItem><SelectItem value="100">100 rows</SelectItem><SelectItem value="200">200 rows</SelectItem></SelectContent></Select></div></div>
+           <div className="flex flex-col gap-3 rounded-xl border bg-muted/20 p-3 sm:flex-row sm:items-center sm:justify-between">
+             <div className="flex flex-wrap gap-2" role="group" aria-label="Choose businesses to show">
+               <Button size="sm" variant={view==="researched"?"default":"outline"} aria-pressed={view==="researched"} onClick={()=>changeView("researched","lead-candidates")}>Show researched businesses</Button>
+               <Button size="sm" variant={view==="all"?"default":"outline"} aria-pressed={view==="all"} onClick={()=>changeView("all","lead-candidates")}>All uploaded businesses</Button>
+               <Button size="sm" variant={view==="needs_review"?"default":"outline"} aria-pressed={view==="needs_review"} onClick={()=>changeView("needs_review","lead-candidates")}>Needs review{summary?` · ${summary.needsReview}`:""}</Button>
+               <Button size="sm" variant={view==="ready_for_contacts"?"default":"outline"} aria-pressed={view==="ready_for_contacts"} onClick={()=>changeView("ready_for_contacts","lead-candidates")}>Ready for Contacts{summary?` · ${summary.readyForContacts}`:""}</Button>
+             </div>
+             <p className="text-xs text-muted-foreground">{batchData.total.toLocaleString()} {view==="all"?"businesses in this list":view==="researched"?"businesses attempted, including waiting and failed":view==="needs_review"?"researched businesses awaiting review":"approved businesses ready to add to Contacts"}</p>
+           </div>
+           {visibleRows.length?visibleRows.map(row=><LeadRowCard key={row.id} row={row} onRefresh={reload}/>):<div className="rounded-xl border border-dashed p-10 text-center"><ListChecks className="mx-auto h-8 w-8 text-muted-foreground"/><p className="mt-3 font-medium">No businesses in this view yet</p><p className="text-sm text-muted-foreground">{view==="researched"?"No research attempts are available to review yet.":view==="needs_review"?"No researched businesses are waiting for your review.":view==="ready_for_contacts"?"No approved businesses are ready for Contacts yet.":"Try another search or check the batch again."}</p></div>}
           {detail.hasNextPage&&<Button variant="outline" disabled={detail.isFetchingNextPage} onClick={()=>detail.fetchNextPage()}>{detail.isFetchingNextPage?"Loading more…":"Load more candidates"}</Button>}
         </section>
       </>}

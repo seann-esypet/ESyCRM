@@ -5,12 +5,14 @@ import { crawlWebsite, searchWithSerpApi } from "./lead-discovery";
 import { enrichRow } from "./salonEnrichment";
 import { businessAndLocationMatch, extractSalonOwnerCandidates, stripHtml, searchSalonContactPages, researchSalonOwnerCandidates } from "./salonOwnerNames";
 import { safeWebsite } from "./salonListStaging";
+import type { SerpRequestPolicy } from "./serpRequestPolicy";
 
 export const fullResearchRowTools = { crawlWebsite, searchWithSerpApi, enrichRow, searchSalonContactPages, researchSalonOwnerCandidates };
 export async function researchFullRow(
   row: SalonEnrichmentRow,
   beforePaid: (tool: string) => Promise<void>,
   tools = fullResearchRowTools,
+  requestPolicy?: SerpRequestPolicy,
 ): Promise<Partial<SalonEnrichmentRow>> {
   const pages: { url: string; html: string }[] = [];
   const cached = new Map<string, Awaited<ReturnType<typeof crawlWebsite>>>();
@@ -49,13 +51,13 @@ export async function researchFullRow(
   }
   const search: typeof searchWithSerpApi = (query, zip, state, template, options) =>
     tools.searchWithSerpApi(query, zip, state, template, {
-      ...options, beforeProviderRequest: async () => {
+      ...options, requestPolicy, beforeProviderRequest: async () => {
         await beforePaid("business_search");
         await options?.beforeProviderRequest?.();
       },
     });
   const fallbackSearch: typeof searchWithSerpApi = async () => {
-    const found = await tools.searchSalonContactPages(row, 1, () => beforePaid("email_contact_search"));
+    const found = await tools.searchSalonContactPages(row, 1, () => beforePaid("email_contact_search"), requestPolicy);
     if (found.error) throw new Error(found.error);
     return { results: found.results, fromCache: found.calls === 0 };
   };
@@ -77,7 +79,7 @@ export async function researchFullRow(
     if (priorName.status !== "approved") {
       const names = websiteCandidates.some(candidate => candidate.roleConfirmed && candidate.businessMatched)
         ? { ...EMPTY_OWNER_NAME_RESULT, status: "needs_review", candidates: websiteCandidates, pagesFetched: pages.length }
-        : await tools.researchSalonOwnerCandidates({ ...row, ...patch } as SalonEnrichmentRow, () => beforePaid("contact_name_search"));
+        : await tools.researchSalonOwnerCandidates({ ...row, ...patch } as SalonEnrichmentRow, () => beforePaid("contact_name_search"), requestPolicy);
       patch.evidence = { ...directoryObject(patch.evidence), ownerName: names };
     }
   } catch (error) {
