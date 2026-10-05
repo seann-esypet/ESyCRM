@@ -399,6 +399,15 @@ export default function Leads() {
     if(result.batch?.id)setLocation(`/leads/${encodeURIComponent(result.batch.id)}`);
   },onError:(error:Error)=>toast({title:"Could not save this search",description:error.message,variant:"destructive"})});
   const batchData=detail.data?.pages[0];
+  const researchReviewFocusBatch=useRef<string|null>(null);
+  useEffect(()=>{
+    if(researchReviewFocusBatch.current!==id||view!=="researched")return;
+    const target=document.getElementById("lead-candidates")?.querySelector<HTMLInputElement>("input");
+    if(target){
+      target.focus({preventScroll:true});
+      researchReviewFocusBatch.current=null;
+    }
+  },[id,view,detail.data]);
   const researchProgress=batchData?.batch.researchProgress?.leadResearch;
   const summary=batchData?.researchSummary;
   const fullResearch=batchData?.batch.researchProgress?.fullResearch;
@@ -456,7 +465,7 @@ export default function Leads() {
             </div>
             {fullResearch?.status==="paused"&&Boolean(summary?.needsReview||summary?.readyForContacts)&&<p className="mt-3 text-xs text-muted-foreground">Research is paused. You can review the saved results now. To research more businesses, use Resume below and confirm once; future hourly waits continue automatically.</p>}
           </section>
-          <div id="full-research-controls"><FullResearchPanel batch={batchData.batch} readOnlyReason={estimate.data?.reason} busy={Boolean(estimate.data?.active||(batchData.batch.status==="running"&&!["running","waiting_hourly"].includes(batchData.batch.researchProgress?.fullResearch?.status??"")))} onChanged={async()=>{await Promise.all([queryClient.invalidateQueries({queryKey:["/api/leads",id]}),queryClient.invalidateQueries({queryKey:["/api/leads",id,"estimate"]}),queryClient.invalidateQueries({queryKey:["/api/leads"]})]);}}/></div>
+          <div id="full-research-controls"><FullResearchPanel key={batchData.batch.id} batch={batchData.batch} researchSummary={summary} onReview={()=>{if(view!=="researched")researchReviewFocusBatch.current=batchData.batch.id;changeView("researched","lead-candidates");}} readOnlyReason={estimate.data?.reason} busy={Boolean(estimate.data?.active||(batchData.batch.status==="running"&&!["running","waiting_hourly"].includes(batchData.batch.researchProgress?.fullResearch?.status??"")))} onChanged={async()=>{await Promise.all([queryClient.invalidateQueries({queryKey:["/api/leads",id]}),queryClient.invalidateQueries({queryKey:["/api/leads",id,"estimate"]}),queryClient.invalidateQueries({queryKey:["/api/leads"]})]);}}/></div>
          <section className="grid gap-4 lg:grid-cols-[1.15fr_.85fr]">
           {batchData.batch.researchProgress?.fullResearch?<Card><CardHeader><CardTitle className="text-base">Hourly Full Research is configured</CardTitle><p className="text-sm text-muted-foreground">Use the Full Research controls above to pause, resume or approve more requests. Its paid-request history is retained across every restart.</p></CardHeader></Card>:<Card><CardHeader><CardTitle className="text-base">Find contact details</CardTitle><p className="text-sm text-muted-foreground">Check the estimate and confirm the cap before research. Matched pages provide email and name evidence together; extra paid name searches require separate confirmation.</p></CardHeader><CardContent className="space-y-4">
             {estimate.isLoading?<div className="h-14 animate-pulse rounded bg-muted"/>:estimate.isError?<Alert variant="destructive"><AlertDescription>Current research estimate unavailable: {(estimate.error as Error).message}</AlertDescription></Alert>:estimate.data&&<div className="grid grid-cols-3 gap-2 rounded-lg bg-muted/50 p-3 text-sm"><div><b>{estimate.data.eligibleRows}</b><span className="block text-xs text-muted-foreground">eligible rows</span></div><div><b>{estimate.data.maxProviderCalls}</b><span className="block text-xs text-muted-foreground">provider-call cap</span></div><div><b>{estimate.data.active?"Active":"Idle"}</b><span className="block text-xs text-muted-foreground">shared research</span></div></div>}

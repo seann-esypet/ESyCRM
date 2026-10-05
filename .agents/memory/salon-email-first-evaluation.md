@@ -9,6 +9,12 @@ The primary outcome of salon enrichment is an email attributable to the salon th
 
 **How to apply:** Measure verified-by-review email yield and false attribution, not merely sites or booking links found. Improve rules from small, manually checked samples before scaling. Budget live pilots by provider calls rather than row count: a row without an email may need a second search, subject to hourly and monthly stops. Never auto-import, enroll, or send during a rules pilot.
 
+The user reports approximately 25–30% email-research success and considers five researched businesses too small a sample to judge yield.
+
+**Why:** The user explicitly declined an email-yield investigation suggested after just five completed businesses returned no email addresses.
+
+**How to apply:** Do not propose yield troubleshooting solely from a similarly tiny sample. Keep attempts, completed businesses, and reviewable email findings distinct; a sample-size concern does not authorize more paid searches.
+
 An email extracted from a salon-associated page is not necessarily a usable salon contact: site-builder support addresses and mailboxes explicitly designated for client paperwork should not count as general outreach leads. Indexed snippets that are not confirmed on a current matching page remain review-only.
 
 **Why:** A capped pilot surfaced both a website builder's support address and a salon-hosted client form's vaccination-record mailbox. Counting either as a verified general contact would overstate email yield.

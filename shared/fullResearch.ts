@@ -20,5 +20,6 @@ export type FullResearchProgress = {
   nextRunAt: string | null;
   error: string | null;
   startedAt: string;
+  notificationId?: string;
   lease?: { token: string; expiresAt: string } | null;
 };

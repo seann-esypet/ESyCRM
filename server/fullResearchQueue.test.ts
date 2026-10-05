@@ -140,6 +140,45 @@ function fixture(count: number, fail: boolean | number = false, cachedBusinessSe
 }
 
 test("Full Research controls and worker use only isolated records/providers", async t => {
+  await t.test("new confirmed searches get fresh notifications without resetting cumulative spending", async () => {
+    const env = fixture(3);
+    try {
+      await controlFullResearch(env.batch.id, env.batch.userId, "start", {
+        confirmed: true, ...FULL_RESEARCH_DEFAULTS, paidCallsPerList: 3,
+      });
+      await env.settled();
+      const first = structuredClone(env.batch.researchProgress.fullResearch);
+      assert.equal(first.status, "budget_exhausted");
+      assert.ok(first.notificationId);
+      assert.equal(first.attempts.length, 3);
+      await controlFullResearch(env.batch.id, env.batch.userId, "start", {
+        confirmed: true, ...FULL_RESEARCH_DEFAULTS, paidCallsPerList: 6,
+      });
+      await env.settled();
+      const next = env.batch.researchProgress.fullResearch;
+      assert.notEqual(next.notificationId, first.notificationId);
+      assert.equal(next.startedAt, first.startedAt);
+      assert.equal(next.attempts.length, 6);
+      assert.deepEqual(next.attempts.slice(0, 3), first.attempts);
+      assert.ok(first.processedIds.every((id: string) => next.processedIds.includes(id)));
+    } finally { env.restore(); }
+  });
+  await t.test("manual pause and ordinary resume retain the same notification identity", async () => {
+    const env = fixture(3);
+    try {
+      await controlFullResearch(env.batch.id, env.batch.userId, "start", {
+        confirmed: true, ...FULL_RESEARCH_DEFAULTS, paidCallsPerHour: 1,
+      });
+      await env.settled();
+      const identity = env.batch.researchProgress.fullResearch.notificationId;
+      assert.equal(env.batch.researchProgress.fullResearch.status, "waiting_hourly");
+      await controlFullResearch(env.batch.id, env.batch.userId, "pause", { confirmed: true });
+      await controlFullResearch(env.batch.id, env.batch.userId, "resume", { confirmed: true });
+      await env.settled();
+      assert.equal(env.batch.researchProgress.fullResearch.notificationId, identity);
+      assert.equal(env.batch.researchProgress.fullResearch.attempts.length, 1);
+    } finally { env.restore(); }
+  });
   await t.test("activation requires confirmation and correct ownership before any provider invocation", async () => {
     const env = fixture(1);
     try {

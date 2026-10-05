@@ -13,6 +13,7 @@ const profile = await mkdtemp(join(tmpdir(),"leads-browser-"));
 const chrome = spawn("chromium",["--headless","--no-sandbox","--disable-dev-shm-usage","--remote-debugging-port=0",`--user-data-dir=${profile}`,"about:blank"],{stdio:"ignore"});
 const pending=new Map(),errors=[],writes=[];
 let ws,id=0,role="salesperson",rows=[],batches=[],scheduled=false,researchActive=false,linkedPreviewReads=0,failSearchSave=false;
+let fullResearchReadOnlyReason=null;
 const fixtureSequence={id:"fixture-sequence",sequenceNumber:1,sequenceTrack:"directory_general",isActive:"true",subject:"Are you listed?",body:"<p>[Contact_Greeting],</p><p>Fixture invitation.</p>",name:"Directory introduction"};
 const fixtureSender={id:"fixture-owner",firstName:"Fixture",lastName:"Salesperson"};
 function linkedContact(row){return row.importedContactId?{id:row.importedContactId,email:row.importedContactId==="fixture-phone-contact"?"existing@fixture-contact.example":row.email,company:row.businessName,firstName:null,useBusinessNameForEmail:"Yes"}:null;}
@@ -29,7 +30,7 @@ async function evaluate(expression) {
   return r.result?.value;
 }
 async function until(expression,label) {
-  for(let attempt=0;attempt<120;attempt++){try{if(await evaluate(`Boolean(${expression})`))return;}catch{}await pause(100);}
+   for(let attempt=0;attempt<240;attempt++){try{if(await evaluate(`Boolean(${expression})`))return;}catch{}await pause(100);}
   throw new Error(`Missing ${label}: ${await evaluate("document.body?.innerText || location.href")}`);
 }
 const button=(text,scope="document")=>`Array.from(${scope}.querySelectorAll('button')).find(e=>e.textContent.trim()===${JSON.stringify(text)})`;
@@ -134,6 +135,7 @@ async function fullResearchUiCase(origin){
   run.enabled=false;run.status="budget_exhausted";
   run.attempts=Array.from({length:200},()=>({rowId:rows[0].id,tool:"business_search",at:new Date().toISOString()}));
   await load();
+   if(await evaluate(`Boolean(${selector("full-research-finished-dialog")})`))await click("Dismiss");
   await evaluate(`(()=>{const e=${selector("full-research-paid-total")};Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'300');e.dispatchEvent(new Event('input',{bubbles:true}));})()`);
   await press("full-research-consent");
   assert.equal(await evaluate(`${selector("full-research-start")}.disabled`),true);
@@ -155,6 +157,131 @@ async function fullResearchUiCase(origin){
     assert.equal(await evaluate("document.documentElement.scrollWidth>window.innerWidth"),false);
     await send("Page.captureScreenshot",{format:"jpeg",quality:65}).then(r=>writeFile(`reports/workflow-fixtures/${role}-full-research-${label}.jpg`,Buffer.from(r.data,"base64")));
   }
+}
+async function researchStatusUiCase(origin) {
+  writes.length=0;
+  const selector=id=>`document.querySelector('[data-testid="${id}"]')`;
+  const banner=selector("full-research-status"),dialog=selector("full-research-finished-dialog");
+  const batch={id:`fixture-status-${role}`,name:"TX research status fixture",totalRows:3,
+    status:"running",createdAt:new Date().toISOString(),researchProgress:{workflow:"unified_leads",
+      fullResearch:{status:"running",enabled:true,notificationId:`${role}-run-1`,startedAt:new Date().toISOString(),
+        limits:{businessesPerHour:20,paidCallsPerHour:40,paidCallsPerList:200},
+        processedIds:[],startedRows:[],attempts:[],currentRowId:null,nextRunAt:null,error:null}}};
+  batches=[batch];
+  rows=Array.from({length:3},(_,index)=>({...unifiedUploadRow({Business:`Status fixture Grooming ${index}`,Address:"Austin TX",State:"TX"},index,"fixture-owner"),
+    id:`fixture-status-row-${index}`,batchId:batch.id,serpCallsUsed:0}));
+  const run=batch.researchProgress.fullResearch;
+  const load=async()=>{await send("Page.navigate",{url:origin+"/leads/"+batch.id});await until(banner,"status banner");};
+  const status=async text=>until(`${banner}?.innerText.includes(${JSON.stringify(text)})`,text);
+  const screenshot=async suffix=>{
+    await evaluate(`${banner}.scrollIntoView({block:'center'})`);
+    await pause(400); // Let scrolling and the modal entrance finish before visual checks.
+    if(await evaluate(`Boolean(${dialog})`)){
+      assert.equal(await evaluate(`getComputedStyle(${dialog}).opacity`),"1");
+      assert.notEqual(await evaluate(`getComputedStyle(${dialog}).backgroundColor`),"rgba(0, 0, 0, 0)");
+    }
+    await send("Page.captureScreenshot",{format:"jpeg",quality:70}).then(r=>writeFile(`reports/workflow-fixtures/${role}-research-status-${suffix}.jpg`,Buffer.from(r.data,"base64")));
+  };
+  await send("Emulation.setDeviceMetricsOverride",{width:1365,height:900,deviceScaleFactor:1,mobile:false});
+  await load();await status("Researching");
+  assert.equal(await evaluate(`${banner}.getAttribute('role')`),"status");
+  assert.equal(await evaluate(`${banner}.getAttribute('aria-live')`),"polite");
+  assert.notEqual(await evaluate(`getComputedStyle(${selector("full-research-animation")}).animationName`),"none");
+  assert.equal(await evaluate(`${banner}.getBoundingClientRect().height>=90`),true);
+  await screenshot("running-desktop");
+  await send("Emulation.setEmulatedMedia",{features:[{name:"prefers-reduced-motion",value:"reduce"}]});
+  assert.equal(await evaluate(`getComputedStyle(${selector("full-research-animation")}).animationName`),"none");
+  assert.equal(await evaluate(`getComputedStyle(document.querySelector('.research-progress-sweep')).animationName`),"none");
+  await send("Emulation.setEmulatedMedia",{features:[]});
+  run.status="waiting_hourly";batch.status="paused";run.nextRunAt=new Date(Date.now()+3600000).toISOString();
+  await status("Waiting—resumes automatically");
+  assert.equal(await evaluate(`Boolean(${selector("full-research-animation")})`),false);
+  assert.equal(await evaluate(`Boolean(${dialog})`),false);
+  assert.equal(await evaluate(`${banner}.innerText.includes('Next eligible run')`),true);
+  run.status="running";run.nextRunAt=null;batch.status="running";
+  await status("Researching"); // hourly polling must observe automatic continuation
+  run.status="completed";run.enabled=false;batch.status="completed";
+  run.processedIds=rows.slice(0,2).map(row=>row.id);
+  run.startedRows=run.processedIds.map(id=>({id,at:new Date().toISOString()}));
+  run.attempts=[{at:new Date().toISOString(),tool:"business_search",rowId:rows[0].id}];
+  for(const row of rows.slice(0,2))row.status="enriched";
+  rows[2].reviewStatus="approved"; // completed refers to eligible rows, not all uploaded rows
+  await status("Search Complete");await until(dialog,"completion popup");
+  assert.equal(await evaluate(`Boolean(${selector("full-research-animation")})`),false);
+  assert.equal(await evaluate(`${dialog}.innerText.includes('TX research status fixture')`),true);
+  assert.equal(await evaluate(`${dialog}.innerText.includes('2 / 3')`),true);
+  assert.equal(await evaluate(`${dialog}.innerText.includes('1 / 200')`),true);
+  assert.equal(await evaluate(`${dialog}.innerText.includes('all currently eligible businesses')`),true);
+  assert.equal(await evaluate(`${dialog}.contains(document.activeElement)`),true,"dialog receives keyboard focus");
+  await send("Emulation.setEmulatedMedia",{features:[{name:"prefers-reduced-motion",value:"reduce"}]});
+  assert.equal(await evaluate(`getComputedStyle(${dialog}).animationName`),"none");
+  await send("Emulation.setEmulatedMedia",{features:[]});
+  for(let i=0;i<8;i++){
+    await send("Input.dispatchKeyEvent",{type:"keyDown",key:"Tab",code:"Tab",windowsVirtualKeyCode:9});
+    await send("Input.dispatchKeyEvent",{type:"keyUp",key:"Tab",code:"Tab",windowsVirtualKeyCode:9});
+    assert.equal(await evaluate(`${dialog}.contains(document.activeElement)`),true,"focus stays in modal");
+  }
+  await screenshot("complete-desktop");
+  await click("Review researched businesses");
+  await until("location.search.includes('view=researched')","popup links to server-filtered results");
+  await until(`!${dialog}`,"review dismisses popup");
+  await until("document.activeElement.closest('#lead-candidates')","focus restored to reviewed results");
+  assert.equal(await evaluate("Boolean(document.activeElement.closest('#lead-candidates'))"),true,"Review returns keyboard focus to results");
+  await load();await status("Search Complete");
+  assert.equal(await evaluate(`Boolean(${dialog})`),false,"acknowledged completion stays dismissed after reload");
+  run.status="running";run.enabled=true;run.notificationId=`${role}-run-2`;batch.status="running";
+  await load();await status("Researching");
+  run.status="budget_exhausted";run.enabled=false;batch.status="paused";
+  run.attempts=Array.from({length:200},()=>({at:new Date().toISOString(),tool:"business_search",rowId:rows[0].id}));
+  await status("Search stopped—request limit reached");await until(dialog,"distinct request cap popup");
+  assert.equal(await evaluate(`${dialog}.innerText.includes('partial work')`),true);
+  assert.equal(await evaluate(`${dialog}.innerText.includes('200 / 200')`),true);
+  assert.equal(await evaluate(`${dialog}.innerText.includes('Search Complete')`),false);
+  await send("Emulation.setDeviceMetricsOverride",{width:402,height:874,deviceScaleFactor:1,mobile:true});
+  assert.equal(await evaluate(`${dialog}.getBoundingClientRect().width<=window.innerWidth`),true);
+  await screenshot("cap-mobile");
+  await send("Input.dispatchKeyEvent",{type:"keyDown",key:"Escape",code:"Escape",windowsVirtualKeyCode:27});
+  await send("Input.dispatchKeyEvent",{type:"keyUp",key:"Escape",code:"Escape",windowsVirtualKeyCode:27});
+  await until(`!${dialog}`,"Escape dismisses popup");
+  await until("document.activeElement.getAttribute('aria-label')==='Full Research status'","focus restored to status banner");
+  assert.equal(await evaluate("document.activeElement.getAttribute('aria-label')"),"Full Research status","dismiss restores focus to status");
+  await load();await status("Search stopped—request limit reached");
+  assert.equal(await evaluate(`Boolean(${dialog})`),false,"cap notification remains dismissed");
+  for(const state of ["paused","interrupted"]){
+    run.status=state;run.currentRowId=state==="interrupted"?rows[0].id:null;
+    await load();await status(state==="paused"?"Research paused":"Research interrupted");
+    assert.equal(await evaluate(`Boolean(${dialog})||Boolean(${selector("full-research-animation")})`),false);
+  }
+  run.status="waiting_hourly";run.enabled=false;
+  await load();await status("Research paused");
+  run.status="running";run.enabled=true;run.notificationId=`${role}-run-3`;run.currentRowId=null;
+  batch.status="running";await load();await status("Researching");
+  assert.equal(await evaluate("document.documentElement.scrollWidth>window.innerWidth"),false);
+  await screenshot("running-mobile");
+  run.status="completed";run.enabled=false;batch.status="completed";
+  await status("Search Complete");await until(dialog,"later new run notifies again");
+  await screenshot("complete-mobile");
+  assert.equal(await evaluate("document.documentElement.scrollWidth>window.innerWidth"),false);
+  assert.equal(await evaluate(`${dialog}.getBoundingClientRect().width<=window.innerWidth`),true);
+  await click("Dismiss");await until(`!${dialog}`,"dismiss new completion");
+  const other={...batch,id:`fixture-status-other-${role}`,name:"Other paused list",
+    researchProgress:{fullResearch:{...run,status:"paused",notificationId:`${role}-other`}}};
+  batches.push(other);
+  await evaluate(`history.pushState(null,'',${JSON.stringify("/leads/"+other.id)});window.dispatchEvent(new PopStateEvent('popstate'))`);
+  await status("Research paused");
+  assert.equal(await evaluate(`Boolean(${dialog})`),false,"list switching cannot show prior completion");
+  await evaluate(`history.pushState(null,'',${JSON.stringify("/leads/"+batch.id)});window.dispatchEvent(new PopStateEvent('popstate'))`);
+  await status("Search Complete");
+  assert.equal(await evaluate(`Boolean(${dialog})`),false,"component remount respects acknowledgement");
+  fullResearchReadOnlyReason="Research unavailable for this read-only directory.";
+  run.status="running";run.enabled=true;batch.status="running";
+  await load();await status("Research unavailable");
+  assert.equal(await evaluate(`Boolean(${dialog})||Boolean(${selector("full-research-animation")})`),false);
+  fullResearchReadOnlyReason=null;
+  delete batch.researchProgress.fullResearch;batch.status="completed";
+  await load();await status("Not started");
+  assert.equal(await evaluate(`Boolean(${dialog})||Boolean(${selector("full-research-animation")})`),false);
+  assert.deepEqual(writes,[],"status changes and review navigation cannot write, research, import or send");
 }
 async function researchedRowsUiCase(origin) {
   const batch={id:"fixture-researched-list",name:"Uploaded research visibility fixture",status:"paused",totalRows:756,
@@ -211,6 +338,7 @@ async function api(url,method,body) {
       assert.equal(body.businessesPerHour,20);assert.equal(body.paidCallsPerHour,40);
       assert.ok(body.paidCallsPerList===200||body.paidCallsPerList===300);
       run={...run,status:"waiting_hourly",enabled:true,
+         notificationId:`fixture-confirmed-${role}-${writes.length}`,startedAt:run?.startedAt??new Date().toISOString(),
         limits:{businessesPerHour:body.businessesPerHour,paidCallsPerHour:body.paidCallsPerHour,paidCallsPerList:body.paidCallsPerList},
         processedIds:run?.processedIds??[],startedRows:run?.startedRows??[],
         attempts:run?.attempts??[],currentRowId:null,nextRunAt:new Date(Date.now()+3600000).toISOString(),error:null};
@@ -267,7 +395,7 @@ async function api(url,method,body) {
     target.evidence={...target.evidence,ownerName:fixtureOwnerName(target.businessName,true)};
     return {callsUsed:1,results:[{rowId:target.id,ownerName:target.evidence.ownerName}]};
   }
-  if(method==="GET"&&url.pathname.endsWith("/estimate"))return {eligibleRows:1,maxProviderCalls:2,active:researchActive};
+   if(method==="GET"&&url.pathname.endsWith("/estimate"))return {eligibleRows:1,maxProviderCalls:2,active:researchActive,reason:fullResearchReadOnlyReason};
   if(method==="POST"&&url.pathname==="/api/leads/fixture-batch/research"){
     assert.equal(body.confirmed,true);researchActive=true;
     batches[0].status="running";batches[0].researchProgress={leadResearch:{rowIds:["fixture-row-2"],processedIds:[],attemptedCalls:0,providerCalls:0,cacheHits:0,maxProviderCalls:body.maxProviderCalls}};
@@ -374,10 +502,11 @@ try {
     await until("document.querySelector('article')?.innerText.includes('Fixture Search Grooming')","search-source review");
     await reviewThroughScheduling("search-stage");
     await fullResearchUiCase(origin);
+    await researchStatusUiCase(origin);
     await researchedRowsUiCase(origin);
   }
   assert.deepEqual(errors,[]);
-   console.log("PASS: administrator/salesperson fixture upload AND saved search → review → CRM → Pipeline → separately confirmed scheduling, Full Research controls, researched-only filtering beyond pagination and mobile layouts. All API traffic intercepted; no real records or providers used.");
+   console.log("PASS: administrator/salesperson upload/search → review → CRM → Pipeline → separate scheduling; research status lifecycle, once-per-run popups, new runs, list switching, reduced motion, keyboard focus, desktop/mobile, controls and researched filtering. All API traffic intercepted; no real records or providers used.");
 } finally {
   ws?.close();chrome.kill("SIGTERM");await pause(200);await rm(profile,{recursive:true,force:true});
 }

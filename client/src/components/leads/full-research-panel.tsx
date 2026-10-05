@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { AlertTriangle, Clock3, Pause, Play, RotateCcw, Search } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
+import { ResearchStatusBanner, ResearchFinishedDialog } from "./full-research-status";
+import { useResearchNotice } from "./use-research-notice";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -20,6 +21,8 @@ export type FullResearchStatus = {
   currentRowId: string | null;
   nextRunAt: string | null;
   error: string | null;
+  startedAt?: string;
+  notificationId?: string;
 };
 export type FullResearchBatchData = {
   id: string;
@@ -33,6 +36,8 @@ export type FullResearchBatch = {
   readOnlyReason?: string | null;
   busy?: boolean;
   onChanged: () => void | Promise<void>;
+  onReview: () => void;
+  researchSummary?: { needsReview: number; notResearched: number };
 };
 
 async function post(url: string, body: unknown) {
@@ -48,7 +53,7 @@ function dateText(value?: string | null) {
   return Number.isNaN(date.getTime()) ? "Time unavailable" : date.toLocaleString();
 }
 
-export function FullResearchPanel({ batch, readOnlyReason, busy = false, onChanged }: FullResearchBatch) {
+export function FullResearchPanel({ batch, readOnlyReason, busy = false, onChanged, onReview, researchSummary }: FullResearchBatch) {
   const research = batch.researchProgress?.fullResearch;
   const limits = research?.limits;
   const [businessesPerHour, setBusinessesPerHour] = useState(String(limits?.businessesPerHour ?? 20));
@@ -117,10 +122,13 @@ export function FullResearchPanel({ batch, readOnlyReason, busy = false, onChang
     onError: error => setLocalError(error.message),
   });
   const pending = start.isPending || control.isPending;
-  const status = currentStatus ?? "not started";
   const cap = limits?.paidCallsPerList ?? Number(paidCallsPerList);
   const canResume = currentStatus === "paused";
   const canRecover = currentStatus === "interrupted";
+  const unavailableReason = readOnlyReason || (busy ? "Another research worker is active for this list. Full Research is unavailable until it finishes." : null);
+  const notice = useResearchNotice(batch.id, research?.notificationId ?? research?.startedAt, currentStatus, Boolean(unavailableReason));
+  const statusFocus = useRef<HTMLDivElement>(null);
+  const reviewChosen = useRef(false);
 
   return <Card data-testid="full-research-panel" className="border-primary/20">
     <CardHeader className="pb-3">
@@ -129,7 +137,10 @@ export function FullResearchPanel({ batch, readOnlyReason, busy = false, onChang
           <CardTitle className="flex items-center gap-2 text-base"><Search className="h-4 w-4 text-primary"/>Full Research</CardTitle>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">Research email and source evidence, software usage and provider, and contact first and last names using available free and paid tools. Unverified or unavailable facts remain unknown; every candidate still requires your review.</p>
         </div>
-        <Badge variant={running ? "default" : exhausted ? "destructive" : "secondary"}>{status.replaceAll("_", " ")}</Badge>
+      </div>
+      <div ref={statusFocus} tabIndex={-1} aria-label="Full Research status" className="pt-4">
+        <ResearchStatusBanner status={currentStatus} enabled={Boolean(research?.enabled)}
+          nextRunAt={research?.nextRunAt} unavailableReason={unavailableReason}/>
       </div>
     </CardHeader>
     <CardContent className="space-y-4">
@@ -194,5 +205,14 @@ export function FullResearchPanel({ batch, readOnlyReason, busy = false, onChang
       <p className="text-xs leading-5 text-muted-foreground">The list-wide request cap is a starting safety limit, not a guarantee that the entire list will be researched. It counts provider requests, not businesses, emails found, or dollars.</p>
       <p className="text-xs leading-5 text-muted-foreground">Protections: evidence remains unapproved until reviewed; unknown facts stay unknown; saved-list history and paid-attempt counters are retained. Full Research never imports a CRM contact or sends/schedules email.</p>
     </CardContent>
+    <ResearchFinishedDialog open={notice.open} onOpenChange={open => { if (!open) notice.dismiss(); }}
+      onReview={() => { reviewChosen.current = true; onReview(); }}
+      onRestoreFocus={() => {
+        const target = reviewChosen.current ? document.getElementById("lead-candidates")?.querySelector<HTMLInputElement>("input") : statusFocus.current;
+        (target ?? statusFocus.current)?.focus({ preventScroll: true });
+        reviewChosen.current = false;
+      }} status={notice.status} listName={batch.name}
+      processed={processed} totalRows={batch.totalRows} paidCalls={previousPaidCalls} cap={cap}
+      needsReview={researchSummary?.needsReview} notResearched={researchSummary?.notResearched}/>
   </Card>;
 }

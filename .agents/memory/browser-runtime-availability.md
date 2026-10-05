@@ -21,6 +21,12 @@ Workflow fixtures must represent lifecycle changes, not just return successful m
 
 **How to apply:** Wait for the completed confirmation controls rather than generic row-count text. Verify that asynchronous results appear without navigation and that missing or stale previews disable scheduling. Keep fixture verification distinct from real signed-in verification.
 
+Navigation checks from a dialog must verify the final keyboard-focus destination after asynchronous results render, not just that the dialog disappeared or the URL changed.
+
+**Why:** A research-results action navigated successfully, but changing the filter temporarily removed the destination. The initial focus-restoration check therefore missed a real keyboard-accessibility failure.
+
+**How to apply:** Test both cached and newly fetched destinations, and wait for focus to reach the intended results control. Also assert that ordinary dismissal restores focus to a usable status control.
+
 Browser fixtures must reproduce complete HTTP response contracts, not just the output of lower-level policy helpers.
 
 **Why:** An otherwise successful Leads browser walkthrough omitted owner review entirely because its fixture lacked metadata added by the real HTTP response. Passing contact-creation checks did not establish that owner review had rendered or refreshed.

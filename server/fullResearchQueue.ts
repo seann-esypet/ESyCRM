@@ -84,6 +84,11 @@ export async function controlFullResearch(id: string, owner: string, action: str
       run.processedIds = run.processedIds.filter(rowId => !throttled.some(row => row.id === rowId));
     }
     if (!rows.some(row => eligible(row) && !run.processedIds.includes(row.id))) throw new Error("No remaining reviewable businesses in this list.");
+    // A new, explicitly confirmed search gets a fresh notice without resetting
+    // the cumulative provider spending, processed rows, or original start time.
+    if (action === "start" || ["completed", "budget_exhausted"].includes(run.status)) {
+      run.notificationId = randomUUID();
+    }
     run.enabled = true; run.status = "running"; run.error = null; run.nextRunAt = null;
     await save(tx, batch, run);
   });
