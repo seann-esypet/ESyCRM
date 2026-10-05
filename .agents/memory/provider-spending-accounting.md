@@ -14,3 +14,9 @@ An immediate SerpApi account-counter delta of zero does not establish that a loo
 **Why:** During a Place-ID comparison, successful responses initially left the account counter unchanged; later snapshots reflected usage. Account-wide counters can lag and may also include concurrent application traffic.
 
 **How to apply:** Keep initiated attempts, returned/cached results, observed credit-counter changes, and cash charges separate. Reconcile account totals after the run and state attribution uncertainty instead of treating each immediate counter delta as a definitive per-row bill.
+
+Per-list research allowances do not override shared provider guards. Temporary hourly throttling is distinct from a failed business lookup or exhaustion of the confirmed total.
+
+**Why:** A live uploaded-list run stopped at a lower shared hourly guard before reaching its new per-list allowance. Treating that stop as a terminal row failure also prevented automatic hourly continuation.
+
+**How to apply:** Check both budget layers when explaining or changing limits. Preserve every initiated paid attempt, wait for hourly allowance without inventing new budget, and do not mark a business fully researched merely because its next provider request was throttled.
