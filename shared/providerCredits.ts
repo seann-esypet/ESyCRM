@@ -1,3 +1,5 @@
+import type { SharedProviderBudget } from "./serpBudget";
+
 /** Sanitized account usage only. Never include provider identity or credentials. */
 export type ProviderCredits = {
   status: "available" | "unavailable";
@@ -6,3 +8,5 @@ export type ProviderCredits = {
   usedThisMonth: number | null;
   checkedAt: string;
 };
+
+export type ProviderCreditSnapshot = ProviderCredits & { sharedBudget: SharedProviderBudget };

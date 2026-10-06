@@ -26,3 +26,9 @@ Automatic retries are authorized for temporary provider throttling within an alr
 **Why:** The user asked to remove hourly manual restarts caused by temporary rate limits. A business can require several paid tools; repeating failed lookups indefinitely could spend the remaining list allowance without completing research. A provider HTTP 429 can also describe account exhaustion, so the response reason matters.
 
 **How to apply:** Honor provider cooldown guidance and both budget layers, retain partial evidence, and stop persistent throttling for review. Publishing this behavior must not silently reactivate an existing paused list or increase its cumulative cap.
+
+Provider plan changes do not authorize resetting the app's attempt ledger. Confirmed changes to the shared monthly safety budget must remain in effect for future calendar months, independently of the provider's billing counter.
+
+**Why:** After a provider upgrade, the account reported available credits while the app's older shared safety stop blocked all state lists. The provider's reported usage also differed from the app's retained attempts. Replacing one counter with the other would erase spending history; changing only the current month's limits would silently restore the old cap next month.
+
+**How to apply:** Require explicit administrator confirmation for shared-budget changes, retain prior attempts and each list's caps, and never resume paused lists as a side effect. Show the shared app budget separately from provider credits and list allowances. New monthly ledgers inherit the last saved safety limits, not limits inferred automatically from provider metadata.

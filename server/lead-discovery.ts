@@ -6,6 +6,7 @@ import { fetchPublicPage, type SalonFetchRuntime } from "./salonPublicFetch";
 import { salonEmailHtmlContextRestriction, salonEmailDomainRestriction } from "./salonEmailPolicy";
 import { directoryEligibility, isBookingOrOrderingUrl, providerCategories, withDirectoryNotes } from "@shared/directoryEligibility";
 import { readSerpProviderResponse } from "./serpProviderResponse";
+import { sharedSerpStopMessage } from "@shared/serpBudget";
 
 // New reduced query set for budget management
 const DEFAULT_QUERIES = [
@@ -39,9 +40,9 @@ export async function getSerpUsageStatus(): Promise<{
   let warningLevel: 'none' | 'yellow' | 'red' | 'hardstop' = 'none';
   if (used >= hardStop) {
     warningLevel = 'hardstop';
-  } else if (used >= 175) {
+  } else if (used >= quota * 0.7) {
     warningLevel = 'red';
-  } else if (used >= 100) {
+  } else if (used >= quota * 0.4) {
     warningLevel = 'yellow';
   }
   
@@ -61,7 +62,7 @@ export async function canRunDiscovery(userId: string, numZips: number, skipDaily
   
   // Check if quota is reached
   if (status.isQuotaReached) {
-    return { allowed: false, reason: "SERP quota reached – upgrade required" };
+    return { allowed: false, reason: sharedSerpStopMessage(status.usage.usedCredits, status.usage.hardStopAt) };
   }
   
   // Check max ZIPs per run (only at job creation)
@@ -270,7 +271,8 @@ export async function searchWithSerpApi(
 
   const status = await getSerpUsageStatus();
   if (status.isQuotaReached) {
-    throw new Error("SERP quota reached – upgrade required");
+    await options?.requestPolicy?.onReservationBlocked();
+    throw new Error(sharedSerpStopMessage(status.usage.usedCredits, status.usage.hardStopAt));
   }
 
   const maxCallsPerHour = providerHourlyLimit(status.config.maxSerpCallsPerHour || 5, options?.requestPolicy);

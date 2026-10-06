@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import type { ProviderCredits } from "@shared/providerCredits";
+import type { ProviderCreditSnapshot } from "@shared/providerCredits";
+import { SharedProviderBudgetPanel } from "./shared-provider-budget";
 import { AlertTriangle, Clock3, Pause, Play, RotateCcw, Search } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -58,7 +59,7 @@ function dateText(value?: string | null) {
 
 export function FullResearchPanel({ batch, readOnlyReason, busy = false, onChanged, onReview, researchSummary }: FullResearchBatch) {
   const research = batch.researchProgress?.fullResearch;
-  const credits = useQuery<ProviderCredits>({
+  const credits = useQuery<ProviderCreditSnapshot>({
     queryKey: ["/api/leads", batch.id, "provider-credits"],
     queryFn: async () => (await apiRequest("GET", `/api/leads/${encodeURIComponent(batch.id)}/provider-credits`)).json(),
     staleTime: 60000,
@@ -170,6 +171,8 @@ export function FullResearchPanel({ batch, readOnlyReason, busy = false, onChang
         <AlertTitle>No SerpAPI credits remaining</AlertTitle>
         <AlertDescription>The provider account has 0 searches left. Your list cap is a separate safety limit, not available provider credit. Replenish credits or wait for the allowance to renew, then check the balance before resuming. Waiting an hour or raising this list cap will not restore provider credits.</AlertDescription>
       </Alert>}
+      <SharedProviderBudgetPanel batchId={batch.id} snapshot={credits.isError ? undefined : credits.data}
+        onUpdated={async () => { await credits.refetch(); await onChanged(); }}/>
       {!running && currentStatus !== "paused" && <div className="space-y-3">
         <label className="flex items-start gap-2 text-sm leading-5">
           <Checkbox data-testid="full-research-consent" checked={consent} onCheckedChange={value=>setConsent(value===true)} disabled={pending||unavailable}/>

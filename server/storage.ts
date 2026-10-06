@@ -71,7 +71,8 @@ import { normalizePhoneNumber, normalizeName, normalizeEmail } from "@shared/uti
 import { db } from "./db";
 import { reserveRecipientLog } from "./recipientOutreach";
 import type { RecipientEnrollmentOptions } from "./recipientPolicy";
-import { eq, desc, and, sql, gte, lte, or, ne, inArray, isNull } from "drizzle-orm";
+import { eq, desc, and, sql, gte, lte, lt, or, ne, inArray, isNull } from "drizzle-orm";
+import { savedSerpBudget } from "@shared/serpBudget";
 import { DIRECTORY_FIRST_STRATEGY, DIRECTORY_TRACKS, directoryEmailSequenceTemplates } from "./directoryEmailSequences";
 import { importableSalonEmail } from "./bookingPageEmail";
 import { salonReportSendRejection } from "./salonSearchReport";
@@ -2700,15 +2701,25 @@ export class DatabaseStorage implements IStorage {
     return usage;
   }
 
-  async getOrCreateSerpUsage(monthYear: string): Promise<SerpUsage> {
-    const existing = await this.getSerpUsage(monthYear);
+  private async getOrCreateSerpUsageLocked(tx: Pick<typeof db, "select" | "insert">, monthYear: string): Promise<SerpUsage> {
+    const [existing] = await tx.select().from(serpUsage).where(eq(serpUsage.monthYear, monthYear));
     if (existing) return existing;
-    
-    const [created] = await db
+    const [previous] = await tx.select({
+      monthlyQuota: serpUsage.monthlyQuota, hardStopAt: serpUsage.hardStopAt,
+    }).from(serpUsage).where(lt(serpUsage.monthYear, monthYear)).orderBy(desc(serpUsage.monthYear)).limit(1);
+    const budget = savedSerpBudget(previous);
+    const [created] = await tx
       .insert(serpUsage)
-      .values({ monthYear, usedCredits: 0, monthlyQuota: 250, hardStopAt: 200 })
+      .values({ monthYear, usedCredits: 0, ...budget })
       .returning();
     return created;
+  }
+
+  async getOrCreateSerpUsage(monthYear: string): Promise<SerpUsage> {
+    return db.transaction(async tx => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('serp-call-reservation'))`);
+      return this.getOrCreateSerpUsageLocked(tx, monthYear);
+    });
   }
 
   async incrementSerpUsage(monthYear: string): Promise<SerpUsage> {
@@ -2724,12 +2735,7 @@ export class DatabaseStorage implements IStorage {
   async reserveSerpCall(monthYear: string, maxCallsPerHour: number): Promise<string | null> {
     return db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext('serp-call-reservation'))`);
-      let [usage] = await tx.select().from(serpUsage).where(eq(serpUsage.monthYear, monthYear));
-      if (!usage) {
-        [usage] = await tx.insert(serpUsage).values({
-          monthYear, usedCredits: 0, monthlyQuota: 250, hardStopAt: 200,
-        }).returning();
-      }
+      const usage = await this.getOrCreateSerpUsageLocked(tx, monthYear);
       const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
       const [hourly] = await tx.select({ count: sql<number>`count(*)::int` })
         .from(serpCallReservations)
@@ -2767,13 +2773,14 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateSerpQuota(monthYear: string, quota: number, hardStopAt: number): Promise<SerpUsage | undefined> {
-    const usage = await this.getOrCreateSerpUsage(monthYear);
-    const [updated] = await db
-      .update(serpUsage)
-      .set({ monthlyQuota: quota, hardStopAt })
-      .where(eq(serpUsage.monthYear, monthYear))
-      .returning();
-    return updated;
+    const budget = savedSerpBudget({ monthlyQuota: quota, hardStopAt });
+    return db.transaction(async tx => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('serp-call-reservation'))`);
+      await this.getOrCreateSerpUsageLocked(tx, monthYear);
+      const [updated] = await tx.update(serpUsage).set(budget)
+        .where(eq(serpUsage.monthYear, monthYear)).returning();
+      return updated;
+    });
   }
 
   // SERP Cache

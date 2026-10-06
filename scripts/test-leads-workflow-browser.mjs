@@ -15,6 +15,8 @@ const pending=new Map(),errors=[],writes=[];
 let ws,id=0,role="salesperson",rows=[],batches=[],scheduled=false,researchActive=false,linkedPreviewReads=0,failSearchSave=false;
 let fullResearchReadOnlyReason=null;
 let providerCreditsRemaining=35,providerCreditsStatus="available";
+let providerCreditsMonthlyLimit=250;
+let sharedProviderBudget={monthYear:"2026-10",monthlyQuota:250,hardStopAt:200,used:200,remaining:0};
 const fixtureSequence={id:"fixture-sequence",sequenceNumber:1,sequenceTrack:"directory_general",isActive:"true",subject:"Are you listed?",body:"<p>[Contact_Greeting],</p><p>Fixture invitation.</p>",name:"Directory introduction"};
 const fixtureSender={id:"fixture-owner",firstName:"Fixture",lastName:"Salesperson"};
 function linkedContact(row){return row.importedContactId?{id:row.importedContactId,email:row.importedContactId==="fixture-phone-contact"?"existing@fixture-contact.example":row.email,company:row.businessName,firstName:null,useBusinessNameForEmail:"Yes"}:null;}
@@ -350,6 +352,64 @@ async function providerCreditsUiCase(origin) {
   await evaluate(`document.querySelector('button[aria-label="Expand sidebar"]')?.click()`);
   providerCreditsRemaining=35;
 }
+async function sharedProviderBudgetUiCase(origin) {
+  writes.length=0;
+  providerCreditsRemaining=979;providerCreditsMonthlyLimit=1000;providerCreditsStatus="available";
+  sharedProviderBudget={monthYear:"2026-10",monthlyQuota:250,hardStopAt:200,used:200,remaining:0};
+  batches=["NY","CA","TX"].map((state,index)=>({id:`fixture-budget-${role}-${state}`,name:`${state} budget fixture`,
+    status:"paused",totalRows:1,createdAt:new Date().toISOString(),researchProgress:{workflow:"unified_leads",
+      fullResearch:{status:"paused",enabled:false,notificationId:`budget-${role}-${state}`,startedAt:new Date().toISOString(),
+        limits:{businessesPerHour:20,paidCallsPerHour:40,paidCallsPerList:200},processedIds:[],startedRows:[],
+        attempts:Array.from({length:[6,15,171][index]},()=>({at:new Date().toISOString(),tool:"business_search",rowId:`row-${state}`})),
+        currentRowId:null,nextRunAt:null,error:null}}}));
+  const batch=batches[2],before=JSON.stringify(batches);
+  rows=[{...unifiedUploadRow({Business:"Budget fixture Grooming",Address:"Austin TX",State:"TX"},0,"fixture-owner"),
+    id:"fixture-budget-row",batchId:batch.id,serpCallsUsed:171}];
+  const selector=id=>`document.querySelector('[data-testid="${id}"]')`;
+  const panel=selector("shared-provider-budget");
+  const load=async()=>{await send("Page.navigate",{url:origin+"/leads/"+batch.id});await until(`${panel}?.innerText.includes('200 / 200')`,"shared safety cap");};
+  await send("Emulation.setDeviceMetricsOverride",{width:1365,height:900,deviceScaleFactor:1,mobile:false});
+  await load();
+  assert.equal(await evaluate(`Boolean(${selector("shared-provider-budget-blocked")})`),true);
+  if(role==="admin"){
+    assert.equal(await evaluate(`${selector("shared-provider-budget-update")}.disabled`),true);
+    providerCreditsStatus="unavailable";
+    await click("Check provider balance");
+    await until(`${selector("shared-provider-budget-consent")}.getAttribute('data-disabled')!==null`,"unverified account blocks budget approval");
+    assert.equal(await evaluate(`${selector("shared-provider-budget-update")}.disabled`),true);
+    providerCreditsStatus="available";
+    await click("Check provider balance");
+    await until(`${selector("shared-provider-budget-consent")}.getAttribute('data-disabled')===null`,"verified upgraded account");
+    await evaluate(`${selector("shared-provider-budget-consent")}.click()`);
+    await click("Confirm shared budget update");
+    await until(`${selector("shared-provider-budget-count")}?.innerText==='200 / 800'`,"confirmed shared 800 safety cap");
+    assert.equal(await evaluate(`${panel}.innerText.includes('600')`),true);
+    assert.equal(await evaluate(`Boolean(${selector("shared-provider-budget-blocked")})`),false);
+    assert.equal(await evaluate(`${panel}.innerText.includes('Prior spending is retained')`),true);
+    assert.deepEqual(writes,["shared-budget"]);
+    assert.equal(JSON.stringify(batches),before,"NY/CA/TX states and complete ledgers are untouched");
+    await send("Page.reload",{ignoreCache:true});
+    await until(`${selector("shared-provider-budget-count")}?.innerText==='200 / 800'`,"saved budget after reload");
+  }else{
+    assert.equal(await evaluate(`Boolean(${selector("shared-provider-budget-update")})`),false);
+    assert.equal(await evaluate(`Boolean(${selector("shared-provider-budget-consent")})`),false);
+    assert.equal(await evaluate(`${panel}.innerText.includes('An administrator can confirm')`),true);
+    assert.deepEqual(writes,[]);
+  }
+  await evaluate(`${panel}.scrollIntoView({block:'center'})`);await pause(300);
+  await send("Page.captureScreenshot",{format:"jpeg",quality:70}).then(r=>writeFile(`reports/workflow-fixtures/${role}-shared-provider-budget-desktop.jpg`,Buffer.from(r.data,"base64")));
+  await send("Emulation.setDeviceMetricsOverride",{width:402,height:874,deviceScaleFactor:1,mobile:true});
+  await evaluate(`document.querySelector('button[aria-label="Collapse sidebar"]')?.click()`);
+  await until(`document.querySelector('button[aria-label="Expand sidebar"]')`,"collapsed shared-budget navigation");
+  await evaluate(`${panel}.scrollIntoView({block:'center'})`);await pause(300);
+  assert.equal(await evaluate("document.documentElement.scrollWidth>window.innerWidth"),false);
+  await send("Page.captureScreenshot",{format:"jpeg",quality:70}).then(r=>writeFile(`reports/workflow-fixtures/${role}-shared-provider-budget-mobile.jpg`,Buffer.from(r.data,"base64")));
+  assert.equal(JSON.stringify(batches),before);
+  await send("Emulation.setDeviceMetricsOverride",{width:1365,height:900,deviceScaleFactor:1,mobile:false});
+  await evaluate(`document.querySelector('button[aria-label="Expand sidebar"]')?.click()`);
+  providerCreditsRemaining=35;providerCreditsMonthlyLimit=250;
+  sharedProviderBudget={monthYear:"2026-10",monthlyQuota:250,hardStopAt:200,used:200,remaining:0};
+}
 async function researchedRowsUiCase(origin) {
   const batch={id:"fixture-researched-list",name:"Uploaded research visibility fixture",status:"paused",totalRows:756,
     researchProgress:{workflow:"unified_leads",fullResearch:{status:"paused",enabled:false,
@@ -396,6 +456,14 @@ async function researchedRowsUiCase(origin) {
   assert.deepEqual(writes,[],"finding/review-filtering results never initiates research or outreach");
 }
 async function api(url,method,body) {
+  if(method==="POST"&&/^\/api\/leads\/[^/]+\/shared-provider-budget$/.test(url.pathname)){
+    assert.equal(role,"admin");
+    assert.deepEqual(body,{confirmed:true,monthlyQuota:1000,hardStopAt:800});
+    assert.equal(providerCreditsStatus,"available");assert.ok(providerCreditsMonthlyLimit>=1000);
+    sharedProviderBudget={...sharedProviderBudget,monthlyQuota:1000,hardStopAt:800,
+      remaining:Math.max(0,800-sharedProviderBudget.used)};
+    writes.push("shared-budget");return sharedProviderBudget;
+  }
   if(method==="POST"&&/^\/api\/leads\/[^/]+\/full-research(?:\/(?:pause|resume|recover))?$/.test(url.pathname)){
     assert.equal(body.confirmed,true);
     const batch=batches.find(item=>url.pathname.startsWith(`/api/leads/${item.id}/full-research`));assert.ok(batch);
@@ -422,8 +490,9 @@ async function api(url,method,body) {
   if(method==="GET"&&url.pathname==="/api/leads")return batches;
   if(method==="GET"&&/^\/api\/leads\/[^/]+\/provider-credits$/.test(url.pathname))return {
     status:providerCreditsStatus,remaining:providerCreditsStatus==="available"?providerCreditsRemaining:null,
-    monthlyLimit:providerCreditsStatus==="available"?250:null,
-    usedThisMonth:providerCreditsStatus==="available"?250-providerCreditsRemaining:null,checkedAt:new Date().toISOString()
+    monthlyLimit:providerCreditsStatus==="available"?providerCreditsMonthlyLimit:null,
+    usedThisMonth:providerCreditsStatus==="available"?providerCreditsMonthlyLimit-providerCreditsRemaining:null,
+    checkedAt:new Date().toISOString(),sharedBudget:sharedProviderBudget
   };
   if(method==="POST"&&url.pathname==="/api/leads/upload-preview"){
     assert.ok(body.rows.length===3);return {inputCount:3,invalidCount:0,duplicateCount:0,rows:body.rows.map((raw,i)=>({rowNumber:i+1,businessName:raw["Business Name"],email:raw.Email,action:"Stage for review; no research or contacts."}))};
@@ -530,6 +599,10 @@ try {
   await mkdir("reports/workflow-fixtures",{recursive:true});
   for(const currentRole of ["salesperson","admin"]){
     role=currentRole;rows=[];batches=[];scheduled=false;researchActive=false;linkedPreviewReads=0;writes.length=0;
+    if(process.argv.includes("--shared-budget-only")){
+      await sharedProviderBudgetUiCase(origin);
+      continue;
+    }
     if(process.argv.includes("--provider-credits-only")){
       await providerCreditsUiCase(origin);
       continue;
@@ -580,10 +653,13 @@ try {
     await fullResearchUiCase(origin);
     await researchStatusUiCase(origin);
     await providerCreditsUiCase(origin);
+    await sharedProviderBudgetUiCase(origin);
     await researchedRowsUiCase(origin);
   }
   assert.deepEqual(errors,[]);
-   console.log(process.argv.includes("--provider-credits-only") ?
+   console.log(process.argv.includes("--shared-budget-only") ?
+    "PASS: admin-confirmed shared 1,000/800 budget, salesperson read-only view, unavailable-account protection, preserved NY/CA/TX ledgers and paused states, reload, desktop/mobile. All API traffic intercepted." :
+    process.argv.includes("--provider-credits-only") ?
     "PASS: administrator/salesperson provider credits beside list cap; available, zero, unknown and refreshed balances, paused-state preservation and readable desktop/mobile layouts. All API traffic intercepted." :
     "PASS: administrator/salesperson upload/search → review → CRM → Pipeline → separate scheduling; research status lifecycle, once-per-run popups, new runs, list switching, reduced motion, keyboard focus, desktop/mobile, controls and researched filtering. All API traffic intercepted; no real records or providers used.");
 } finally {

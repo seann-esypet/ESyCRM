@@ -481,6 +481,7 @@ test("Full Research controls and worker use only isolated records/providers", as
       await env.settled();
       assert.equal(env.batch.researchProgress.fullResearch.status, "paused");
       assert.equal(env.batch.researchProgress.fullResearch.enabled, false);
+      assert.match(env.batch.researchProgress.fullResearch.error, /Shared app monthly safety stop/);
       assert.equal(env.providerAttempts, 0);
       await tickFullResearchScheduler();
       assert.equal(env.providerAttempts, 0);

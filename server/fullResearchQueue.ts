@@ -5,6 +5,7 @@ import { storage } from "./storage";
 import { salonEnrichmentBatches, salonEnrichmentRows, type SalonEnrichmentRow } from "@shared/schema";
 import { directoryObject } from "@shared/directoryEligibility";
 import { fullResearchLimitsSchema, type FullResearchProgress } from "@shared/fullResearch";
+import { sharedSerpStopMessage } from "@shared/serpBudget";
 import { isResearchDirectoryBatch, isResearchDirectoryRow, RESEARCH_READ_ONLY } from "./salonResearchPolicy";
 import { salonEnrichmentIsActive } from "./salonEnrichment";
 import { researchFullRow, fullResearchRowTools } from "./fullResearchRow";
@@ -179,7 +180,7 @@ async function processQueue(id: string, owner: string) {
         onReservationBlocked: async () => {
           const usage = await getSerpUsageStatus();
           blocked = usage.isQuotaReached
-            ? { status: "paused", nextRunAt: null, message: "The shared provider account budget is exhausted. Review its quota before resuming; list spending remains counted." }
+            ? { status: "paused", nextRunAt: null, message: sharedSerpStopMessage(usage.usage.usedCredits, usage.usage.hardStopAt) }
             : { status: "waiting_hourly", nextRunAt: await storage.getNextSerpCallAt(acquired),
               message: "Hourly shared provider allowance reached. Research will continue automatically when allowance becomes available." };
           throw new Error(blocked.message);
