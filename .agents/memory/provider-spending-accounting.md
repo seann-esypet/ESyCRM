@@ -20,3 +20,9 @@ Per-list research allowances do not override shared provider guards. Temporary h
 **Why:** A live uploaded-list run stopped at a lower shared hourly guard before reaching its new per-list allowance. Treating that stop as a terminal row failure also prevented automatic hourly continuation.
 
 **How to apply:** Check both budget layers when explaining or changing limits. Preserve every initiated paid attempt, wait for hourly allowance without inventing new budget, and do not mark a business fully researched merely because its next provider request was throttled.
+
+Automatic retries are authorized for temporary provider throttling within an already-confirmed run, not for exhausted credits, authentication errors, arbitrary network failures, or previously paused lists. Use bounded retries rather than an indefinite paid retry loop.
+
+**Why:** The user asked to remove hourly manual restarts caused by temporary rate limits. A business can require several paid tools; repeating failed lookups indefinitely could spend the remaining list allowance without completing research. A provider HTTP 429 can also describe account exhaustion, so the response reason matters.
+
+**How to apply:** Honor provider cooldown guidance and both budget layers, retain partial evidence, and stop persistent throttling for review. Publishing this behavior must not silently reactivate an existing paused list or increase its cumulative cap.

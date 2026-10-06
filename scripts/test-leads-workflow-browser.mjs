@@ -198,6 +198,25 @@ async function researchStatusUiCase(origin) {
   assert.equal(await evaluate(`Boolean(${selector("full-research-animation")})`),false);
   assert.equal(await evaluate(`Boolean(${dialog})`),false);
   assert.equal(await evaluate(`${banner}.innerText.includes('Next eligible run')`),true);
+  run.waitReason="provider_rate_limit";run.providerRateLimitCount=1;
+  run.error="Temporary provider rate limit. Automatic retry 1/5 is scheduled; paid attempts remain counted.";
+  rows[0].sourceData={...rows[0].sourceData,stagingState:"verification_attempted",fullResearchState:"waiting_hourly",fullResearchWaitReason:"provider_rate_limit"};
+  await status("Waiting for provider—resumes automatically");
+  await until(`document.querySelector('article')?.innerText.includes('Waiting for provider cooldown')`,"row provider cooldown badge");
+  assert.equal(await evaluate(`${banner}.innerText.includes('cooldown')`),true);
+  assert.equal(await evaluate(`Boolean(${dialog})`),false);
+  assert.equal(await evaluate(`Boolean(${selector("full-research-pause")})`),true);
+  assert.equal(await evaluate(`Boolean(${selector("full-research-resume")})`),false);
+  await screenshot("provider-wait-desktop");
+  await send("Emulation.setDeviceMetricsOverride",{width:402,height:874,deviceScaleFactor:1,mobile:true});
+  await evaluate(`document.querySelector('button[aria-label="Collapse sidebar"]')?.click()`);
+  await until(`document.querySelector('button[aria-label="Expand sidebar"]')`,"collapsed phone navigation");
+  await screenshot("provider-wait-mobile");
+  assert.equal(await evaluate(`${banner}.getBoundingClientRect().right<=window.innerWidth`),true);
+  await send("Emulation.setDeviceMetricsOverride",{width:1365,height:900,deviceScaleFactor:1,mobile:false});
+  await evaluate(`document.querySelector('button[aria-label="Expand sidebar"]')?.click()`);
+  rows[0].sourceData={...rows[0].sourceData,fullResearchState:"researched",fullResearchWaitReason:null};
+  run.waitReason=undefined;run.error=null;
   run.status="running";run.nextRunAt=null;batch.status="running";
   await status("Researching"); // hourly polling must observe automatic continuation
   run.status="completed";run.enabled=false;batch.status="completed";

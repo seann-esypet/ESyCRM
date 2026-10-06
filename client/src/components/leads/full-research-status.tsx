@@ -14,6 +14,7 @@ type ResearchStatusBannerProps = {
   enabled: boolean;
   unavailableReason?: string | null;
   nextRunAt?: string | null;
+  waitReason?: "provider_rate_limit";
 };
 
 function researchLabel(status?: string, enabled = true, unavailable = false) {
@@ -50,11 +51,13 @@ export function ResearchStatusBanner({
   enabled,
   unavailableReason,
   nextRunAt,
+  waitReason,
 }: ResearchStatusBannerProps) {
   const unavailable = Boolean(unavailableReason);
   const isActivelyResearching = status === "running" && enabled && !unavailable;
   const isWaiting = status === "waiting_hourly" && enabled && !unavailable;
-  const label = researchLabel(status, enabled, unavailable);
+  const providerWait = isWaiting && waitReason === "provider_rate_limit";
+  const label = providerWait ? "Waiting for provider—resumes automatically" : researchLabel(status, enabled, unavailable);
   const scheduledText = formatNextRun(nextRunAt);
 
   const Icon = isActivelyResearching
@@ -135,7 +138,7 @@ export function ResearchStatusBanner({
             </p>
           ) : isWaiting ? (
             <p className="mt-1.5 text-sm leading-5 text-muted-foreground">
-              Research will continue when the hourly allowance is available.
+              {providerWait ? "The search provider temporarily limited requests. Research will retry after its cooldown, within your existing limits." : "Research will continue when the hourly allowance is available."}
               {scheduledText && <span className="block">Next eligible run · {scheduledText}</span>}
             </p>
           ) : unavailableReason ? (

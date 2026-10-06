@@ -9,7 +9,7 @@ import { isResearchDirectoryBatch, isResearchDirectoryRow, RESEARCH_READ_ONLY } 
 import { salonEnrichmentIsActive } from "./salonEnrichment";
 import { researchFullRow, fullResearchRowTools } from "./fullResearchRow";
 import { getSerpUsageStatus } from "./lead-discovery";
-import { readFullResearch, newFullResearch, researchAllowance, reserveResearchPaidCall, hasResearchLease, isHourlyResearchError, type FullResearchBlock } from "./fullResearchPolicy";
+import { readFullResearch, newFullResearch, researchAllowance, reserveResearchPaidCall, hasResearchLease, isHourlyResearchError, isTemporaryProviderResearchError, providerRateLimitWait, type FullResearchBlock } from "./fullResearchPolicy";
 
 const LEASE_MS = 10 * 60 * 1000;
 const active = new Set<string>();
@@ -39,6 +39,7 @@ async function save(tx: Transaction, batch: typeof salonEnrichmentBatches.$infer
 }
 function stopFor(run: FullResearchProgress, block: FullResearchBlock) {
   run.status = block.status; run.nextRunAt = block.nextRunAt; run.error = block.message;
+  run.waitReason = block.waitReason;
   if (block.status !== "waiting_hourly") run.enabled = false;
 }
 
@@ -80,7 +81,8 @@ export async function controlFullResearch(id: string, owner: string, action: str
     // Older workers marked an hourly-blocked business complete. Repair only
     // on explicitly confirmed resume, without resetting any paid history.
     if (action === "resume") {
-      const throttled = rows.filter(row => eligible(row) && row.status === "failed" && isHourlyResearchError(row.lastError));
+      const throttled = rows.filter(row => eligible(row) && row.status === "failed" &&
+        (isHourlyResearchError(row.lastError) || isTemporaryProviderResearchError(row.lastError)));
       run.processedIds = run.processedIds.filter(rowId => !throttled.some(row => row.id === rowId));
     }
     if (!rows.some(row => eligible(row) && !run.processedIds.includes(row.id))) throw new Error("No remaining reviewable businesses in this list.");
@@ -89,7 +91,7 @@ export async function controlFullResearch(id: string, owner: string, action: str
     if (action === "start" || ["completed", "budget_exhausted"].includes(run.status)) {
       run.notificationId = randomUUID();
     }
-    run.enabled = true; run.status = "running"; run.error = null; run.nextRunAt = null;
+    run.enabled = true; run.status = "running"; run.error = null; run.nextRunAt = null; run.waitReason = undefined;
     await save(tx, batch, run);
   });
   if (action === "start" || action === "resume") launch(id, owner);
@@ -147,6 +149,7 @@ async function processQueue(id: string, owner: string) {
       if (!row) break;
       let blocked: FullResearchBlock | null = null;
       const patch = await researchFullRow(row, async tool => {
+        if (blocked) throw new Error(blocked.message);
         const block = await locked(id, owner, async (tx, batch, run) => {
           if (!run || run.lease?.token !== token || !hasResearchLease(run, Date.now())) throw new Error("Research lease lost; no additional paid request was initiated.");
           const [fresh] = await tx.select().from(salonEnrichmentRows)
@@ -161,6 +164,18 @@ async function processQueue(id: string, owner: string) {
         if (block) { blocked = block; throw new Error(block.message); }
       }, fullResearchRowTools, {
         hourlyLimit: acquired,
+        onProviderBlocked: async providerBlock => {
+          await locked(id, owner, async (tx, batch, run) => {
+            if (!run || run.lease?.token !== token || !hasResearchLease(run, Date.now())) throw new Error("Research lease lost before scheduling a retry.");
+            blocked = !run.enabled
+              ? { status: "paused", nextRunAt: null, message: run.error || "Paused by you. No new paid requests will start." }
+              : providerBlock.temporary
+                ? providerRateLimitWait(run, Date.now(), providerBlock.retryAfterMs)
+                : { status: "paused", nextRunAt: null, message: providerBlock.message };
+            stopFor(run, blocked);
+            await save(tx, batch, run);
+          });
+        },
         onReservationBlocked: async () => {
           const usage = await getSerpUsageStatus();
           blocked = usage.isQuotaReached
@@ -194,11 +209,16 @@ async function processQueue(id: string, owner: string) {
             serpCallsUsed: run.attempts.filter(attempt => attempt.rowId === row.id).length,
             ...(blocked ? { status: "pending", lastError: blocked.message,
               sourceData: { ...directoryObject(fresh.sourceData), stagingState: "verification_attempted",
-                fullResearchState: blocked.status === "waiting_hourly" ? "waiting_hourly" : "paused" } }
-              : { sourceData: { ...directoryObject(fresh.sourceData), stagingState: "verification_attempted", fullResearchState: "researched" } }),
+                fullResearchState: blocked.status === "waiting_hourly" ? "waiting_hourly" : "paused",
+                fullResearchWaitReason: blocked.waitReason ?? null } }
+              : { sourceData: { ...directoryObject(fresh.sourceData), stagingState: "verification_attempted", fullResearchState: "researched", fullResearchWaitReason: null } }),
           }).where(eq(salonEnrichmentRows.id, row.id));
         }
-        if (!blocked) run.processedIds = [...new Set([...run.processedIds, row.id])];
+        if (!blocked) {
+          run.processedIds = [...new Set([...run.processedIds, row.id])];
+          run.providerRateLimitCount = 0;
+          run.waitReason = undefined;
+        }
         run.currentRowId = null;
         if (blocked) stopFor(run, run.status === "paused" && run.error?.startsWith("Paused by you.") ? {
           status: "paused", nextRunAt: null, message: "Paused by you. No new paid requests will start.",

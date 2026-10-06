@@ -94,11 +94,11 @@ function readLeadView(): LeadView {
   const candidate=new URLSearchParams(window.location.search).get("view");
   return candidate==="researched"||candidate==="needs_review"||candidate==="ready_for_contacts"?candidate:"all";
 }
-function researchBadge(state: LeadRow["researchState"]) {
+function researchBadge(state: LeadRow["researchState"], waitReason?: unknown) {
   switch (state) {
     case "researching": return <Badge variant="secondary">Researching</Badge>;
     case "researched": return <Badge variant="default">Research complete</Badge>;
-    case "waiting_hourly": return <Badge variant="outline" className="border-amber-400 text-amber-800">Stopped at hourly limit</Badge>;
+    case "waiting_hourly": return <Badge variant="outline" className="border-amber-400 text-amber-800">{waitReason==="provider_rate_limit"?"Waiting for provider cooldown":"Stopped at hourly limit"}</Badge>;
     case "failed": return <Badge variant="destructive">Research failed</Badge>;
     default: return <Badge variant="outline">Not researched</Badge>;
   }
@@ -254,7 +254,7 @@ function LeadRowCard({row,onRefresh}:{row:LeadRow;onRefresh:()=>void}) {
   const sourceData=row.sourceData;
   return <article id={`lead-row-${row.id}`} className="rounded-xl border bg-card p-4 shadow-sm">
     <div className="flex flex-wrap items-start justify-between gap-3">
-       <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold">{row.businessName}</h3>{researchBadge(row.researchState)}<Badge variant={row.reviewStatus==="approved"?"default":row.reviewStatus==="rejected"?"destructive":"outline"}>{row.reviewStatus||"needs review"}</Badge>{row.identityMatchStatus&&<Badge variant="secondary">Identity · {row.identityMatchStatus}</Badge>}{!!row.historicalFinding&&<Badge variant="outline">Historical source finding · inspect evidence</Badge>}</div><p className="mt-1 text-sm text-muted-foreground">{[row.address,row.state].filter(Boolean).join(" · ")||"Address not provided"}</p><p className="mt-1 text-xs text-muted-foreground">Added {dateText(row.processedAt)}{row.sourceData?.originalResearchDate?` · Originally researched ${dateText(String(row.sourceData.originalResearchDate))}`:""}{row.category?` · ${row.category}`:""}</p></div>
+       <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold">{row.businessName}</h3>{researchBadge(row.researchState,row.sourceData?.fullResearchWaitReason)}<Badge variant={row.reviewStatus==="approved"?"default":row.reviewStatus==="rejected"?"destructive":"outline"}>{row.reviewStatus||"needs review"}</Badge>{row.identityMatchStatus&&<Badge variant="secondary">Identity · {row.identityMatchStatus}</Badge>}{!!row.historicalFinding&&<Badge variant="outline">Historical source finding · inspect evidence</Badge>}</div><p className="mt-1 text-sm text-muted-foreground">{[row.address,row.state].filter(Boolean).join(" · ")||"Address not provided"}</p><p className="mt-1 text-xs text-muted-foreground">Added {dateText(row.processedAt)}{row.sourceData?.originalResearchDate?` · Originally researched ${dateText(String(row.sourceData.originalResearchDate))}`:""}{row.category?` · ${row.category}`:""}</p></div>
       <Button size="sm" variant="ghost" onClick={()=>setOpen(!open)} aria-expanded={open}>{open?"Close details":"Review details"}<ChevronDown className={`ml-1 h-4 w-4 transition-transform ${open?"rotate-180":""}`}/></Button>
     </div>
     <p className="mt-3 rounded-md bg-muted/60 px-3 py-2 text-sm"><span className="font-medium">Next action · </span>{row.nextAction||"Review source evidence and confirm business identity before approving."}</p>
@@ -436,7 +436,7 @@ export default function Leads() {
                   : fullResearch?.status==="paused"
                   ? <p className="mt-1 text-sm text-muted-foreground">Full Research is paused. To research more businesses, choose Resume in the Full Research controls and confirm there.</p>
                   : fullResearch?.status==="waiting_hourly"&&fullResearch.enabled
-                    ? <p className="mt-1 text-sm text-muted-foreground">Full Research is on an hourly schedule and continues automatically. Review businesses already researched while it runs.</p>
+                    ? <p className="mt-1 text-sm text-muted-foreground">{fullResearch.waitReason==="provider_rate_limit"?"Full Research is waiting for a temporary provider rate limit and will retry automatically within your caps.":"Full Research is on an hourly schedule and continues automatically."} Review businesses already researched while it runs.</p>
                     : summary&&summary.attempted===0
                       ? <p className="mt-1 text-sm text-muted-foreground">No businesses have been researched yet. Review the limits below, then start only after your explicit in-app confirmation.</p>
                       : summary&&summary.needsReview===0&&summary.readyForContacts>0

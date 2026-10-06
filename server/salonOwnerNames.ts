@@ -13,6 +13,7 @@ import {
 } from "@shared/salonOwnerName";
 import { storage } from "./storage";
 import { providerHourlyLimit, type SerpRequestPolicy } from "./serpRequestPolicy";
+import { readSerpProviderResponse } from "./serpProviderResponse";
 import { isResearchDirectoryRow, RESEARCH_READ_ONLY } from "./salonResearchPolicy";
 import { getSerpUsageStatus } from "./lead-discovery";
 import { ownerDiscoveryLocation, ownerInterviewDiscoveryText, prioritizeOwnerResults } from "./salonOwnerDiscovery";
@@ -855,8 +856,7 @@ async function organicSearch(
       const response = await runtime.fetchProvider(`https://serpapi.com/search?${params}`, {
         signal: controller.signal,
       });
-      if (!response.ok) throw new Error(`SerpAPI returned HTTP ${response.status}`);
-      return response.json() as Promise<{ error?: string; organic_results?: OrganicResult[]; ai_overview?: unknown }>;
+      return readSerpProviderResponse<{ error?: string; organic_results?: OrganicResult[]; ai_overview?: unknown }>(response, progress.requestPolicy);
     };
     const providerDeadline = new Promise<never>((_resolve, reject) => {
       timeout = setTimeout(() => {
@@ -866,7 +866,6 @@ async function organicSearch(
       }, Math.min(runtime.providerTimeoutMs ?? PROVIDER_TIMEOUT_MS, Math.max(1, deadline - Date.now())));
     });
     const payload = await Promise.race([request(), providerDeadline]);
-    if (payload.error) throw new Error(`SerpAPI: ${String(payload.error).slice(0, 240)}`);
     const parsed = parseOwnerSearchResponse(payload, parts.businessName, query);
     try {
       await runtime.storage.createSerpCache(zip, cacheKey, state, { version: 2, ...parsed });

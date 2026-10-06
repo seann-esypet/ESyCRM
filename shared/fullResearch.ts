@@ -21,5 +21,7 @@ export type FullResearchProgress = {
   error: string | null;
   startedAt: string;
   notificationId?: string;
+  waitReason?: "provider_rate_limit";
+  providerRateLimitCount?: number;
   lease?: { token: string; expiresAt: string } | null;
 };

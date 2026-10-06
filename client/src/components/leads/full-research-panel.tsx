@@ -23,6 +23,8 @@ export type FullResearchStatus = {
   error: string | null;
   startedAt?: string;
   notificationId?: string;
+  waitReason?: "provider_rate_limit";
+  providerRateLimitCount?: number;
 };
 export type FullResearchBatchData = {
   id: string;
@@ -140,7 +142,7 @@ export function FullResearchPanel({ batch, readOnlyReason, busy = false, onChang
       </div>
       <div ref={statusFocus} tabIndex={-1} aria-label="Full Research status" className="pt-4">
         <ResearchStatusBanner status={currentStatus} enabled={Boolean(research?.enabled)}
-          nextRunAt={research?.nextRunAt} unavailableReason={unavailableReason}/>
+           nextRunAt={research?.nextRunAt} waitReason={research?.waitReason} unavailableReason={unavailableReason}/>
       </div>
     </CardHeader>
     <CardContent className="space-y-4">
@@ -169,7 +171,7 @@ export function FullResearchPanel({ batch, readOnlyReason, busy = false, onChang
         </Button>
       </div>}
       {running && <div className="flex flex-wrap items-center gap-3">
-        <p className="text-sm text-muted-foreground">{currentStatus === "waiting_hourly" ? "Waiting for the next hourly allowance." : "Full Research is running."}{research?.currentRowId ? ` Current candidate: ${research.currentRowId}` : ""}</p>
+        <p className="text-sm text-muted-foreground">{currentStatus === "waiting_hourly" ? research?.waitReason === "provider_rate_limit" ? "Waiting for the provider cooldown. Research resumes automatically." : "Waiting for the next hourly allowance." : "Full Research is running."}{research?.currentRowId ? ` Current candidate: ${research.currentRowId}` : ""}</p>
         <Button data-testid="full-research-pause" variant="outline" size="sm" disabled={pending||readOnly} onClick={()=>{setLocalError("");control.mutate("pause");}}><Pause className="mr-1.5 h-4 w-4"/>{control.isPending&&control.variables==="pause"?"Pausing…":"Pause now"}</Button>
       </div>}
       {canResume && <div className="space-y-2 rounded-lg border p-3">
@@ -181,7 +183,7 @@ export function FullResearchPanel({ batch, readOnlyReason, busy = false, onChang
         <label className="flex items-start gap-2 text-sm"><Checkbox id="full-research-recover-confirmation" checked={recoverConsent} onCheckedChange={value=>setRecoverConsent(value===true)} disabled={pending||unavailable}/><span>Confirm recovery of this interrupted research operation.</span></label>
         <Button data-testid="full-research-recover" variant="outline" size="sm" disabled={!recoverConsent||pending||unavailable} onClick={()=>{setLocalError("");control.mutate("recover");}}><RotateCcw className="mr-1.5 h-4 w-4"/>{control.isPending&&control.variables==="recover"?"Recovering…":"Confirm and recover"}</Button>
       </div>}
-      {(localError||research?.error) && <Alert variant="destructive"><AlertTitle>{localError?"Request could not be completed":"Research reported an error"}</AlertTitle><AlertDescription>{localError||research?.error}</AlertDescription></Alert>}
+      {(localError||research?.error) && <Alert variant={!localError&&currentStatus==="waiting_hourly"?"default":"destructive"}><AlertTitle>{localError?"Request could not be completed":currentStatus==="waiting_hourly"?"Research waiting":"Research reported an error"}</AlertTitle><AlertDescription>{localError||research?.error}</AlertDescription></Alert>}
       <section className="rounded-lg border bg-muted/30 p-3" aria-label="Full Research progress">
         <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
           <div><b>{processed.toLocaleString()} / {batch.totalRows.toLocaleString()}</b><span className="block text-xs text-muted-foreground">processed candidates</span></div>

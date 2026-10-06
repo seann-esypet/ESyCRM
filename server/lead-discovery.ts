@@ -5,6 +5,7 @@ import { parseAddressString } from "@shared/utils";
 import { fetchPublicPage, type SalonFetchRuntime } from "./salonPublicFetch";
 import { salonEmailHtmlContextRestriction, salonEmailDomainRestriction } from "./salonEmailPolicy";
 import { directoryEligibility, isBookingOrOrderingUrl, providerCategories, withDirectoryNotes } from "@shared/directoryEligibility";
+import { readSerpProviderResponse } from "./serpProviderResponse";
 
 // New reduced query set for budget management
 const DEFAULT_QUERIES = [
@@ -295,15 +296,7 @@ export async function searchWithSerpApi(
     // A completed provider response may consume credit even if the response
     // cannot be parsed or cached; never refund it as a network failure.
     
-    if (!response.ok) {
-      console.error("SerpAPI request failed with status", response.status);
-      throw new Error(response.status === 429 ? "SerpAPI rate limit reached" : `SerpAPI returned ${response.status}`);
-    }
-    const data = await response.json();
-    if (data.error) {
-      const isQuotaError = /quota|rate limit|credits|searches left|exhausted/i.test(String(data.error));
-      throw new Error(isQuotaError ? "SERP quota reached" : "SerpAPI lookup failed");
-    }
+    const data = await readSerpProviderResponse<any>(response, options?.requestPolicy);
     
     const results = parseGoogleMapsResults(data);
 

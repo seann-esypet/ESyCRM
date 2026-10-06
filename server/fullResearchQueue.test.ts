@@ -10,6 +10,7 @@ import { newFullResearch } from "./fullResearchPolicy";
 import { unifiedUploadRow } from "./leadWorkspacePolicy";
 import { controlFullResearch, tickFullResearchScheduler, fullResearchIsDue } from "./fullResearchQueue";
 import { fullResearchRowTools } from "./fullResearchRow";
+import { readSerpProviderResponse } from "./serpProviderResponse";
 import { EMPTY_OWNER_NAME_RESULT } from "@shared/salonOwnerName";
 
 // Every database operation and provider is replaced. These fixtures cannot
@@ -24,6 +25,7 @@ function fixture(count: number, fail: boolean | number = false, cachedBusinessSe
     id: `fixture-row-${i}`, batchId: batch.id, serpCallsUsed: 0,
   }));
   let transactions = 0, providerAttempts = 0, sharedThrottle = false, accountExhausted = false;
+  let providerBlock: { stage: number; permanent: boolean; beforeResponse?: () => Promise<void> } | null = null;
   const hourlyPolicies: number[] = [];
   let tail = Promise.resolve();
   const matches = (table: any, record: any, condition?: SQL) => {
@@ -78,11 +80,17 @@ function fixture(count: number, fail: boolean | number = false, cachedBusinessSe
   storage.getSalonEnrichmentBatch = async (id, owner) =>
     id === batch.id && (owner === null || owner === batch.userId) ? structuredClone(batch) : undefined;
   storage.refreshSalonEnrichmentBatchCounts = async () => structuredClone(batch);
-  const provider = async (before: () => Promise<void>) => {
+  const provider = async (before: () => Promise<void>, policy: any, stage: number) => {
     const old = batch.researchProgress.fullResearch.attempts.length;
     await before();
     assert.equal(batch.researchProgress.fullResearch.attempts.length, old + 1, "request must be durably charged BEFORE invocation");
     providerAttempts++;
+    if (providerBlock?.stage === stage) {
+      await providerBlock.beforeResponse?.();
+      await readSerpProviderResponse(new Response(JSON.stringify({
+        error: providerBlock.permanent ? "Your account has run out of searches." : "Too many requests",
+      }), { status: 429, headers: { "Retry-After": "120" } }), policy);
+    }
     if (fail === true || fail === providerAttempts) throw new Error("Fixture provider failed after starting");
   };
   Object.assign(fullResearchRowTools, {
@@ -91,12 +99,12 @@ function fixture(count: number, fail: boolean | number = false, cachedBusinessSe
       hourlyPolicies.push(options.requestPolicy.hourlyLimit);
       if (sharedThrottle) await options.requestPolicy.onReservationBlocked();
       if (cachedBusinessSearch) return { results: [], fromCache: true };
-      await provider(options.beforeProviderRequest);
+      await provider(options.beforeProviderRequest, options.requestPolicy, 1);
       return { results: [], fromCache: false };
     },
     searchSalonContactPages: async (_row: any, _remaining: any, before: any, policy: any) => {
       hourlyPolicies.push(policy.hourlyLimit);
-      await provider(before); return { results: [], calls: 1, error: null };
+      await provider(before, policy, 2); return { results: [], calls: 1, error: null };
     },
     enrichRow: async (row: any, options: any) => {
       await options.search("fixture", "78701", "TX", "fixture");
@@ -109,12 +117,15 @@ function fixture(count: number, fail: boolean | number = false, cachedBusinessSe
     },
     researchSalonOwnerCandidates: async (_row: any, before: any, policy: any) => {
       hourlyPolicies.push(policy.hourlyLimit);
-      await provider(before); return { ...EMPTY_OWNER_NAME_RESULT, status: "needs_review", candidates: [] };
+      await provider(before, policy, 3); return { ...EMPTY_OWNER_NAME_RESULT, status: "needs_review", candidates: [] };
     },
   });
   return {
     batch, rows, hourlyPolicies,
     setSharedThrottle(value: boolean, quota = false) { sharedThrottle = value; accountExhausted = quota; },
+    setProviderBlock(stage: number | null, permanent = false, beforeResponse?: () => Promise<void>) {
+      providerBlock = stage == null ? null : { stage, permanent, beforeResponse };
+    },
     get transactions() { return transactions; }, get providerAttempts() { return providerAttempts; },
     async settled() {
       for (let i = 0; i < 400; i++) {
@@ -140,6 +151,114 @@ function fixture(count: number, fail: boolean | number = false, cachedBusinessSe
 }
 
 test("Full Research controls and worker use only isolated records/providers", async t => {
+  for (const stage of [1, 2, 3]) await t.test(`provider HTTP 429 at tool ${stage} waits, preserves charges/evidence, and retries only when due`, async () => {
+    const env = fixture(1);
+    try {
+      env.setProviderBlock(stage);
+      await controlFullResearch(env.batch.id, env.batch.userId, "start", { confirmed: true, ...FULL_RESEARCH_DEFAULTS });
+      await env.settled();
+      const run = env.batch.researchProgress.fullResearch;
+      assert.equal(run.status, "waiting_hourly");
+      assert.equal(run.waitReason, "provider_rate_limit");
+      assert.equal(run.enabled, true);
+      assert.equal(run.providerRateLimitCount, 1);
+      assert.ok(Date.parse(run.nextRunAt) >= Date.now() + 299000);
+      assert.equal(run.attempts.length, stage);
+      assert.deepEqual(run.processedIds, []);
+      assert.equal(env.rows[0].status, "pending");
+      assert.equal(env.rows[0].sourceData.fullResearchWaitReason, "provider_rate_limit");
+      if (stage === 3) assert.ok(env.rows[0].email, "retain earlier email when name lookup throttles");
+      await tickFullResearchScheduler();
+      assert.equal(env.providerAttempts, stage, "no early paid retry");
+      env.setProviderBlock(null);
+      run.nextRunAt = new Date(Date.now() - 1).toISOString();
+      await tickFullResearchScheduler();
+      await wait(20); await env.settled();
+      assert.equal(env.batch.researchProgress.fullResearch.status, "completed");
+      assert.equal(env.batch.researchProgress.fullResearch.attempts.length, stage + 3);
+      assert.equal(env.batch.researchProgress.fullResearch.providerRateLimitCount, 0);
+      assert.deepEqual(env.batch.researchProgress.fullResearch.processedIds, [env.rows[0].id]);
+    } finally { env.restore(); }
+  });
+  await t.test("persistent 429 stops after five automatic retries, without refunding attempts", async () => {
+    const env = fixture(1);
+    try {
+      env.setProviderBlock(1);
+      await controlFullResearch(env.batch.id, env.batch.userId, "start", { confirmed: true, ...FULL_RESEARCH_DEFAULTS });
+      await env.settled();
+      for (let retry = 1; retry <= 5; retry++) {
+        const run = env.batch.researchProgress.fullResearch;
+        run.nextRunAt = new Date(Date.now() - 1).toISOString();
+        await tickFullResearchScheduler();
+        await wait(20); await env.settled();
+      }
+      assert.equal(env.batch.researchProgress.fullResearch.status, "paused");
+      assert.equal(env.batch.researchProgress.fullResearch.enabled, false);
+      assert.equal(env.batch.researchProgress.fullResearch.nextRunAt, null);
+      assert.match(env.batch.researchProgress.fullResearch.error, /five automatic retries/);
+      assert.equal(env.providerAttempts, 6);
+      assert.equal(env.batch.researchProgress.fullResearch.attempts.length, 6);
+      assert.deepEqual(env.batch.researchProgress.fullResearch.processedIds, []);
+      await tickFullResearchScheduler();
+      assert.equal(env.providerAttempts, 6);
+    } finally { env.restore(); }
+  });
+  await t.test("429 at the list cap stops rather than scheduling another paid request", async () => {
+    const env = fixture(1);
+    try {
+      env.setProviderBlock(1);
+      await controlFullResearch(env.batch.id, env.batch.userId, "start", { confirmed: true, ...FULL_RESEARCH_DEFAULTS, paidCallsPerList: 1 });
+      await env.settled();
+      assert.equal(env.batch.researchProgress.fullResearch.status, "budget_exhausted");
+      assert.equal(env.batch.researchProgress.fullResearch.enabled, false);
+      assert.equal(env.batch.researchProgress.fullResearch.nextRunAt, null);
+      assert.equal(env.providerAttempts, 1);
+      assert.deepEqual(env.batch.researchProgress.fullResearch.processedIds, []);
+    } finally { env.restore(); }
+  });
+  await t.test("a manual pause during a throttled response is never overridden by auto retry", async () => {
+    const env = fixture(1);
+    try {
+      env.setProviderBlock(1, false, () => controlFullResearch(env.batch.id, env.batch.userId, "pause", { confirmed: true }).then(() => undefined));
+      await controlFullResearch(env.batch.id, env.batch.userId, "start", { confirmed: true, ...FULL_RESEARCH_DEFAULTS });
+      await env.settled();
+      assert.equal(env.batch.researchProgress.fullResearch.status, "paused");
+      assert.equal(env.batch.researchProgress.fullResearch.enabled, false);
+      assert.equal(env.batch.researchProgress.fullResearch.nextRunAt, null);
+      await tickFullResearchScheduler();
+      assert.equal(env.providerAttempts, 1);
+    } finally { env.restore(); }
+  });
+  await t.test("account exhaustion returned as 429 remains a permanent pause", async () => {
+    const env = fixture(1);
+    try {
+      env.setProviderBlock(3, true);
+      await controlFullResearch(env.batch.id, env.batch.userId, "start", { confirmed: true, ...FULL_RESEARCH_DEFAULTS });
+      await env.settled();
+      assert.equal(env.batch.researchProgress.fullResearch.status, "paused");
+      assert.equal(env.batch.researchProgress.fullResearch.enabled, false);
+      assert.equal(env.batch.researchProgress.fullResearch.nextRunAt, null);
+      assert.match(env.batch.researchProgress.fullResearch.error, /quota/);
+      assert.ok(env.rows[0].email);
+      assert.equal(env.providerAttempts, 3);
+    } finally { env.restore(); }
+  });
+  await t.test("explicit resume repairs the old rate-limited failed candidate, without activating it on scheduler startup", async () => {
+    const env = fixture(1);
+    try {
+      const run = newFullResearch(FULL_RESEARCH_DEFAULTS, Date.now());
+      run.enabled = false; run.status = "paused"; run.processedIds = [env.rows[0].id];
+      run.attempts = [{ at: new Date().toISOString(), tool: "business_search", rowId: env.rows[0].id }];
+      env.batch.researchProgress.fullResearch = run;
+      env.rows[0].status = "failed"; env.rows[0].lastError = "SerpAPI rate limit reached";
+      await tickFullResearchScheduler();
+      assert.equal(env.providerAttempts, 0);
+      await controlFullResearch(env.batch.id, env.batch.userId, "resume", { confirmed: true });
+      await env.settled();
+      assert.equal(env.batch.researchProgress.fullResearch.status, "completed");
+      assert.equal(env.batch.researchProgress.fullResearch.attempts.length, 4);
+    } finally { env.restore(); }
+  });
   await t.test("new confirmed searches get fresh notifications without resetting cumulative spending", async () => {
     const env = fixture(3);
     try {

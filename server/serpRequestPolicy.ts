@@ -3,6 +3,7 @@
 export type SerpRequestPolicy = {
   hourlyLimit: number;
   onReservationBlocked: () => Promise<void>;
+  onProviderBlocked?: (block: { temporary: boolean; retryAfterMs?: number; message: string }) => Promise<void>;
 };
 
 export function providerHourlyLimit(legacyLimit: number, policy?: SerpRequestPolicy) {
