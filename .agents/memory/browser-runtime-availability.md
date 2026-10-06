@@ -38,3 +38,9 @@ Responsive fixture checks must confirm the page is unobstructed, not merely that
 **Why:** Pipeline mobile checks passed while Email History remained open; the captured image exposed that the badges were behind a modal overlay. Element existence and layout measurements alone did not establish that a salesperson could see the status.
 
 **How to apply:** Assert that transient dialogs have actually closed before responsive checks and inspect at least one captured fixture image of the changed content. Keep that fixture evidence separate from verification of the real signed-in screen.
+
+Authorization checks need endpoint tests with authentication-shaped principals, not only intercepted browser responses or role strings supplied directly to a service.
+
+**Why:** Both browser and service tests accepted a budget update, but a real administrator was rejected because the request handler searched identity-provider claims for the CRM role. Browser fixtures never exercised the backend guard, and service tests skipped the role extraction.
+
+**How to apply:** Match the existing authentication middleware's principal shape: the refreshed CRM role is separate from identity-provider claims. Exercise the registered route with an administrator whose identity claims have no CRM role, and verify that conflicting claims cannot grant a salesperson administrative access. Do not move CRM permissions into provider claims to accommodate a mistaken handler.

@@ -6,6 +6,8 @@ import { storage } from "./storage";
 import { db } from "./db";
 import { serpUsage, serpCallReservations } from "@shared/schema";
 import { PgDialect } from "drizzle-orm/pg-core";
+import express from "express";
+import { registerLeadWorkspaceRoutes } from "./leadWorkspaceRoutes";
 
 const approved = { confirmed: true, ...APPROVED_SERP_BUDGET };
 function fixture() {
@@ -43,6 +45,57 @@ test("only an administrator's exact confirmed 1,000/800 update changes the share
   assert.deepEqual(env.counts(), { reads: 1, updates: 1 });
   await confirmSharedProviderBudget("admin", approved, env.dependencies);
   assert.equal(env.usage.usedCredits, 200, "repeated confirmations never refund spending");
+});
+
+test("budget endpoint uses the authenticated CRM role, not OIDC identity claims", async () => {
+  const env = fixture();
+  let actor: any = { role: "admin", claims: { sub: "fixture-admin" } };
+  const scopes: Array<string | null | undefined> = [];
+  const original = storage.getSalonEnrichmentBatch;
+  storage.getSalonEnrichmentBatch = async (_id, owner) => {
+    scopes.push(owner);
+    return { id: "fixture-list", userId: "fixture-list-owner" } as Awaited<ReturnType<typeof original>>;
+  };
+  const app = express();
+  app.use(express.json());
+  registerLeadWorkspaceRoutes(app, (req, _res, next) => {
+    req.user = actor;
+    next();
+  }, (role, input) => confirmSharedProviderBudget(role, input, env.dependencies));
+  const server = app.listen(0, "127.0.0.1");
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("listening", resolve);
+      server.once("error", reject);
+    });
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    const url = `http://127.0.0.1:${address.port}/api/leads/fixture-list/shared-provider-budget`;
+    const send = () => fetch(url, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(approved) });
+    const response = await send();
+    assert.equal(response.status, 200, "real admin session has no role in OIDC claims");
+    assert.deepEqual(await response.json(), {
+      monthYear: "2026-10", monthlyQuota: 1000, hardStopAt: 800, used: 200, remaining: 600,
+    });
+    assert.deepEqual(scopes, [null], "CRM admin can access the shared control on an accessible saved list");
+    for (const role of ["salesperson", undefined]) {
+      actor = { role, claims: { sub: "fixture-salesperson", role: "admin" } };
+      const denied = await send();
+      assert.equal(denied.status, 400);
+      assert.match((await denied.json()).message, /Only an administrator/);
+    }
+    assert.deepEqual(env.counts(), { reads: 1, updates: 1 }, "identity claims cannot bypass the CRM role guard");
+    assert.deepEqual(scopes, [null], "denied actors do not access the saved list or budget");
+    assert.equal(env.usage.usedCredits, 200);
+    actor = { role: "admin", claims: { sub: "fixture-admin", role: "salesperson" } };
+    assert.equal((await send()).status, 200, "database-backed CRM role is authoritative");
+    assert.equal(env.usage.usedCredits, 200, "repeated update retains counted spending");
+  } finally {
+    storage.getSalonEnrichmentBatch = original;
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
 });
 
 test("unverified, insufficient and failed account reads cannot raise the shared allowance", async () => {

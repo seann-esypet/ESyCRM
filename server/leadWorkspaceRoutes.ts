@@ -18,9 +18,10 @@ import { controlFullResearch } from "./fullResearchQueue";
 import { getProviderCredits } from "./providerCredits";
 import { confirmSharedProviderBudget, readSharedProviderBudget } from "./sharedProviderBudget";
 
-const scope = (req: any) => req.user.claims.role === "admin" ? null : req.user.claims.sub as string;
+const scope = (req: any) => req.user.role === "admin" ? null : req.user.claims.sub as string;
 function confirmed(req: any) { if (req.body?.confirmed !== true) throw new Error("Confirm this action before continuing."); }
-export function registerLeadWorkspaceRoutes(app: Express, auth: RequestHandler) {
+export function registerLeadWorkspaceRoutes(app: Express, auth: RequestHandler,
+  budgetUpdate: typeof confirmSharedProviderBudget = confirmSharedProviderBudget) {
   const route = (method: "get" | "post", path: string, handler: (req: any) => Promise<any>) => app[method](path, auth, async (req: any, res) => {
     try { res.json(await handler(req)); } catch (error) {
       res.status(400).json({ message: error instanceof Error ? error.message : "Lead action failed" });
@@ -192,10 +193,10 @@ export function registerLeadWorkspaceRoutes(app: Express, auth: RequestHandler) 
     return { ...credits, sharedBudget };
   });
   route("post", "/api/leads/:id/shared-provider-budget", async req => {
-    if (req.user.claims.role !== "admin") throw new Error("Only an administrator can change the shared monthly safety budget.");
+    if (req.user.role !== "admin") throw new Error("Only an administrator can change the shared monthly safety budget.");
     const batch = await storage.getSalonEnrichmentBatch(req.params.id, scope(req));
     if (!batch) throw new Error("Saved list not found or inaccessible.");
-    return confirmSharedProviderBudget(req.user.claims.role, req.body);
+    return budgetUpdate(req.user.role, req.body);
   });
   async function fullResearchControl(req: any, action: string) {
     confirmed(req);
