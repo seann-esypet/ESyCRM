@@ -15,6 +15,7 @@ import { renderLeadSequencePreview } from "./leadSequencePreview";
 import { salonCrmDuplicates, salonCrmDuplicateReasons } from "./salonCrmDuplicates";
 import { leadRecipient } from "@shared/leadWorkflowState";
 import { controlFullResearch } from "./fullResearchQueue";
+import { getProviderCredits } from "./providerCredits";
 
 const scope = (req: any) => req.user.claims.role === "admin" ? null : req.user.claims.sub as string;
 function confirmed(req: any) { if (req.body?.confirmed !== true) throw new Error("Confirm this action before continuing."); }
@@ -183,6 +184,11 @@ export function registerLeadWorkspaceRoutes(app: Express, auth: RequestHandler) 
         rowId:item.duplicate.id,batchId:item.duplicate.batchId,protected:item.duplicate.reviewStatus==="approved"||!!item.duplicate.importedContactId})) };
   });
   route("get", "/api/leads/:id/estimate", req => leadResearchEstimate(req.params.id, scope(req)));
+  route("get", "/api/leads/:id/provider-credits", async req => {
+    const batch = await storage.getSalonEnrichmentBatch(req.params.id, scope(req));
+    if (!batch) throw new Error("Saved list not found or inaccessible.");
+    return getProviderCredits();
+  });
   async function fullResearchControl(req: any, action: string) {
     confirmed(req);
     const batch = await storage.getSalonEnrichmentBatch(req.params.id, scope(req));

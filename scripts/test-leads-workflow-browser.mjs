@@ -14,6 +14,7 @@ const chrome = spawn("chromium",["--headless","--no-sandbox","--disable-dev-shm-
 const pending=new Map(),errors=[],writes=[];
 let ws,id=0,role="salesperson",rows=[],batches=[],scheduled=false,researchActive=false,linkedPreviewReads=0,failSearchSave=false;
 let fullResearchReadOnlyReason=null;
+let providerCreditsRemaining=35,providerCreditsStatus="available";
 const fixtureSequence={id:"fixture-sequence",sequenceNumber:1,sequenceTrack:"directory_general",isActive:"true",subject:"Are you listed?",body:"<p>[Contact_Greeting],</p><p>Fixture invitation.</p>",name:"Directory introduction"};
 const fixtureSender={id:"fixture-owner",firstName:"Fixture",lastName:"Salesperson"};
 function linkedContact(row){return row.importedContactId?{id:row.importedContactId,email:row.importedContactId==="fixture-phone-contact"?"existing@fixture-contact.example":row.email,company:row.businessName,firstName:null,useBusinessNameForEmail:"Yes"}:null;}
@@ -302,6 +303,53 @@ async function researchStatusUiCase(origin) {
   assert.equal(await evaluate(`Boolean(${dialog})||Boolean(${selector("full-research-animation")})`),false);
   assert.deepEqual(writes,[],"status changes and review navigation cannot write, research, import or send");
 }
+async function providerCreditsUiCase(origin) {
+  writes.length=0;
+  const batch={id:`fixture-credits-${role}`,name:"Provider credits fixture",status:"paused",totalRows:1,
+    createdAt:new Date().toISOString(),researchProgress:{workflow:"unified_leads",fullResearch:{
+      status:"paused",enabled:false,notificationId:`credits-${role}`,startedAt:new Date().toISOString(),
+      limits:{businessesPerHour:20,paidCallsPerHour:40,paidCallsPerList:200},
+      processedIds:[],startedRows:[],attempts:[{at:new Date().toISOString(),tool:"business_search",rowId:"fixture-credits-row"}],
+      currentRowId:null,nextRunAt:null,error:null}}};
+  batches=[batch];
+  rows=[{...unifiedUploadRow({Business:"Credits fixture Grooming",Address:"Austin TX",State:"TX"},0,"fixture-owner"),
+    id:"fixture-credits-row",batchId:batch.id,serpCallsUsed:1}];
+  providerCreditsRemaining=35;providerCreditsStatus="available";
+  await send("Emulation.setDeviceMetricsOverride",{width:1365,height:900,deviceScaleFactor:1,mobile:false});
+  await send("Page.navigate",{url:origin+"/leads/"+batch.id});
+  const card="document.querySelector('[data-testid=\"provider-credits\"]')";
+  await until(`${card}?.innerText.includes('35')`,"available provider credits");
+  assert.equal(await evaluate(`${card}.previousElementSibling.innerText.includes('1 / 200')`),true);
+  assert.equal(await evaluate("document.querySelector('[data-testid=\"full-research-resume\"]').disabled"),true);
+  providerCreditsRemaining=0;
+  await click("Check provider balance");
+  await until("document.querySelector('[data-testid=\"provider-credits-empty\"]')","zero-credit warning");
+  await until(`${card}?.querySelector('b').innerText==='0'`,"true zero balance");
+  await evaluate(`${card}.scrollIntoView({block:'center'})`);
+  await pause(300);
+  await send("Page.captureScreenshot",{format:"jpeg",quality:70}).then(r=>writeFile(`reports/workflow-fixtures/${role}-provider-credits-desktop.jpg`,Buffer.from(r.data,"base64")));
+  await send("Emulation.setDeviceMetricsOverride",{width:402,height:874,deviceScaleFactor:1,mobile:true});
+  await evaluate(`document.querySelector('button[aria-label="Collapse sidebar"]')?.click()`);
+  await until(`document.querySelector('button[aria-label="Expand sidebar"]')`,"collapsed credit-display navigation");
+  await evaluate(`${card}.scrollIntoView({block:'center'})`);
+  await pause(300);
+  assert.equal(await evaluate("document.documentElement.scrollWidth>window.innerWidth"),false);
+  await send("Page.captureScreenshot",{format:"jpeg",quality:70}).then(r=>writeFile(`reports/workflow-fixtures/${role}-provider-credits-mobile.jpg`,Buffer.from(r.data,"base64")));
+  providerCreditsStatus="unavailable";
+  await click("Check provider balance");
+  await until(`${card}?.querySelector('b').innerText==='Unavailable'`,"unknown balance is not zero");
+  assert.equal(await evaluate("Boolean(document.querySelector('[data-testid=\"provider-credits-empty\"]'))"),false);
+  assert.equal(await evaluate("document.body.innerText.includes('It is unknown—not zero')"),true);
+  providerCreditsStatus="available";providerCreditsRemaining=30;
+  await click("Check provider balance");
+  await until(`${card}?.querySelector('b').innerText==='30'`,"replenished balance");
+  assert.deepEqual(writes,[]);
+  assert.equal(batch.researchProgress.fullResearch.status,"paused");
+  assert.equal(batch.researchProgress.fullResearch.attempts.length,1);
+  await send("Emulation.setDeviceMetricsOverride",{width:1365,height:900,deviceScaleFactor:1,mobile:false});
+  await evaluate(`document.querySelector('button[aria-label="Expand sidebar"]')?.click()`);
+  providerCreditsRemaining=35;
+}
 async function researchedRowsUiCase(origin) {
   const batch={id:"fixture-researched-list",name:"Uploaded research visibility fixture",status:"paused",totalRows:756,
     researchProgress:{workflow:"unified_leads",fullResearch:{status:"paused",enabled:false,
@@ -372,6 +420,11 @@ async function api(url,method,body) {
   }
   if(url.pathname==="/api/auth/user")return {id:"fixture-owner",role,firstName:"Fixture",lastName:"Salesperson",email:"fixture@example.invalid"};
   if(method==="GET"&&url.pathname==="/api/leads")return batches;
+  if(method==="GET"&&/^\/api\/leads\/[^/]+\/provider-credits$/.test(url.pathname))return {
+    status:providerCreditsStatus,remaining:providerCreditsStatus==="available"?providerCreditsRemaining:null,
+    monthlyLimit:providerCreditsStatus==="available"?250:null,
+    usedThisMonth:providerCreditsStatus==="available"?250-providerCreditsRemaining:null,checkedAt:new Date().toISOString()
+  };
   if(method==="POST"&&url.pathname==="/api/leads/upload-preview"){
     assert.ok(body.rows.length===3);return {inputCount:3,invalidCount:0,duplicateCount:0,rows:body.rows.map((raw,i)=>({rowNumber:i+1,businessName:raw["Business Name"],email:raw.Email,action:"Stage for review; no research or contacts."}))};
   }
@@ -477,6 +530,10 @@ try {
   await mkdir("reports/workflow-fixtures",{recursive:true});
   for(const currentRole of ["salesperson","admin"]){
     role=currentRole;rows=[];batches=[];scheduled=false;researchActive=false;linkedPreviewReads=0;writes.length=0;
+    if(process.argv.includes("--provider-credits-only")){
+      await providerCreditsUiCase(origin);
+      continue;
+    }
     await send("Emulation.setDeviceMetricsOverride",{width:1365,height:900,deviceScaleFactor:1,mobile:false});
     await send("Page.navigate",{url:origin+"/leads?upload=1"});
     await until("document.body.innerText.includes('Search for Businesses')","Leads home");
@@ -522,10 +579,13 @@ try {
     await reviewThroughScheduling("search-stage");
     await fullResearchUiCase(origin);
     await researchStatusUiCase(origin);
+    await providerCreditsUiCase(origin);
     await researchedRowsUiCase(origin);
   }
   assert.deepEqual(errors,[]);
-   console.log("PASS: administrator/salesperson upload/search → review → CRM → Pipeline → separate scheduling; research status lifecycle, once-per-run popups, new runs, list switching, reduced motion, keyboard focus, desktop/mobile, controls and researched filtering. All API traffic intercepted; no real records or providers used.");
+   console.log(process.argv.includes("--provider-credits-only") ?
+    "PASS: administrator/salesperson provider credits beside list cap; available, zero, unknown and refreshed balances, paused-state preservation and readable desktop/mobile layouts. All API traffic intercepted." :
+    "PASS: administrator/salesperson upload/search → review → CRM → Pipeline → separate scheduling; research status lifecycle, once-per-run popups, new runs, list switching, reduced motion, keyboard focus, desktop/mobile, controls and researched filtering. All API traffic intercepted; no real records or providers used.");
 } finally {
   ws?.close();chrome.kill("SIGTERM");await pause(200);await rm(profile,{recursive:true,force:true});
 }

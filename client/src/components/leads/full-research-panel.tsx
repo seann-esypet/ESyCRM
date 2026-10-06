@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import type { ProviderCredits } from "@shared/providerCredits";
 import { AlertTriangle, Clock3, Pause, Play, RotateCcw, Search } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -57,6 +58,14 @@ function dateText(value?: string | null) {
 
 export function FullResearchPanel({ batch, readOnlyReason, busy = false, onChanged, onReview, researchSummary }: FullResearchBatch) {
   const research = batch.researchProgress?.fullResearch;
+  const credits = useQuery<ProviderCredits>({
+    queryKey: ["/api/leads", batch.id, "provider-credits"],
+    queryFn: async () => (await apiRequest("GET", `/api/leads/${encodeURIComponent(batch.id)}/provider-credits`)).json(),
+    staleTime: 60000,
+    refetchInterval: 60000,
+    retry: false,
+  });
+  const providerEmpty = !credits.isError && credits.data?.status === "available" && credits.data.remaining === 0;
   const limits = research?.limits;
   const [businessesPerHour, setBusinessesPerHour] = useState(String(limits?.businessesPerHour ?? 20));
   const [paidCallsPerHour, setPaidCallsPerHour] = useState(String(limits?.paidCallsPerHour ?? 40));
@@ -157,6 +166,10 @@ export function FullResearchPanel({ batch, readOnlyReason, busy = false, onChang
         <div className="space-y-1"><Label htmlFor="full-research-paid-hour">Paid calls per hour (1–100)</Label><Input id="full-research-paid-hour" data-testid="full-research-paid-hour" type="number" min="1" max="100" step="1" value={paidCallsPerHour} disabled={pending||running} onChange={event=>setPaidCallsPerHour(event.target.value)}/></div>
         <div className="space-y-1"><Label htmlFor="full-research-paid-total">Paid calls total for this list (1–10,000)</Label><Input id="full-research-paid-total" data-testid="full-research-paid-total" type="number" min="1" max="10000" step="1" value={paidCallsPerList} disabled={pending||running} onChange={event=>setPaidCallsPerList(event.target.value)}/></div>
       </div>
+      {providerEmpty && <Alert variant="destructive" data-testid="provider-credits-empty">
+        <AlertTitle>No SerpAPI credits remaining</AlertTitle>
+        <AlertDescription>The provider account has 0 searches left. Your list cap is a separate safety limit, not available provider credit. Replenish credits or wait for the allowance to renew, then check the balance before resuming. Waiting an hour or raising this list cap will not restore provider credits.</AlertDescription>
+      </Alert>}
       {!running && currentStatus !== "paused" && <div className="space-y-3">
         <label className="flex items-start gap-2 text-sm leading-5">
           <Checkbox data-testid="full-research-consent" checked={consent} onCheckedChange={value=>setConsent(value===true)} disabled={pending||unavailable}/>
@@ -185,11 +198,21 @@ export function FullResearchPanel({ batch, readOnlyReason, busy = false, onChang
       </div>}
       {(localError||research?.error) && <Alert variant={!localError&&currentStatus==="waiting_hourly"?"default":"destructive"}><AlertTitle>{localError?"Request could not be completed":currentStatus==="waiting_hourly"?"Research waiting":"Research reported an error"}</AlertTitle><AlertDescription>{localError||research?.error}</AlertDescription></Alert>}
       <section className="rounded-lg border bg-muted/30 p-3" aria-label="Full Research progress">
-        <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-5">
           <div><b>{processed.toLocaleString()} / {batch.totalRows.toLocaleString()}</b><span className="block text-xs text-muted-foreground">processed candidates</span></div>
           <div><b>{previousPaidCalls.toLocaleString()} / {cap.toLocaleString()}</b><span className="block text-xs text-muted-foreground">paid attempts / list cap</span></div>
+          <div data-testid="provider-credits" aria-live="polite">
+            <b className={providerEmpty ? "text-destructive" : undefined}>{credits.isPending ? "Checking…" : credits.isError || credits.data?.status !== "available" ? "Unavailable" : credits.data.remaining!.toLocaleString()}</b>
+            <span className="block text-xs text-muted-foreground">SerpAPI credits remaining</span>
+            {credits.data?.status === "available" && credits.data.monthlyLimit !== null && <span className="block text-xs text-muted-foreground">{credits.data.monthlyLimit.toLocaleString()} searches / monthly allowance</span>}
+          </div>
           <div><b>{recentStarted.length} / {limits?.businessesPerHour ?? Number(businessesPerHour)}</b><span className="block text-xs text-muted-foreground">started in rolling 60 min</span></div>
           <div><b>{recentAttempts.length} / {limits?.paidCallsPerHour ?? Number(paidCallsPerHour)}</b><span className="block text-xs text-muted-foreground">attempts in rolling 60 min</span></div>
+        </div>
+        <div className="mt-3 border-t pt-2 text-xs text-muted-foreground">
+          <p>Provider credits are shared across all lists and searches, separate from this list’s cap. Account totals may lag recent requests.</p>
+          {credits.isError || credits.data?.status === "unavailable" ? <p className="mt-1">Provider balance could not be checked. It is unknown—not zero. Check the provider account before resuming.</p> : credits.data && <p className="mt-1">Balance checked · {dateText(credits.data.checkedAt)} · refreshes every minute</p>}
+          <Button variant="outline" size="sm" className="mt-2" data-testid="provider-credits-refresh" disabled={credits.isFetching} onClick={() => { void credits.refetch(); }}>{credits.isFetching ? "Checking balance…" : "Check provider balance"}</Button>
         </div>
         <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground">
           <span>Next eligible run · {dateText(research?.nextRunAt)}</span>
