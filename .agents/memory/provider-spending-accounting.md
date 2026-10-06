@@ -32,3 +32,9 @@ Provider plan changes do not authorize resetting the app's attempt ledger. Confi
 **Why:** After a provider upgrade, the account reported available credits while the app's older shared safety stop blocked all state lists. The provider's reported usage also differed from the app's retained attempts. Replacing one counter with the other would erase spending history; changing only the current month's limits would silently restore the old cap next month.
 
 **How to apply:** Require explicit administrator confirmation for shared-budget changes, retain prior attempts and each list's caps, and never resume paused lists as a side effect. Show the shared app budget separately from provider credits and list allowances. New monthly ledgers inherit the last saved safety limits, not limits inferred automatically from provider metadata.
+
+Treat a saved research pause error as historical evidence, not a live snapshot of the shared budget.
+
+**Why:** After an administrator successfully raised the shared safety stop, a paused list still displayed its earlier lower-cap error. That made a successful budget update appear to have failed, even though the live shared ledger had changed.
+
+**How to apply:** Compare the current shared ledger with the saved pause reason before recommending another budget update or publication. Explain that paused lists require a separate confirmed resume; do not silently reactivate them or reset spending to remove the old warning.
