@@ -1,4 +1,5 @@
 import { storage } from "./storage";
+import { sameSalonWebsite, salonRelativePage } from "@shared/salonWebsiteScope";
 import { providerHourlyLimit, type SerpRequestPolicy } from "./serpRequestPolicy";
 import type { LeadDiscoveryJob, LeadDiscoveryResult, InsertLeadDiscoveryResult, SerpUsage, LeadDiscoveryConfig } from "@shared/schema";
 import { parseAddressString } from "@shared/utils";
@@ -330,7 +331,7 @@ function siteHost(hostname: string): string {
 }
 
 function sameSite(left: URL, right: URL): boolean {
-  return siteHost(left.hostname) === siteHost(right.hostname);
+  return sameSalonWebsite(left, right);
 }
 
 function siteVariants(url: URL): URL[] {
@@ -532,6 +533,7 @@ export async function crawlWebsite(url: string, options: { runtime?: SalonFetchR
             requestBudget,
             allowedHosts: [base.hostname, base.hostname.replace(/^www\./, ""), `www.${base.hostname.replace(/^www\./, "")}`],
           });
+          if (!sameSite(new URL(response.finalUrl), base)) throw new Error("Website redirected outside this salon's site.");
           pages.push({ url: response.finalUrl, html: response.body });
           options.onPage?.({ url: response.finalUrl, html: response.body });
           visited.add(response.finalUrl);
@@ -614,7 +616,7 @@ export async function crawlWebsite(url: string, options: { runtime?: SalonFetchR
     });
     if (!discovered.length || !result.email || !result.phone) {
       for (const path of usual) {
-        pagesToVisit.push(new URL(path, resolvedBase.origin));
+        pagesToVisit.push(salonRelativePage(resolvedBase, path));
         pagesToVisit.push(new URL(`${path}/`, resolvedBase.origin));
       }
     }

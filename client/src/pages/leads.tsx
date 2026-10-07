@@ -213,7 +213,9 @@ function UploadPanel({ onDone }: { onDone: (id: string) => void }) {
 }
 
 function LeadRowCard({row,onRefresh}:{row:LeadRow;onRefresh:()=>void}) {
+  const [reviewEmail,setReviewEmail]=useState(row.email||row.candidateEmail||"");
   const [sourceUrl,setSourceUrl]=useState(row.sourceUrl||""),[note,setNote]=useState(""),[historical,setHistorical]=useState(false),[identity,setIdentity]=useState(false),[open,setOpen]=useState(false);
+  const [reviewMessage,setReviewMessage]=useState("");
   const [correctionFields,setCorrectionFields]=useState({
     businessName:row.businessName||"",
     address:row.address||"",
@@ -241,7 +243,17 @@ function LeadRowCard({row,onRefresh}:{row:LeadRow;onRefresh:()=>void}) {
   const [scheduleMessage,setScheduleMessage]=useState("");
   const [crmMessage,setCrmMessage]=useState("");
   const eligibility=(row.eligibility as DirectoryEligibility|undefined)??directoryEligibility(row as unknown as EligibilityRow);
-  const emailToApprove=[row.candidateEmail,row.email].map(value=>value?.trim()||"").find(value=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value))||"";
+  const validReviewEmail=/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(reviewEmail.trim());
+  const savedEmail=row.email||row.candidateEmail||"";
+  const processing= row.researchState==="researching"||row.status?.toLowerCase()==="processing";
+  const reviewActionsLocked=Boolean(row.importedContactId)||processing;
+  const emailFieldsLocked=reviewActionsLocked||row.reviewStatus==="approved";
+  const evidenceRecord=row.evidence&&typeof row.evidence==="object"?row.evidence as Record<string,unknown>:undefined;
+  const emailEvidence=evidenceRecord?.email&&typeof evidenceRecord.email==="object"?evidenceRecord.email as Record<string,unknown>:undefined;
+  const outcome=row.sourceData?.Outcome;
+  const manualEmailLabel=outcome==="manually_approved_email"||(emailEvidence?.source==="manual_entry"&&row.reviewStatus==="approved")
+    ?"Manually reviewed"
+    :outcome==="manually_entered_email"||emailEvidence?.source==="manual_entry"?"Manually saved":null;
   const history=useQuery<LeadHistory>({
     queryKey:["/api/leads/rows",row.id,"history",row.importedContactId||null],queryFn:()=>requestJson(`/api/leads/rows/${encodeURIComponent(row.id)}/history`),enabled:open,
   });
@@ -295,11 +307,14 @@ function LeadRowCard({row,onRefresh}:{row:LeadRow;onRefresh:()=>void}) {
     onSuccess:()=>{onRefresh();queryClient.invalidateQueries({queryKey:["/api/leads/rows",row.id,"history"]});},
   });
   const reviewMutation=useMutation({
-    mutationFn:({decision}:{decision:"approved"|"rejected"})=>requestJson(`/api/leads/rows/${encodeURIComponent(row.id)}/review`,{
-      confirmed:true,decision,sourceUrl:sourceUrl.trim(),reviewNote:note.trim()||undefined,
+    mutationFn:({decision,email}:{decision:"approved"|"needs_review"|"rejected";email:string})=>{
+      if(decision!=="rejected"&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) throw new Error("Enter a valid email address before saving or approving.");
+      return requestJson(`/api/leads/rows/${encodeURIComponent(row.id)}/review`,{
+      confirmed:true,decision,email:email.trim(),sourceUrl:sourceUrl.trim(),reviewNote:note.trim()||undefined,
       ...(historical?{historicalEvidenceConfirmed:true}:{}),...(identity?{identityConfirmed:true}:{}),
-    }),
-    onSuccess:onRefresh,
+    });},
+    onSuccess:(_data,variables)=>{setReviewMessage(variables.decision==="approved"?`Email approved: ${variables.email.trim()}.`:variables.decision==="needs_review"?`Email saved for review: ${variables.email.trim()}. It has not been approved or sent.`:"Suggestion rejected.");onRefresh();},
+    onError:()=>setReviewMessage(""),
   });
   const correctionPreviewMutation=useMutation({
     mutationFn:()=>requestJson<CorrectionPreview>(`/api/leads/rows/${encodeURIComponent(row.id)}/correction-preview`,{fields:correctionFields,note:correctionNote.trim()}),
@@ -315,7 +330,7 @@ function LeadRowCard({row,onRefresh}:{row:LeadRow;onRefresh:()=>void}) {
   const sourceData=row.sourceData;
   return <article id={`lead-row-${row.id}`} className="rounded-xl border-2 border-slate-400 bg-card p-4 shadow-sm dark:border-slate-600">
     <div className="flex flex-wrap items-start justify-between gap-3">
-       <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold">{row.businessName}</h3>{researchBadge(row.researchState,row.sourceData?.fullResearchWaitReason)}<Badge variant={row.reviewStatus==="approved"?"default":row.reviewStatus==="rejected"?"destructive":"outline"}>{row.reviewStatus||"needs review"}</Badge>{row.identityMatchStatus&&<Badge variant="secondary">Identity · {row.identityMatchStatus}</Badge>}{!!row.historicalFinding&&<Badge variant="outline">Historical source finding · inspect evidence</Badge>}</div><p className="mt-1 text-sm text-muted-foreground">{[row.address,row.state].filter(Boolean).join(" · ")||"Address not provided"}</p><p className="mt-1 text-xs text-muted-foreground">Added {dateText(row.processedAt)}{row.sourceData?.originalResearchDate?` · Originally researched ${dateText(String(row.sourceData.originalResearchDate))}`:""}{row.category?` · ${row.category}`:""}</p></div>
+       <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold">{row.businessName}</h3>{manualEmailLabel?<Badge variant="secondary">{manualEmailLabel}</Badge>:researchBadge(row.researchState,row.sourceData?.fullResearchWaitReason)}<Badge variant={row.reviewStatus==="approved"?"default":row.reviewStatus==="rejected"?"destructive":"outline"}>{row.reviewStatus||"needs review"}</Badge>{row.identityMatchStatus&&<Badge variant="secondary">Identity · {row.identityMatchStatus}</Badge>}{!!row.historicalFinding&&<Badge variant="outline">Historical source finding · inspect evidence</Badge>}</div><p className="mt-1 text-sm text-muted-foreground">{[row.address,row.state].filter(Boolean).join(" · ")||"Address not provided"}</p><p className="mt-1 text-xs text-muted-foreground">Added {dateText(row.processedAt)}{row.sourceData?.originalResearchDate?` · Originally researched ${dateText(String(row.sourceData.originalResearchDate))}`:""}{row.category?` · ${row.category}`:""}</p></div>
       <Button size="sm" variant="ghost" onClick={()=>setOpen(!open)} aria-expanded={open}>{open?"Close details":"Review details"}<ChevronDown className={`ml-1 h-4 w-4 transition-transform ${open?"rotate-180":""}`}/></Button>
     </div>
     <p className="mt-3 rounded-md bg-muted/60 px-3 py-2 text-sm"><span className="font-medium">Next action · </span>{row.nextAction||"Review source evidence and confirm business identity before approving."}</p>
@@ -324,8 +339,8 @@ function LeadRowCard({row,onRefresh}:{row:LeadRow;onRefresh:()=>void}) {
       importedContactId={row.importedContactId} sourceUrl={row.sourceUrl}/>
     {row.websiteUrl&&<a className="mt-2 inline-flex items-center gap-1 text-sm text-primary underline-offset-4 hover:underline" href={row.websiteUrl} target="_blank" rel="noreferrer">{row.websiteUrl}<ExternalLink className="h-3 w-3"/></a>}
     {open&&<div className="mt-4 space-y-4 border-t-2 border-slate-400 pt-4 dark:border-slate-600">
-      {!row.importedContactId&&row.reviewStatus!=="approved"&&<section className="rounded-lg border-2 border-slate-400 bg-muted/20 p-3 dark:border-slate-600">
-        <div className="flex flex-wrap items-start justify-between gap-2"><div><h4 className="text-sm font-semibold">Staged details</h4><p className="mt-1 text-xs text-muted-foreground">Correct source suggestions before approval. Original uploaded input remains preserved; correction resets identity and email approval.</p></div><Button size="sm" variant="outline" onClick={()=>{if(correctionOpen)cancelCorrection();else{setCorrectionOpen(true);setCorrectionPreview(null);setCorrectionError("");}}}>{correctionOpen?"Cancel correction":"Correct staged details"}</Button></div>
+      {!row.importedContactId&&<section className="rounded-lg border-2 border-slate-400 bg-muted/20 p-3 dark:border-slate-600">
+        <div className="flex flex-wrap items-start justify-between gap-2"><div><h4 className="text-sm font-semibold">Staged details</h4><p className="mt-1 text-xs text-muted-foreground">Use a source-backed correction to change an approved email or other staged details. Original uploaded input remains preserved; confirming a correction resets identity and email approval.</p></div><Button size="sm" variant="outline" onClick={()=>{if(correctionOpen)cancelCorrection();else{setCorrectionOpen(true);setCorrectionPreview(null);setCorrectionError("");}}}>{correctionOpen?"Cancel correction":"Correct staged details"}</Button></div>
         {correctionOpen&&<div className="mt-3 space-y-3">
           <div className="grid gap-3 sm:grid-cols-2">
             <div><Label>Business name</Label><Input value={correctionFields.businessName} onChange={e=>{setCorrectionFields(v=>({...v,businessName:e.target.value}));setCorrectionPreview(null);}}/></div>
@@ -346,7 +361,7 @@ function LeadRowCard({row,onRefresh}:{row:LeadRow;onRefresh:()=>void}) {
           {correctionError&&<Alert variant="destructive"><AlertDescription>{correctionError}</AlertDescription></Alert>}
         </div>}
       </section>}
-      {(row.reviewStatus==="approved"||row.importedContactId)&&<p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">{row.importedContactId?"This lead is linked to a CRM contact and is immutable here. Open Contact to review the record.":"This lead has approved evidence and is immutable in staged corrections."}</p>}
+      {(row.reviewStatus==="approved"||row.importedContactId)&&<p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">{row.importedContactId?"This lead is linked to a CRM contact and is immutable here. Open Contact to review the record.":"This approved email cannot be replaced in email review. Use Correct staged details to preview and confirm a source-backed change; doing so resets identity and email approval."}</p>}
       <section aria-labelledby={`crm-action-${row.id}`} className="rounded-xl border-2 border-primary/30 bg-primary/[0.06] p-4 shadow-sm sm:p-5">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="max-w-2xl">
@@ -363,18 +378,37 @@ function LeadRowCard({row,onRefresh}:{row:LeadRow;onRefresh:()=>void}) {
         {!row.importedContactId&&(row.reviewStatus!=="approved"||eligibility.blocked)&&<p className="mt-3 text-xs font-medium text-amber-900">{row.reviewStatus!=="approved"?"Approve the lead’s email evidence before adding it to Contacts.":"Approve grooming eligibility before adding this lead to Contacts."}</p>}
       </section>
       <div className="grid gap-4 lg:grid-cols-2">
-        <section className="space-y-2 rounded-lg border-2 border-slate-400 bg-card p-3 dark:border-slate-600"><h4 className="text-sm font-semibold">Email & identity review</h4><p className="text-xs leading-5 text-muted-foreground">Email review is independent from a personal name. Inspect the source yourself and confirm the address is a general-contact email for this business. Grooming suitability is reviewed separately below.</p>
-          <div><Label>Source URL <span className="font-normal text-muted-foreground">· optional</span></Label><Input value={sourceUrl} onChange={e=>setSourceUrl(e.target.value)} placeholder="https://business.example/contact"/></div>
-          <div><Label>Review note <span className="font-normal text-muted-foreground">· optional</span></Label><Textarea value={note} onChange={e=>setNote(e.target.value)} placeholder="Describe what you inspected and how it matches the business/location."/></div>
-          <label className="flex items-start gap-2 text-xs"><Checkbox checked={historical} onCheckedChange={v=>setHistorical(v===true)}/><span>Optional confirmation: I inspected the source, matched the business/location, and confirmed this is a general-contact email.</span></label>
-          <label className="flex items-start gap-2 text-xs"><Checkbox checked={identity} onCheckedChange={v=>setIdentity(v===true)}/><span>Optional confirmation: I confirm this source and suggested email belong to this business identity.</span></label>
-          <div className="rounded-lg border-2 border-slate-300 bg-muted/30 p-3 dark:border-slate-700">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Email being approved</p>
-            <p className="mt-1 break-all text-lg font-bold" data-testid="lead-email-approval-target">{emailToApprove||"No email found"}</p>
+        <section className="space-y-3 rounded-lg border-2 border-slate-400 bg-card p-3 dark:border-slate-600"><h4 className="text-sm font-semibold">Email & identity review</h4><p className="text-xs leading-5 text-muted-foreground">Email review is independent from a personal name. Inspect the source yourself and confirm the address is a general-contact email for this business. Grooming suitability is reviewed separately below.</p>
+          <div className="space-y-3 rounded-lg border-2 border-primary/40 bg-primary/[0.06] p-4">
+            <div>
+              <Label htmlFor={`review-email-${row.id}`} className="text-sm font-semibold">Email address <span className="font-normal text-muted-foreground">· paste the manually found address here</span></Label>
+              <p id={`review-email-help-${row.id}`} className="mt-1 text-xs leading-5 text-muted-foreground">Enter the email you verified for this business. The website link belongs in the optional source field below.</p>
+              <Input id={`review-email-${row.id}`} type="email" inputMode="email" autoComplete="off" aria-describedby={`review-email-help-${row.id}`} aria-invalid={reviewEmail.trim().length>0&&!validReviewEmail} value={reviewEmail} onChange={e=>{setReviewEmail(e.target.value);setReviewMessage("");}} placeholder="name@business.com" disabled={emailFieldsLocked||reviewMutation.isPending} className="mt-2 min-h-12 border-2 bg-background text-base"/>
+              <p className="mt-2 text-xs"><span className="font-semibold">Saved on this lead:</span> <span className="break-all" data-testid="lead-email-saved">{savedEmail||"No email saved yet"}</span></p>
+              {reviewEmail.trim()!==savedEmail&&<p role="status" className="mt-1 text-xs font-medium text-amber-800">Unsaved edit — choose Save email for review or Approve email to store this address.</p>}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" disabled={reviewActionsLocked||reviewMutation.isPending||!validReviewEmail||eligibility.blocked} onClick={()=>{setReviewMessage("");reviewMutation.mutate({decision:"approved",email:reviewEmail});}}><Check className="mr-1.5 h-4 w-4"/>Approve email</Button>
+              <Button size="sm" variant="outline" disabled={emailFieldsLocked||reviewMutation.isPending||!validReviewEmail} onClick={()=>{setReviewMessage("");reviewMutation.mutate({decision:"needs_review",email:reviewEmail});}}>Save email for review</Button>
+              <Button size="sm" variant="outline" disabled={reviewActionsLocked||reviewMutation.isPending} onClick={()=>{setReviewMessage("");reviewMutation.mutate({decision:"rejected",email:reviewEmail});}}>Reject suggestion</Button>
+            </div>
+            {!validReviewEmail&&<p role="status" className="text-xs font-medium text-amber-800">Enter a valid email address to save it for review or approve it. Reject remains available.</p>}
+            {eligibility.blocked&&<p className="text-xs text-amber-800">Grooming suitability blocks approval only. You can still save this address for review.</p>}
+            {row.importedContactId&&<p role="status" className="text-xs font-medium text-amber-900">This lead is linked to a contact and cannot be edited here. Open the contact to update its email.</p>}
+            {!row.importedContactId&&processing&&<p role="status" className="text-xs font-medium text-amber-900">Email review is unavailable while this lead is processing.</p>}
+            {!row.importedContactId&&row.reviewStatus==="approved"&&<p role="status" className="text-xs font-medium text-amber-900">This email is already approved and protected from replacement here. Use Correct staged details to change it; same-address approval remains available.</p>}
+            {reviewMessage&&<p role="status" className="rounded-md border border-emerald-700/30 bg-emerald-50 p-2 text-xs font-medium text-emerald-900">{reviewMessage}</p>}
+            {reviewMutation.isError&&<p role="alert" className="rounded-md border-2 border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">Could not save email review: {(reviewMutation.error as Error).message}</p>}
+            <p className="text-[11px] text-muted-foreground">Saving for review does not approve the address, add a contact, or send an email.</p>
           </div>
-          <div className="flex flex-wrap gap-2"><Button size="sm" disabled={reviewMutation.isPending||!emailToApprove||eligibility.blocked} onClick={()=>reviewMutation.mutate({decision:"approved"})}><Check className="mr-1.5 h-4 w-4"/>Approve email</Button><Button size="sm" variant="outline" disabled={reviewMutation.isPending} onClick={()=>reviewMutation.mutate({decision:"rejected"})}>Reject suggestion</Button></div>
-          {!emailToApprove&&<p role="status" className="text-xs font-medium text-amber-800">A usable email address is required before approval.</p>}
-          {eligibility.blocked&&<p className="text-xs text-amber-800">Email approval is blocked until grooming suitability is separately approved.</p>}
+          <div>
+            <Label htmlFor={`review-source-${row.id}`}>Website page where you found it <span className="font-normal text-muted-foreground">· optional</span></Label>
+            <Input id={`review-source-${row.id}`} value={sourceUrl} onChange={e=>{setSourceUrl(e.target.value);setReviewMessage("");}} placeholder="https://..." disabled={emailFieldsLocked||reviewMutation.isPending}/>
+            {/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(sourceUrl.trim())&&<div className="mt-2 rounded-md border border-amber-400 bg-amber-50 p-3 text-xs text-amber-950"><p>This looks like an email address, not a website page. It will not be interpreted or saved as an email automatically.</p><Button type="button" size="sm" variant="outline" className="mt-2" disabled={emailFieldsLocked||reviewMutation.isPending} onClick={()=>{setReviewEmail(sourceUrl.trim());setSourceUrl("");setReviewMessage("Moved into the Email address field. Save your change when ready.");}}>Use this as the email</Button></div>}
+          </div>
+          <div><Label htmlFor={`review-note-${row.id}`}>Review note <span className="font-normal text-muted-foreground">· optional</span></Label><Textarea id={`review-note-${row.id}`} value={note} onChange={e=>setNote(e.target.value)} placeholder="Describe what you inspected and how it matches the business/location." disabled={emailFieldsLocked||reviewMutation.isPending}/></div>
+          <label className="flex items-start gap-2 text-xs"><Checkbox checked={historical} onCheckedChange={v=>setHistorical(v===true)} disabled={emailFieldsLocked||reviewMutation.isPending}/><span>Optional confirmation: I inspected the source, matched the business/location, and confirmed this is a general-contact email.</span></label>
+          <label className="flex items-start gap-2 text-xs"><Checkbox checked={identity} onCheckedChange={v=>setIdentity(v===true)} disabled={emailFieldsLocked||reviewMutation.isPending}/><span>Optional confirmation: I confirm this source and suggested email belong to this business identity.</span></label>
           {!!row.historicalFinding&&<div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950"><b>Historical source finding — inspect evidence</b><pre className="mt-2 whitespace-pre-wrap font-sans">{pretty(row.historicalFinding)}</pre></div>}
           <ContactFormDraft key={`${row.id}:${row.businessName}:${row.address||""}:${row.ownerName?.lookedUpAt||""}:${row.ownerName?.selectedCandidateId||""}:${row.ownerName?.approvedAt||""}:${row.ownerName?.usePersonalName||false}`} rowId={row.id} businessName={row.businessName} address={row.address} ownerSearch={row.ownerName ? {status:row.ownerName.status,lookedUpAt:row.ownerName.lookedUpAt,error:row.ownerName.error}:undefined}/>
         </section>

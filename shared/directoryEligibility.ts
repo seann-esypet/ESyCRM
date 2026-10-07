@@ -66,7 +66,7 @@ export function directoryEligibility(row: EligibilityRow): DirectoryEligibility 
     source["Business Category"] ?? source["Category"] ?? source["category"]);
   // Report workflow labels are not provider business categories.
   const workflow = new Set(["verified_public_email", "review_only", "no_verified_email", "booking_only",
-    "inaccessible", "staged_unverified", "verification_attempted"]);
+    "inaccessible", "staged_unverified", "verification_attempted", "manually_entered_email", "manually_approved_email"]);
   const filteredCategories = categories.filter(category => !workflow.has(category.toLowerCase()));
   const listing: DirectoryListing = {
     categories: filteredCategories,

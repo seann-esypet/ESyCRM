@@ -918,15 +918,32 @@ test("AI Overview retrieval tokens explain missing text without a hidden extra p
     try {
       const result = await lookupSalonOwnerName(row.id, row.userId, 1, 1);
       assert.equal(result?.providerCalls, 1);
-      assert.match(result?.error || "", /not its text.*did not make that extra paid request/);
+      assert.match(result?.notices?.join("; ") || "", /not its text.*did not make that extra paid request/);
+      assert.equal(result?.error,undefined);
+      assert.equal(result?.status,"not_found");
       assert.equal(result?.candidates.length, 0);
       const cached = await lookupSalonOwnerName(row.id, row.userId, 0, 1);
       assert.equal(cached?.providerCalls, 0);
       assert.equal(cached?.error, result?.error);
+      assert.deepEqual(cached?.notices,result?.notices);
       assert.equal(deps.observed.providerAttempts, 1);
       assert.equal(deps.observed.pageAttempts, 0);
     } finally { deps.restore(); }
   });
+});
+
+test("a public salon-specific Google Sites page is checked for owners before spending on organic search",async()=>{
+  const row=orchestrationRow({websiteUrl:"https://sites.google.com/view/curly-tails/home"});
+  const deps=mockDependencies(row,{fetchPage:async url=>matchedPage(url,"Owner: Jane Smith")});
+  try{
+    const result=await lookupSalonOwnerName(row.id,row.userId,0,1);
+    assert.ok(result?.pagesFetched);
+    assert.ok(result?.candidates.some(candidate=>candidate.firstName==="Jane"&&candidate.roleConfirmed&&candidate.businessMatched));
+    assert.equal(result?.providerCalls,0);
+    assert.equal(deps.observed.providerAttempts,0);
+    assert.equal(result?.approvedAt,null);
+    assert.equal(result?.usePersonalName,false);
+  }finally{deps.restore();}
 });
 
 test("a fetched exact-location AI citation can confirm a first-name owner, but never auto-approve or personalize", async () => {

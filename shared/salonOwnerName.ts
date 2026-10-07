@@ -32,8 +32,11 @@ export interface OwnerNameResult {
   providerCalls: number;
   pagesFetched: number;
   error?: string;
+  notices?: string[];
   lookedUpAt?: string;
 }
+
+export const AI_OVERVIEW_TOKEN_NOTICE = "Google supplied an AI Overview retrieval token, not its text. Reading it requires another provider request; the app did not make that extra paid request.";
 
 export const EMPTY_OWNER_NAME_RESULT: OwnerNameResult = {
   status: "not_searched",

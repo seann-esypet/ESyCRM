@@ -1,4 +1,5 @@
 import { lookup } from "node:dns/promises";
+import { hostedSalonPath, sameSalonWebsite, salonRelativePage } from "@shared/salonWebsiteScope";
 import { isIP } from "node:net";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
@@ -6,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import type { SalonEnrichmentRow } from "@shared/schema";
 import {
   EMPTY_OWNER_NAME_RESULT,
+  AI_OVERVIEW_TOKEN_NOTICE,
   isStrongApprovedOwnerCandidate,
   type OwnerNameResult,
   type SalonOwnerNameCandidate,
@@ -638,7 +640,7 @@ function candidatePagePaths(html: string, base: URL): string[] {
   while ((match = hrefPattern.exec(html))) {
     try {
       const target = new URL(match[1], base);
-      if (target.origin !== base.origin || !/(about|team|staff|owner|our-story|meet)/i.test(target.pathname)) continue;
+      if (!sameSalonWebsite(target, base) || !/(about|team|staff|owner|our-story|meet)/i.test(target.pathname)) continue;
       if (!paths.includes(target.pathname + target.search)) paths.push(target.pathname + target.search);
     } catch {
       // Ignore malformed and off-origin links.
@@ -646,7 +648,8 @@ function candidatePagePaths(html: string, base: URL): string[] {
   }
   for (const path of ["/about", "/about-us", "/our-team", "/team", "/meet-the-team"]) {
     if (paths.length >= 5) break;
-    if (!paths.includes(path)) paths.push(path);
+    const relative = salonRelativePage(base, path).pathname;
+    if (!paths.includes(relative)) paths.push(relative);
   }
   return paths;
 }
@@ -656,7 +659,8 @@ function safeOrganicPage(url: string): boolean {
     const parsed = new URL(url);
     if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) return false;
     const host = parsed.hostname.toLocaleLowerCase();
-    const blockedHost = /(^|\.)(?:facebook|instagram|threads|nextdoor|tiktok|x|twitter|linkedin|youtube|google|linktr)\.(?:com|net|ee)$/.test(host) ||
+    const googleSalonSite = host === "sites.google.com" && Boolean(hostedSalonPath(parsed));
+    const blockedHost = !googleSalonSite && /(^|\.)(?:facebook|instagram|threads|nextdoor|tiktok|x|twitter|linkedin|youtube|google|linktr)\.(?:com|net|ee)$/.test(host) ||
       /(^|\.)(?:booksy|vagaro|mindbody|mindbodyonline|square|squareup|fresha|schedulicity|acuityscheduling|setmore|bookeo|timely)\.(?:com|net|site)$/.test(host);
     const blockedPath = /\/(?:login|log-in|signin|sign-in|oauth|auth|book|booking|appointments)(?:\/|$)/i.test(parsed.pathname);
     return !blockedHost && !blockedPath;
@@ -754,9 +758,15 @@ function rowEvidence(row: SalonEnrichmentRow): Record<string, unknown> {
 
 function readOwnerResult(row: SalonEnrichmentRow): OwnerNameResult {
   const candidate = rowEvidence(row).ownerName as OwnerNameResult | undefined;
-  return candidate && typeof candidate === "object"
+  const result = candidate && typeof candidate === "object"
     ? { ...EMPTY_OWNER_NAME_RESULT, ...candidate }
     : { ...EMPTY_OWNER_NAME_RESULT };
+  // Present older saved notices without rewriting records or rerunning research.
+  if (typeof result.error === "string" && result.error.includes(AI_OVERVIEW_TOKEN_NOTICE)) {
+    result.error = result.error.replace(AI_OVERVIEW_TOKEN_NOTICE, "").replace(/^;\s*|\s*;\s*$/g, "").trim() || undefined;
+    result.notices = Array.from(new Set([...(result.notices || []), AI_OVERVIEW_TOKEN_NOTICE]));
+  }
+  return result;
 }
 
 export async function revokeAppliedSalonOwnerName(row: SalonEnrichmentRow): Promise<void> {
@@ -980,7 +990,9 @@ async function inspectPage(
 
 export function ownerLookupWebsiteUrl(row: SalonEnrichmentRow): string | null {
   if (row.websiteUrl?.trim()) {
-    return /^https?:\/\//i.test(row.websiteUrl) ? row.websiteUrl : `https://${row.websiteUrl}`;
+    const candidate = /^https?:\/\//i.test(row.websiteUrl) ? row.websiteUrl : `https://${row.websiteUrl}`;
+    try { return safeOrganicPage(candidate) ? new URL(candidate).href : null; }
+    catch { return null; }
   }
   // Reviewed report rows deliberately have websiteUrl=null. Only a matching,
   // first-party email source may seed a free website inspection. Directory and
@@ -1026,6 +1038,7 @@ async function performLookup(
   }
   const candidates = progress.candidates;
   const errors: string[] = [];
+  const notices: string[] = [];
   const pages = progress.pages;
   const deadline = Date.now() + LOOKUP_TIMEOUT_MS;
   const inspectedUrls = new Set<string>();
@@ -1084,7 +1097,7 @@ async function performLookup(
         if (search.budgetExhausted) continue; // Later cached phrases remain free; no more paid requests.
         break; // No automatic retries, including failures that may have been billed.
       }
-      if (search.notice) errors.push(search.notice);
+      if (search.notice) notices.push(search.notice);
       const organicPages: string[] = [];
       // Summaries suggest candidates only; fetched matched pages establish roles.
       for (const result of prioritizeOwnerResults(row, search.results)) {
@@ -1147,6 +1160,7 @@ async function performLookup(
     providerCalls: progress.calls,
     pagesFetched: pages.count,
     ...(error ? { error } : {}),
+    ...(notices.length ? { notices: Array.from(new Set(notices)) } : {}),
     lookedUpAt: new Date().toISOString(),
   };
   return { ownerName, calls: progress.calls };

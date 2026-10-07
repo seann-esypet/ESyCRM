@@ -1,4 +1,5 @@
 import { mentionsOwnerBusiness } from "@shared/salonOwnerDiscoveryRelevance";
+import { AI_OVERVIEW_TOKEN_NOTICE } from "@shared/salonOwnerName";
 
 export type OwnerSearchResult = {
   title?: string;
@@ -78,7 +79,7 @@ export function parseOwnerSearchResponse(payload: unknown, businessName: string,
   };
   visit(array(overview.text_blocks));
   const notice = !array(overview.text_blocks).length && string(overview.page_token)
-    ? "Google supplied an AI Overview retrieval token, not its text. Reading it requires another provider request; the app did not make that extra paid request."
+    ? AI_OVERVIEW_TOKEN_NOTICE
     : undefined;
   return { results, ...(notice ? { notice } : {}) };
 }

@@ -178,7 +178,7 @@ async function contactFormDraftUiCase(origin) {
     if(mobile){await evaluate(`document.querySelector('button[aria-label="Collapse sidebar"]')?.click()`);await until(`document.querySelector('button[aria-label="Expand sidebar"]')`,"collapsed sidebar");}
     await click("Review details",article);await until(panel,"draft panel");
     assert.equal(await evaluate(`${button("Approve email",article)}.disabled`),true);
-    assert.equal(await evaluate(`${article}.innerText.includes('No email found')`),true);
+    assert.equal(await evaluate(`document.getElementById('review-email-fixture-form-row').value`),"");
     assert.equal(await evaluate(`${article}.querySelectorAll('input[required], textarea[required]').length`),0);
     await click("Build a draft",panel);
     await until(`${panel}.querySelector('[role="combobox"]')`,"saved message choice");
@@ -211,9 +211,27 @@ async function contactFormDraftUiCase(origin) {
   await until(`${panel}.querySelector('[role="combobox"]')`,"unsearched draft tool");
   assert.equal(await evaluate(`${button("Generate draft",panel)}.disabled`),true);
   assert.equal(await evaluate(`${panel}.innerText.includes('Run the owner search')`),true);
-  target.email="team@fixture.example";
+  target.email=null;
   await send("Page.navigate",{url:origin+"/leads/"+batch.id});await until("document.querySelector('article')","email now present");
   await click("Review details",article);
+  await evaluate(`(()=>{const e=Array.from(${article}.querySelectorAll('input')).find(e=>e.placeholder.startsWith('https://'));Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'team@fixture.example');e.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+  await until(`${article}.innerText.includes('Use this as the email')`,"misplaced email recovery");
+  await click("Use this as the email",article);
+  await until(`document.getElementById('review-email-fixture-form-row').value==='team@fixture.example'`,"email moved into correct field");
+  assert.equal(await evaluate(`Array.from(${article}.querySelectorAll('input')).find(e=>e.placeholder.startsWith('https://')).value`),"");
+  await click("Save email for review",article);
+  await until(`${article}.innerText.includes('Manually saved')`,"manual save without approval");
+  assert.equal(target.reviewStatus,"needs_review");
+  assert.equal(target.evidence.email.source,"manual_entry");
+  await send("Page.navigate",{url:origin+"/leads/"+batch.id});await until("document.querySelector('article')","saved email survives reload");
+  await click("Review details",article);
+  assert.equal(await evaluate("document.getElementById('review-email-fixture-form-row').value"),"team@fixture.example");
+  for(const [label,width,height,mobile] of [["desktop",1365,950,false],["mobile",402,874,true]]){
+    await send("Emulation.setDeviceMetricsOverride",{width,height,deviceScaleFactor:1,mobile});
+    await evaluate("document.getElementById('review-email-fixture-form-row').closest('section').scrollIntoView({block:'start'})");await pause(200);
+    assert.equal(await evaluate("document.documentElement.scrollWidth>window.innerWidth"),false);
+    await send("Page.captureScreenshot",{format:"jpeg",quality:75}).then(r=>writeFile(`reports/workflow-fixtures/${role}-email-review-${label}.jpg`,Buffer.from(r.data,"base64")));
+  }
   assert.equal(await evaluate(`${button("Approve email",article)}.disabled`),false,"blank optional review fields cannot block an actual email");
   await click("Approve email",article);
   await until(`${article}.innerText.includes('approved')`,"deliberate manual email approval");
@@ -750,7 +768,11 @@ async function api(url,method,body) {
   if(row&&method==="POST"){
     assert.equal(body.confirmed,true);
     if(url.pathname.endsWith("/review")){
-      const evidence=historicalApprovalEvidence(row,body);row.email=evidence.value;row.identityMatchStatus="strong";row.reviewStatus="approved";row.status="enriched";row.evidence={...row.evidence,email:evidence,ownerName:fixtureOwnerName(row.businessName)};
+      const reviewed=historicalApprovalEvidence(row,body);
+      const evidence=body.decision==="needs_review"?{...reviewed,source:"manual_entry",confidence:"manual",fetchedAt:null,reviewedAt:null}:reviewed;
+      row.email=evidence.value;row.identityMatchStatus="strong";row.reviewStatus=body.decision;row.status="enriched";
+      row.sourceData={...row.sourceData,Outcome:body.decision==="needs_review"?"manually_entered_email":"manually_approved_email"};
+      row.evidence={...row.evidence,email:evidence,ownerName:row.id==="fixture-form-row"?row.evidence.ownerName:fixtureOwnerName(row.businessName)};
       writes.push("review");return row;
     }
     if(url.pathname.endsWith("/crm")){

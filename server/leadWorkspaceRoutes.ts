@@ -239,17 +239,24 @@ export function registerLeadWorkspaceRoutes(app: Express, auth: RequestHandler,
     if (row.status === "processing") throw new Error("Wait for this business's research to finish before changing its review.");
     if (row.importedContactId) throw new Error("This lead is already linked. Review changes on its contact without overwriting approved evidence.");
     const decision = req.body.decision;
-    if (!["approved", "rejected"].includes(decision)) throw new Error("Choose approve or reject.");
+    if (!["approved", "needs_review", "rejected"].includes(decision)) throw new Error("Choose save for review, approve or reject.");
     if (decision === "rejected") return storage.updateSalonEnrichmentRow(row.id, { reviewStatus: "rejected" }, row.userId);
-    if (directoryEligibility(row).blocked) throw new Error("Confirm grooming suitability through its independent review before approving this email.");
-    const email = historicalApprovalEvidence(row, req.body);
+    if (row.reviewStatus === "approved" && (decision === "needs_review" ||
+      typeof req.body.email === "string" && req.body.email.trim().toLowerCase() !== (row.email || "").trim().toLowerCase())) {
+      throw new Error("This email is already approved. Use the source-correction review to change an approved address.");
+    }
+    const eligibility = directoryEligibility(row);
+    if (decision === "approved" && eligibility.blocked) throw new Error("Confirm grooming suitability through its independent review before approving this email.");
+    const reviewedEmail = historicalApprovalEvidence(row, req.body);
+    const email = decision === "needs_review" ? { ...reviewedEmail, source: "manual_entry", confidence: "manual",
+      fetchedAt: null, reviewedAt: null, identityConfirmed: false, sourceInspected: false } : reviewedEmail;
     const evidence = { ...directoryObject(row.evidence), email };
     const updated = await storage.updateSalonEnrichmentRow(row.id, {
-      email: email.value, evidence, identityMatchStatus: "strong", reviewStatus: "approved", status: "enriched",
-      sourceData: { ...directoryObject(row.sourceData), Outcome: email.source === "manual_approval" ? "manually_approved_email" : String(leadView(row).historicalFinding).includes("directory") || directoryObject(directoryObject(row.evidence).email).source === "public_directory" ? "verified_independent_directory_email" : "verified_first_party_email", category: email.source === "manual_approval" ? "manually_approved_email" : "verified_public_email",
+      email: email.value, evidence, identityMatchStatus: decision === "approved" ? "strong" : row.identityMatchStatus, reviewStatus: decision, status: "enriched",
+      sourceData: { ...directoryObject(row.sourceData), Outcome: decision === "needs_review" ? eligibility.blocked ? directoryObject(row.sourceData).Outcome : "manually_entered_email" : email.source === "manual_approval" ? "manually_approved_email" : String(leadView(row).historicalFinding).includes("directory") || directoryObject(directoryObject(row.evidence).email).source === "public_directory" ? "verified_independent_directory_email" : "verified_first_party_email", category: decision === "needs_review" ? eligibility.blocked ? directoryObject(row.sourceData).category : "manually_entered_email" : email.source === "manual_approval" ? "manually_approved_email" : "verified_public_email",
         reviewHistory: [...(Array.isArray(directoryObject(row.sourceData).reviewHistory) ? directoryObject(row.sourceData).reviewHistory as any[] : []),
           { at:new Date().toISOString(),actor:req.user.claims.sub,previousEvidence:directoryObject(row.evidence).email||null,previousReviewStatus:row.reviewStatus }],
-        reviewDecision: { at: new Date().toISOString(), actor: req.user.claims.sub, note: req.body.reviewNote } },
+        reviewDecision: { at: new Date().toISOString(), actor: req.user.claims.sub, decision, note: req.body.reviewNote } },
     }, row.userId);
     await storage.refreshSalonEnrichmentBatchCounts(row.batchId, row.userId);
     return updated;

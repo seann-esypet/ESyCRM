@@ -7,10 +7,16 @@ The user requested that all fields in the pictured Leads email/identity and groo
 
 **Why:** The user asked.
 
-**How to apply:** Do not reintroduce mandatory notes, source entry or checkmarks for those deliberate review actions. An actual usable email must still exist to approve an email; without one, clearly show “No email found.” Optional inputs do not eliminate the explicit approval action, independent grooming decision, owner-evidence requirements or confirmations for paid research, imports and scheduling elsewhere.
+**How to apply:** Do not reintroduce mandatory notes, source entry or checkmarks for those deliberate review actions. An actual usable email must still exist to approve an email; without one, clearly show that no email is saved. Optional inputs do not eliminate the explicit approval action, independent grooming decision, owner-evidence requirements or confirmations for paid research, imports and scheduling elsewhere.
 
 Approvals without source-inspection evidence must remain distinguishable from publicly verified findings.
 
 **Why:** Removing form requirements must not fabricate verification or erase what was actually checked.
 
 **How to apply:** Keep manual approval clearly separate from public-source verification and retain prior evidence for review; do not silently count blank fields as inspected sources.
+
+Salespeople must have a clearly labeled email-entry field separate from the optional website-source link and notes.
+
+**Why:** The user found a public email but could not tell where to enter it, pasted it into the URL and note fields, and could not approve it.
+
+**How to apply:** Make the actual email prominent; distinguish saving for later review from deliberate approval. Neither action authorizes outreach or owner-name assumptions. Explain that the source field takes a webpage link, and offer explicit correction when an email is pasted there rather than silently treating it as source evidence.

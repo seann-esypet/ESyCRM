@@ -94,7 +94,13 @@ export function salonEmailHtmlContextRestriction(email: string, html: string): s
       if (!blocks.has(parent.tag)) continue;
       const labels = parent.children.filter(child => {
         const text = flatten(child, true);
+        const plain = text.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ");
+        // Opening hours in another section do not designate this mailbox.
+        // Keep explicit email/booking/client restrictions, even inside hours.
+        const openingHoursOnly = /\b(?:opening|business|operating|office)\s+hours\b|\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(plain)
+          && !/\b(?:e-?mail|mailbox|inbox|bookings?|reservations?|requests?|clients?|customers?|vaccination|records?|paperwork)\b/i.test(plain);
         return !/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i.test(text) &&
+          !openingHoursOnly &&
           (/^(?:h[1-6]|label|legend)$/.test(child.tag) || Boolean(salonEmailContextRestriction(text)));
       }).map(child => flatten(child, true));
       context += ` ${flatten(parent, false)} ${labels.join(" ")}`;

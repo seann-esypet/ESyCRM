@@ -107,7 +107,7 @@ export function OwnerNameReview({
   const candidates = storedCandidates.filter(candidate => relevantOwnerCandidate(candidate, businessName));
   const unrelatedCandidatesHidden = storedCandidates.length - candidates.length;
   const lookupError = ownerName?.error && /timeout|timed out|aborted.*time\s*out/i.test(ownerName.error)
-    ? "The owner lookup timed out before completing. Your reviewed email is unchanged. Retry later; a retry may use another lookup credit."
+    ? "The last owner search did not finish: the provider response took too long. This is not proof that the business has no owner contact. Your saved email is unchanged. Retry later; a new request may use another lookup credit."
     : ownerName?.error;
   const selectedCandidate = candidates.find(candidate => candidate.id === candidateId);
   const canApprove = Boolean(selectedCandidate?.roleConfirmed && selectedCandidate.businessMatched &&
@@ -122,7 +122,7 @@ export function OwnerNameReview({
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <h4 className="text-sm font-semibold">Owner / addressee</h4>
-              <Badge variant={approved ? "default" : "outline"}>{approved ? "Owner approved" : candidates.length ? "Unverified candidates" : unrelatedCandidatesHidden > 0 ? "No matching candidates" : (ownerName?.status ?? "not_searched").replaceAll("_", " ")}</Badge>
+               <Badge variant={approved ? "default" : "outline"}>{approved ? "Owner approved" : candidates.length ? "Unverified candidates" : unrelatedCandidatesHidden > 0 ? "No matching candidates" : ownerName?.status === "failed" ? "Last search incomplete" : (ownerName?.status ?? "not_searched").replaceAll("_", " ")}</Badge>
               {candidates.length > 0 && <Badge variant="secondary">{candidates.length} candidate{candidates.length === 1 ? "" : "s"}</Badge>}
               {onSelectedForBatchChange && canSearch && <label className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
                 <Checkbox checked={selectedForBatch} onCheckedChange={value => onSelectedForBatchChange(value === true)} aria-label={`Select ${businessName} for owner search`} />
@@ -140,7 +140,8 @@ export function OwnerNameReview({
       </div>
       {canSearch && ownerName && ownerName.status !== "not_searched" && <p className="mt-2 text-[11px] leading-5 text-muted-foreground">Retrying resets owner approval. If a name previously applied by this search is still unchanged, it may revert; manually edited contact names are preserved. Email review status is unaffected.</p>}
       {searchMutation.isPending && <p role="status" className="mt-3 rounded-md border-2 border-slate-400 bg-background p-3 text-sm dark:border-slate-600">Checking business pages and, if needed, the search provider. Please wait for this lookup to finish before retrying.</p>}
-      {!searchMutation.isPending && lookupError && <Alert variant="destructive" className="mt-3 border-2 border-red-400 dark:border-red-600"><AlertTriangle className="h-4 w-4" /><AlertDescription>{lookupError}</AlertDescription></Alert>}
+      {!searchMutation.isPending && lookupError && <Alert className="mt-3 border-2 border-amber-500 bg-amber-50 text-amber-950 dark:bg-amber-950/20 dark:text-amber-100"><AlertTriangle className="h-4 w-4" /><AlertDescription>{lookupError}</AlertDescription></Alert>}
+      {!!ownerName?.notices?.length && <details className="mt-3 rounded-md border-2 border-slate-400 bg-background p-3 text-xs"><summary className="cursor-pointer font-semibold">Optional Google AI text was not retrieved</summary><p className="mt-2">Google supplied a retrieval token instead of readable AI text. Reading it needs another provider request, which was not made. This notice is separate from normal search results and business-page checks.</p></details>}
       {ownerName && <p className="mt-2 text-[11px] text-muted-foreground">Lookup usage · {ownerName.providerCalls} provider call{ownerName.providerCalls === 1 ? "" : "s"} · {ownerName.pagesFetched} pages{ownerName.lookedUpAt ? ` · ${new Date(ownerName.lookedUpAt).toLocaleString()}` : ""}</p>}
       {unrelatedCandidatesHidden > 0 && <p className="mt-2 text-xs text-muted-foreground">Unrelated search-result suggestions have been hidden. They did not mention {businessName}. No saved contact name was changed.</p>}
 

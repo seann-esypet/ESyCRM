@@ -416,7 +416,8 @@ test("a site-builder image beside grooming copy is not a booking link", async ()
     globalThis.fetch = async () => new Response(`<body><h1>Felix's Pet Grooming</h1>
       <p>Book your grooming appointment by calling 323-585-2670.</p>
       <img src="https://sites.google.com/sitesv-images-rt/image-id">
-      <p>felixdoggrooming@gmail.com</p></body>`, {
+      <section><h2>Opening Hours</h2><p>Monday – Appointment Only</p></section>
+      <section><h2>Contact</h2><p>felixdoggrooming@gmail.com</p></section></body>`, {
       headers: { "content-type": "text/html" },
     });
     const result = await crawlWebsite("https://sites.google.com/view/felixspetgrooming/home", { runtime: mockedSalonRuntime() });

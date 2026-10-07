@@ -98,15 +98,17 @@ export function leadView(row: SalonEnrichmentRow) {
   return { ...row, candidateEmail: candidateEmail || null, sourceUrl: sourceUrl || null,
     evidenceNote: String(evidence.originalNotes || raw.notes || source["Evidence and exceptions"] || directoryObject(source.uploadedFields).notes || evidence.note || ""),
     historicalFinding: source.historicalFinding || (source.stagingState !== "staged_unverified" && source.Outcome?.toString().startsWith("verified_") ? source.Outcome : null),
-    category: source.category || (row.email ? "verified_public_email" : candidateEmail ? "review_only" : "no_verified_email"),
+    category: source.category || (directoryObject(evidence.email).source === "manual_entry" ? "manually_entered_email" : directoryObject(evidence.email).source === "manual_approval" ? "manually_approved_email" : row.email ? "verified_public_email" : candidateEmail ? "review_only" : "no_verified_email"),
     nextAction, eligibility,
   };
 }
 export function historicalApprovalEvidence(row: SalonEnrichmentRow, input: Record<string, unknown>) {
   const view = leadView(row);
-  const candidate = (row.email || view.candidateEmail || "").trim().toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(candidate) || salonEmailDomainRestriction(candidate)) throw new Error("A usable business email is required; restricted service addresses cannot be approved.");
+  if (input.email !== undefined && typeof input.email !== "string") throw new Error("Enter the email address as text.");
+  const candidate = (typeof input.email === "string" ? input.email : row.email || view.candidateEmail || "").trim().toLowerCase();
+  if (candidate.length > 254 || /[<>:,;]/.test(candidate) || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(candidate) || salonEmailDomainRestriction(candidate)) throw new Error("A usable business email is required; restricted service addresses cannot be saved or approved.");
   const sourceUrl = String(typeof input.sourceUrl === "string" ? input.sourceUrl : view.sourceUrl || "").trim();
+  if (sourceUrl.length > 2000) throw new Error("The website source link must be at most 2,000 characters.");
   if (sourceUrl) {
     let url: URL;
     try { url = new URL(sourceUrl); } catch { throw new Error("If supplied, the source must be a valid public HTTPS URL."); }
