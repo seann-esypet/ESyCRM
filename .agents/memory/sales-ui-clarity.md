@@ -32,3 +32,9 @@ Salespeople should use one Leads workflow whether businesses came from an intern
 **Why:** The user cannot remember whether to use Lead Discovery, Upload Salon List, or Sales Lead Review, and expects hired salespeople to understand the CRM without knowing how a research file was produced.
 
 **How to apply:** Keep technical format recognition behind Search for Businesses and Upload a List. Review evidence, approve, add to CRM, and confirm a sequence separately; never introduce another salesperson-facing importer.
+
+Missing verified emails must be prominent, not small metadata beside the date.
+
+**Why:** The user asked for “no_verified_email” to be highlighted in a larger font after previously requesting prominent contact and email information.
+
+**How to apply:** Give missing-email status a clear, readable label and visual emphasis in the lead header. Do not imply that completed research found an email or change research/review status merely for presentation.

@@ -163,6 +163,26 @@ async function fullResearchUiCase(origin){
     await send("Page.captureScreenshot",{format:"jpeg",quality:65}).then(r=>writeFile(`reports/workflow-fixtures/${role}-full-research-${label}.jpg`,Buffer.from(r.data,"base64")));
   }
 }
+async function missingEmailHighlightUiCase(origin) {
+  writes.length=0;
+  const batch={id:"fixture-missing-email",name:"Missing email fixture",status:"completed",totalRows:1,createdAt:new Date().toISOString()};
+  const target={...unifiedUploadRow({Business:"Fixture Grooming",Address:"123 Main Street Austin TX",State:"TX"},0,"fixture-owner"),
+    id:"fixture-missing-email-row",batchId:batch.id,status:"enriched",reviewStatus:"needs_review",identityMatchStatus:"strong",
+    sourceData:{category:"no_verified_email",Outcome:"no_verified_email"}};
+  rows=[target];batches=[batch];
+  for(const [label,width,height,mobile] of [["desktop",1365,900,false],["mobile",402,874,true]]){
+    await send("Emulation.setDeviceMetricsOverride",{width,height,deviceScaleFactor:1,mobile});
+    await send("Page.navigate",{url:origin+"/leads/"+batch.id});
+    await until("document.querySelector('[data-testid=\"lead-no-verified-email\"]')","missing email highlight");
+    if(mobile)await evaluate("document.querySelector('button[aria-label=\"Collapse sidebar\"]')?.click()");
+    await evaluate("document.querySelector('article').scrollIntoView({block:'start'})");await pause(150);
+    const visual=await evaluate(`(()=>{const e=document.querySelector('[data-testid="lead-no-verified-email"]'),s=getComputedStyle(e);return {text:e.textContent,fontSize:parseFloat(s.fontSize),weight:Number(s.fontWeight),border:parseFloat(s.borderTopWidth),background:s.backgroundColor,overflow:document.documentElement.scrollWidth>innerWidth,raw:document.querySelector('article').innerText.includes('no_verified_email')}})()`);
+    assert.equal(visual.text,"No verified email");assert.ok(visual.fontSize>=16);assert.ok(visual.weight>=600);assert.ok(visual.border>=2);
+    assert.notEqual(visual.background,"rgba(0, 0, 0, 0)");assert.equal(visual.raw,false);assert.equal(visual.overflow,false);
+    await send("Page.captureScreenshot",{format:"jpeg",quality:75}).then(r=>writeFile(`reports/workflow-fixtures/${role}-missing-email-${label}.jpg`,Buffer.from(r.data,"base64")));
+  }
+  assert.deepEqual(writes,[],"highlight must not change records or start research");
+}
 async function contactFormDraftUiCase(origin) {
   writes.length=0;
   const batch={id:"fixture-form-draft",name:"Contact form draft fixture",status:"completed",totalRows:1,createdAt:new Date().toISOString()};
@@ -831,6 +851,10 @@ try {
       await groomingUiCase(origin);
       continue;
     }
+    if(process.argv.includes("--missing-email-only")){
+      await missingEmailHighlightUiCase(origin);
+      continue;
+    }
     if(process.argv.includes("--contact-form-only")){
       await contactFormDraftUiCase(origin);
       continue;
@@ -888,7 +912,8 @@ try {
     await researchedRowsUiCase(origin);
   }
   assert.deepEqual(errors,[]);
-   console.log(process.argv.includes("--contact-form-only") ?
+   console.log(process.argv.includes("--missing-email-only") ? "PASS: prominent missing-email label, 16px bold text, highlighted background, thick border and no overflow on desktop/mobile for administrator/salesperson. No mutations; all API traffic intercepted." :
+    process.argv.includes("--contact-form-only") ?
     "PASS: optional review fields, no-email approval disabled, owner attempt shown before drafting, saved-message generation, team fallback, editing/copying, clipboard failure, unsearched gating and no submit/send/enrollment. Administrator/salesperson desktop/mobile; every API intercepted." :
     process.argv.includes("--grooming-only") ?
     "PASS: exact-business grooming Yes/No/Unknown, inspectable sources, separate unverified Google AI answers, prominent contact and email, darker/thicker borders, approved/unverified states and corrected-address protection. Administrator/salesperson desktop/mobile; all APIs intercepted and zero writes." :
