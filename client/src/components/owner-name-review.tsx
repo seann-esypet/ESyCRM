@@ -24,6 +24,7 @@ async function jsonRequest<T>(method: string, url: string, body?: unknown): Prom
 
 type Props = {
   rowId: string;
+  contactId?: string;
   businessName: string;
   ownerName?: OwnerNameResult | null;
   contactName?: ContactName | null;
@@ -34,7 +35,7 @@ type Props = {
 };
 
 export function OwnerNameReview({
-  rowId, businessName, ownerName, contactName, canSearch = true,
+  rowId, contactId, businessName, ownerName, contactName, canSearch = true,
   selectedForBatch = false, onSelectedForBatchChange, sequences = [],
 }: Props) {
   const { toast } = useToast();
@@ -45,7 +46,8 @@ export function OwnerNameReview({
   const [previewOpen, setPreviewOpen] = useState(false);
   const [estimate, setEstimate] = useState<Estimate | null>(null);
   const [confirmSearch, setConfirmSearch] = useState(false);
-  const [searchesPerRow, setSearchesPerRow] = useState<SearchesPerRow>(1);
+  const [searchesPerRow, setSearchesPerRow] = useState<SearchesPerRow>(contactId ? 3 : 1);
+  const contactEndpoint = contactId ? `/api/contacts/${contactId}/owner-name` : null;
 
   useEffect(() => {
     setCandidateId(ownerName?.selectedCandidateId ?? "");
@@ -59,10 +61,13 @@ export function OwnerNameReview({
     queryClient.invalidateQueries({ queryKey: ["/api/salon-search-report"] });
     queryClient.invalidateQueries({ queryKey: ["/api/salon-enrichment/batches"] });
     queryClient.invalidateQueries({ queryKey: ["/api/contacts"] });
+    if (contactId) queryClient.invalidateQueries({ queryKey: ["/api/deal-workspace"] });
     queryClient.invalidateQueries({ queryKey: ["/api/salon-owner-names/rows"] });
   };
   const estimateMutation = useMutation({
-    mutationFn: (count: SearchesPerRow) => jsonRequest<Estimate>("POST", "/api/salon-owner-names/estimate", { rowIds: [rowId], searchesPerRow: count }),
+    mutationFn: (count: SearchesPerRow) => jsonRequest<Estimate>("POST",
+      contactEndpoint ? `${contactEndpoint}/estimate` : "/api/salon-owner-names/estimate",
+      contactEndpoint ? { searchesPerRow: count } : { rowIds: [rowId], searchesPerRow: count }),
     onSuccess: data => { setEstimate(data); setConfirmSearch(true); },
     onError: error => toast({ title: "Could not estimate owner lookup", description: (error as Error).message, variant: "destructive" }),
   });
@@ -70,13 +75,14 @@ export function OwnerNameReview({
     mutationFn: () => {
       if (!estimate || estimate.searchesPerRow !== searchesPerRow || !confirmSearch) throw new Error("The owner-search estimate is out of date. Request a fresh estimate before confirming.");
       if (!Number.isInteger(estimate.maxProviderCalls) || estimate.maxProviderCalls < 0 || estimate.maxProviderCalls > searchesPerRow) throw new Error("The estimated provider-call cap is invalid. Request a fresh estimate.");
-      return jsonRequest<{ results: { rowId: string; ownerName: OwnerNameResult }[]; callsUsed?: number }>("POST", "/api/salon-owner-names/search", {
-        rowIds: [rowId], searchesPerRow, maxProviderCalls: estimate.maxProviderCalls, confirmed: true,
+      return jsonRequest<{ results: { rowId: string; ownerName: OwnerNameResult }[]; callsUsed?: number }>("POST",
+        contactEndpoint ? `${contactEndpoint}/search` : "/api/salon-owner-names/search", {
+        ...(contactEndpoint ? {} : { rowIds: [rowId] }), searchesPerRow, maxProviderCalls: estimate.maxProviderCalls, confirmed: true,
       });
     },
     onSuccess: data => {
       setConfirmSearch(false); setEstimate(null); refresh();
-      const result = data.results.find(item => item.rowId === rowId)?.ownerName;
+      const result = (contactId ? data.results[0] : data.results.find(item => item.rowId === rowId))?.ownerName;
       toast(result?.status === "failed" || result?.error
         ? { title: "Owner search could not finish", description: `${data.callsUsed ?? "Actual call count unavailable"} provider calls used. ${result.error || "No source-backed owner result was obtained. You can retry later."}`, variant: "destructive" }
         : { title: "Owner search complete", description: `${data.callsUsed ?? "Actual call count unavailable"} provider calls used. ${result?.candidates.length ? "Review the source-backed candidates below." : "No confirmed owner was found. Business-name greetings remain available."}` });
@@ -84,13 +90,28 @@ export function OwnerNameReview({
     onError: error => { refresh(); toast({ title: "Owner search failed", description: (error as Error).message, variant: "destructive" }); },
   });
   const reviewMutation = useMutation({
-    mutationFn: ({ candidateId: id, decision }: { candidateId: string; decision: "approved" | "rejected" }) =>
-      jsonRequest("PATCH", `/api/salon-owner-names/rows/${rowId}/review`, { candidateId: id, decision, usePersonalName }),
-    onSuccess: () => { refresh(); toast({ title: "Owner review saved" }); },
-    onError: error => toast({ title: "Could not save owner review", description: (error as Error).message, variant: "destructive" }),
+    mutationFn: async ({ candidateId: id, decision }: { candidateId: string; decision: "approved" | "rejected" }) => {
+      await jsonRequest("PATCH", contactEndpoint ? `${contactEndpoint}/review` : `/api/salon-owner-names/rows/${rowId}/review`, { candidateId: id, decision, usePersonalName });
+      if (contactEndpoint && decision === "approved") {
+        await jsonRequest("POST", `${contactEndpoint}/apply`, { overwriteExisting: false, usePersonalName });
+      }
+    },
+    onSuccess: (_, input) => {
+      refresh();
+      toast({ title: contactId && input.decision === "approved" ? "Name saved to Contact" : "Owner review saved",
+        description: contactId && input.decision === "approved"
+          ? usePersonalName ? "Future sequence emails will use this person's first name." : "The name is saved. Emails will keep the business-name greeting."
+          : undefined });
+    },
+    onError: error => {
+      refresh();
+      const message = (error as Error).message;
+      if (contactId && message.includes("already has a manual name")) setOverwriteDialog(true);
+      else toast({ title: "Could not save owner review", description: message, variant: "destructive" });
+    },
   });
   const applyMutation = useMutation({
-    mutationFn: (overwriteExisting: boolean) => jsonRequest("POST", `/api/salon-owner-names/rows/${rowId}/apply`, { overwriteExisting, usePersonalName }),
+    mutationFn: (overwriteExisting: boolean) => jsonRequest("POST", contactEndpoint ? `${contactEndpoint}/apply` : `/api/salon-owner-names/rows/${rowId}/apply`, { overwriteExisting, usePersonalName }),
     onSuccess: () => { setOverwriteDialog(false); refresh(); toast({ title: "Approved name applied", description: "The linked contact was updated explicitly." }); },
     onError: error => {
       const message = (error as Error).message;
@@ -138,7 +159,9 @@ export function OwnerNameReview({
           </Button>}
         </div>
       </div>
-      {canSearch && ownerName && ownerName.status !== "not_searched" && <p className="mt-2 text-[11px] leading-5 text-muted-foreground">Retrying resets owner approval. If a name previously applied by this search is still unchanged, it may revert; manually edited contact names are preserved. Email review status is unaffected.</p>}
+      {canSearch && ownerName && ownerName.status !== "not_searched" && <p className="mt-2 text-[11px] leading-5 text-muted-foreground">{contactId
+        ? "Retrying refreshes the research evidence. Your saved Contact name and email greeting stay unchanged until you explicitly save a reviewed name. Email review status is unaffected."
+        : "Retrying resets owner approval. If a name previously applied by this search is still unchanged, it may revert; manually edited contact names are preserved. Email review status is unaffected."}</p>}
       {searchMutation.isPending && <p role="status" className="mt-3 rounded-md border-2 border-slate-400 bg-background p-3 text-sm dark:border-slate-600">Checking business pages and, if needed, the search provider. Please wait for this lookup to finish before retrying.</p>}
       {!searchMutation.isPending && lookupError && <Alert className="mt-3 border-2 border-amber-500 bg-amber-50 text-amber-950 dark:bg-amber-950/20 dark:text-amber-100"><AlertTriangle className="h-4 w-4" /><AlertDescription>{lookupError}</AlertDescription></Alert>}
       {!!ownerName?.notices?.length && <details className="mt-3 rounded-md border-2 border-slate-400 bg-background p-3 text-xs"><summary className="cursor-pointer font-semibold">Optional Google AI text was not retrieved</summary><p className="mt-2">Google supplied a retrieval token instead of readable AI text. Reading it needs another provider request, which was not made. This notice is separate from normal search results and business-page checks.</p></details>}
@@ -182,14 +205,16 @@ export function OwnerNameReview({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button size="sm" onClick={() => selectedCandidate && reviewMutation.mutate({ candidateId: selectedCandidate.id, decision: "approved" })} disabled={!canApprove || reviewMutation.isPending}>
-            <Check className="mr-1.5 h-3.5 w-3.5" />Approve selected owner
+            <Check className="mr-1.5 h-3.5 w-3.5" />{reviewMutation.isPending ? "Saving…" : contactId ? usePersonalName ? "Save name & use in emails" : "Save name to Contact" : "Approve selected owner"}
           </Button>
           <Button size="sm" variant="outline" onClick={() => selectedCandidate && reviewMutation.mutate({ candidateId: selectedCandidate.id, decision: "rejected" })} disabled={!selectedCandidate || reviewMutation.isPending}>Reject selected</Button>
-          {approved && <Button size="sm" variant="outline" onClick={() => applyMutation.mutate(false)} disabled={applyMutation.isPending || !contactName}>
+          {approved && !contactId && <Button size="sm" variant="outline" onClick={() => applyMutation.mutate(false)} disabled={applyMutation.isPending || !contactName}>
             Apply to linked contact
           </Button>}
         </div>
-        {approved && <p className="text-[11px] text-muted-foreground">Approval does not modify a contact. Apply is separate. Personal salutation uses the approved first name; a verified surname remains on the contact, and an unknown surname stays blank.</p>}
+        {contactId
+          ? <p className="text-xs text-muted-foreground">Choose “Approved first name” to personalize sequence emails, then save the name to this Contact. Search alone never changes a saved name or sends an email.</p>
+          : approved && <p className="text-[11px] text-muted-foreground">Approval does not modify a contact. Apply is separate. Personal salutation uses the approved first name; a verified surname remains on the contact, and an unknown surname stays blank.</p>}
       </div>}
       {overwriteDialog && <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950" role="alert">
         <p className="font-semibold">This contact already has a name</p>

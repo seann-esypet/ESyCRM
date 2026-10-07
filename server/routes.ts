@@ -39,6 +39,7 @@ import { canApproveSalonReportRow, convertSalonSearchReportEntry, reportPlaceIds
 import { directoryEligibility, directoryEligibilitySummary } from "@shared/directoryEligibility";
 import { registerDirectoryEligibilityRoutes } from "./directoryEligibilityRoutes";
 import { registerLeadWorkspaceRoutes } from "./leadWorkspaceRoutes";
+import { registerContactOwnerNameRoutes } from "./contactOwnerNameRoutes";
 import { retainedRecipientEvidence } from "./recipientOutreach";
 import { isRetryableStagedSalonRow, MAX_SALON_LIST_JSON_BYTES, MAX_SALON_LIST_ROWS, stageSalonListRows } from "./salonListStaging";
 import { registerSalonResearchRoutes } from "./salonResearch";
@@ -170,6 +171,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   await setupAuth(app);
   registerDirectoryEligibilityRoutes(app, isAuthenticated);
   registerLeadWorkspaceRoutes(app, isAuthenticated);
+  registerContactOwnerNameRoutes(app, isAuthenticated);
   registerSalonResearchRoutes(app, isAuthenticated, isAdmin);
 
   // Helper function to get user ID or null for admin (admin sees all data)

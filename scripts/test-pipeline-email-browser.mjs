@@ -119,6 +119,14 @@ let testingContactCreation = true;
 let failDealCreation = false;
 let fixtureDealCreates = 0;
 let fixtureDeals = [];
+const ownerOnly = process.argv.includes("--contact-owner-only");
+let ownerLookup = { status: "not_searched", candidates: [], selectedCandidateId: null, approvedAt: null,
+  usePersonalName: false, providerCalls: 0, pagesFetched: 0 };
+const ownerActions = [];
+const ownerCandidate = { id: "owner-riley", firstName: "Riley", lastName: "Example", role: "owner",
+  roleConfirmed: true, businessMatched: true, confidence: "high",
+  sources: [{ kind: "website_about", url: "https://fixture.example.test/about",
+    excerpt: "Riley Example is the owner of Fixture Pet Spa at 123 Example Road, Example City TX 77058." }] };
 const contact = (id, email = `${id}@example.test`, userId = "owner-a") => ({
   id, email, userId, firstName: "Fixture", lastName: id, company: id,
   usesSoftware: "No", businessType: "salon", status: "pipeline",
@@ -159,6 +167,46 @@ const scope = url => role === "salesperson" ? "owner-a" : url.searchParams.get("
 function response(request) {
   const url = new URL(request.url);
   const owner = scope(url);
+  const ownerPath = url.pathname.match(/^\/api\/contacts\/([^/]+)\/owner-name(?:\/(.*))?$/);
+  if (ownerPath) {
+    const current = contacts.find(c => c.id === ownerPath[1]);
+    assert.ok(current);
+    const action = ownerPath[2];
+    const payload = request.postData ? JSON.parse(request.postData) : {};
+    if (!action && request.method === "GET") return { body: { rowId: "owner-evidence", ownerName: ownerLookup } };
+    if (action === "estimate") {
+      assert.equal(payload.searchesPerRow, 3);
+      return { body: { maxProviderCalls: 3, maxPages: 4, remainingCredits: 80, allowed: true, searchesPerRow: 3 } };
+    }
+    if (action === "search") {
+      assert.equal(payload.confirmed, true); assert.equal(payload.maxProviderCalls, 3);
+      assert.equal(payload.searchesPerRow, 3);
+      ownerActions.push("search");
+      ownerLookup = { ...ownerLookup, status: "needs_review", candidates: [ownerCandidate],
+        lookedUpAt: "2026-10-07T12:00:00Z", providerCalls: 1, pagesFetched: 1 };
+      return { body: { results: [{ rowId: "owner-evidence", ownerName: ownerLookup }], callsUsed: 1 } };
+    }
+    if (action === "review") {
+      assert.equal(payload.candidateId, ownerCandidate.id); assert.equal(payload.decision, "approved");
+      ownerActions.push("review");
+      ownerLookup = { ...ownerLookup, selectedCandidateId: ownerCandidate.id, approvedAt: "2026-10-07T12:30:00Z",
+        usePersonalName: payload.usePersonalName };
+      return { body: { ownerName: ownerLookup } };
+    }
+    if (action === "apply") {
+      assert.equal(payload.overwriteExisting, false); assert.equal(payload.usePersonalName, true);
+      assert.equal(ownerLookup.selectedCandidateId, ownerCandidate.id);
+      ownerActions.push("apply");
+      Object.assign(current, { firstName: "Riley", lastName: "Example", useBusinessNameForEmail: "No" });
+      return { body: { contact: current, ownerName: ownerLookup } };
+    }
+    if (action === "preview") {
+      const greetingPreview = current.firstName && current.useBusinessNameForEmail !== "Yes"
+        ? `Hi ${current.firstName},` : `Hi ${current.company} team,`;
+      return { body: { greetingPreview, renderedSubject: "A fixture invitation", renderedBody: `${greetingPreview}\nA fixture invitation.` } };
+    }
+    throw new Error(`Unexpected Contact name action: ${request.method} ${action}`);
+  }
   if (request.method !== "GET") {
     if (testingContactCreation && url.pathname === "/api/deals") {
       assert.equal(request.method, "POST");
@@ -262,10 +310,77 @@ try {
   });
   await send("Page.enable");
   await send("Runtime.enable");
+   if (ownerOnly) await send("Page.addScriptToEvaluateOnNewDocument", { source: `
+     window.__ownerFixtureErrors=[];
+     window.addEventListener('error',e=>window.__ownerFixtureErrors.push(e.message||String(e.error)));
+     window.addEventListener('unhandledrejection',e=>window.__ownerFixtureErrors.push(e.reason?.stack||String(e.reason)));
+   ` });
   await send("Fetch.enable", { patterns: [{ urlPattern: "*://*/api/*" }] });
   await send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1100, deviceScaleFactor: 1, mobile: false });
   const origin = process.env.REPLIT_DEV_DOMAIN ? `https://${process.env.REPLIT_DEV_DOMAIN}` : "http://127.0.0.1:5000";
-  await send("Page.navigate", { url: `${origin}/contacts` });
+   if (ownerOnly) {
+     testingContactCreation = false;
+     for (const fixtureRole of ["admin", "salesperson"]) {
+       role = fixtureRole;
+       ownerActions.length = 0;
+       ownerLookup = { status: "not_searched", candidates: [], selectedCandidateId: null, approvedAt: null,
+         usePersonalName: false, providerCalls: 0, pagesFetched: 0 };
+       Object.assign(contacts[0], { firstName: null, lastName: null, company: "Fixture Pet Spa",
+         useBusinessNameForEmail: "Yes", address: "123 Example Road", city: "Example City", state: "TX", zipCode: "77058" });
+       await send("Page.navigate", { url: `${origin}/deal/empty` });
+       await until(`!!document.querySelector('[data-testid="button-search-contact-name"]')`, "Contact name-search button");
+       assert.match(await evaluate("document.body.innerText"), /Owner’s Name\s+Not confirmed/);
+       await click('[data-testid="button-search-contact-name"]');
+       await until(`document.querySelector('[data-testid="contact-owner-name-dialog"]')?.innerText.includes('Search owner')`, "saved lookup loaded");
+       assert.deepEqual(ownerActions, []);
+       await evaluate(`Array.from(document.querySelectorAll('[data-testid="contact-owner-name-dialog"] button')).find(b=>b.textContent.trim()==='Search owner').click()`);
+       await until(`document.querySelector('[data-testid="contact-owner-name-dialog"]')?.innerText.includes('Confirm & search')`, "bounded estimate");
+       assert.match(await evaluate(`document.querySelector('[data-testid="contact-owner-name-dialog"]').innerText`), /Up to 3 additional paid searches/);
+       assert.deepEqual(ownerActions, []);
+       await evaluate(`Array.from(document.querySelectorAll('[data-testid="contact-owner-name-dialog"] button')).find(b=>b.textContent.trim()==='Confirm & search').click()`);
+       await until(`document.querySelector('[data-testid="contact-owner-name-dialog"]')?.innerText.includes('Riley Example')`, "owner found");
+       assert.equal(contacts[0].firstName, null, "search alone cannot apply a name");
+       await evaluate(`document.querySelector('[data-testid="contact-owner-name-dialog"] article input[type="radio"]').click()`);
+       await evaluate(`Array.from(document.querySelectorAll('[data-testid="contact-owner-name-dialog"] label')).find(l=>l.textContent.includes('Approved first name')).querySelector('input').click()`);
+       await until(`document.querySelector('[data-testid="contact-owner-name-dialog"]')?.innerText.includes('Save name & use in emails')`, "personal-name save action");
+       await evaluate(`Array.from(document.querySelectorAll('[data-testid="contact-owner-name-dialog"] button')).find(b=>b.textContent.trim()==='Save name & use in emails').click()`);
+       await until(`document.querySelector('[data-testid="contact-owner-name-dialog"]')?.innerText.includes('Current contact: Riley Example')`, "Contact refresh after save");
+       assert.deepEqual(ownerActions, ["search", "review", "apply"]);
+       await evaluate(`document.querySelector('[data-testid="contact-owner-name-dialog"] button.absolute').click()`);
+       await until(`!document.querySelector('[data-testid="contact-owner-name-dialog"]')`, "desktop owner review closed");
+       await send("Emulation.setDeviceMetricsOverride", { width: 402, height: 874, deviceScaleFactor: 1, mobile: true });
+       await send("Page.navigate", { url: `${origin}/deal/empty` });
+       await until(`!!document.querySelector('[data-testid="button-search-contact-name"]')`, "phone workspace");
+       await click('[data-testid="button-search-contact-name"]');
+       await until(`document.querySelector('[data-testid="contact-owner-name-dialog"]')?.innerText.includes('Current contact: Riley Example')`, "phone owner review");
+       assert.equal(await evaluate(`(() => {const r=document.querySelector('[data-testid="contact-owner-name-dialog"]').getBoundingClientRect();return r.left>=0&&r.right<=innerWidth+2})()`), true);
+       await captureFixture(`contact-owner-${fixtureRole}-mobile`);
+       await evaluate(`document.querySelector('[data-testid="contact-owner-name-dialog"] button.absolute').click()`);
+       await until(`!document.querySelector('[data-testid="contact-owner-name-dialog"]')`, "owner review closed");
+       await send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1100, deviceScaleFactor: 1, mobile: false });
+       await send("Page.navigate", { url: `${origin}/deal/empty` });
+       await until(`!!document.querySelector('[data-testid="button-search-contact-name"]')`, "stable desktop workspace");
+       assert.match(await evaluate("document.body.innerText"), /Owner’s Name\s+Riley Example/);
+       await evaluate(`document.querySelector('[data-testid="tab-sequences"]').dispatchEvent(new MouseEvent('mousedown',{button:0,bubbles:true}))`);
+       await click('[data-testid="button-new-sequence"]');
+       await until(`!!document.querySelector('[data-testid="select-sequence"]')`, "sequence composer");
+       await evaluate(`(() => {const el=document.querySelector('[data-testid="select-sequence"]');el.focus();el.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));})()`);
+       await until(`Array.from(document.querySelectorAll('[role="option"]')).some(el=>el.textContent.includes('Fixture sequence'))`, "fixture sequence option");
+       await evaluate(`(() => {const el=Array.from(document.querySelectorAll('[role="option"]')).find(el=>el.textContent.includes('Fixture sequence'));el.focus();el.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));})()`);
+       await until(`document.querySelector('[data-testid="sequence-greeting-preview"]')?.textContent==='Hi Riley,'`, "personalized email preview");
+       assert.deepEqual(await evaluate("window.__ownerFixtureErrors"), [], "no native browser or rejected-promise errors in the stable sequence preview");
+       assert.equal(await evaluate("!!document.querySelector('vite-error-overlay')"), false, "preview is not obscured by an error overlay");
+       await captureFixture(`contact-owner-${fixtureRole}-email`);
+       assert.deepEqual(ownerActions, ["search", "review", "apply"]);
+       assert.equal(fakeMutations, 0, "no sequence was scheduled or sent");
+       await send("Page.navigate", { url: `${origin}/deal/empty` });
+       await until(`!!document.querySelector('[data-testid="button-search-contact-name"]')`, "reopened workspace");
+       assert.match(await evaluate("document.body.innerText"), /Owner’s Name\s+Riley Example/);
+       console.log(`PASS ${fixtureRole}: legacy Contact search, explicit cap, source review, personal-name save, current workspace, phone dialog and email preview; zero real API mutations`);
+     }
+     assert.deepEqual(errors, []);
+   } else {
+   await send("Page.navigate", { url: `${origin}/contacts` });
   await until(`!!document.querySelector('[data-testid="button-create-deal-direct"]')`, "Contacts create deal action");
   assert.equal(await evaluate(`document.querySelector('[data-testid="button-create-selected-deal"]').disabled`), true);
   await click('[data-testid="select-contact-direct"]');
@@ -468,7 +583,8 @@ try {
   assert.equal(await evaluate(`!!document.querySelector('[data-testid="button-initiate-sequence"]')`), false);
   console.log("PASS salesperson owner controls and failed history cannot offer initiation");
   assert.deepEqual(errors, []);
-  console.log(`Browser fixture checks passed; ${fakeMutations} scheduling fixtures and ${fixtureDealCreates} deal-creation fixture, zero real API mutations.`);
+   console.log(`Browser fixture checks passed; ${fakeMutations} scheduling fixtures and ${fixtureDealCreates} deal-creation fixture, zero real API mutations.`);
+   }
 } finally {
   ws?.close();
   chrome.kill("SIGTERM");

@@ -38,3 +38,9 @@ Google AI Overview claims and their citations are discovery suggestions, not ver
 **Why:** The user demonstrated that a basic business/address Google search can show a first-name owner in an AI Overview when ordinary organic results omit that name. SerpAPI may return overview text inline, or only a retrieval token requiring another provider request; the latter is not a free continuation of the original search.
 
 **How to apply:** Keep relevant AI suggestions reviewable even when the cited page is inaccessible. Verify the actual linked source and exact business/location before allowing approval or personal-name use. Never automatically redeem an overview retrieval token outside an explicitly authorized request budget, and explain unavailable overview text rather than treating a token as a completed overview search.
+
+Existing Contacts need direct owner-name research from their Pipeline workspace, without repeating Leads import or creating another Contact.
+
+**Why:** The user moves old Contacts into Pipeline and wants to find a missing owner's name there, save it to the Contact card, and see the name in sequence emails.
+
+**How to apply:** Reuse the latest bounded discovery and evidence review, keep saved Contact names unchanged while searching, and make personal-email use an explicit save choice. Separate this research from lead-list execution and from sequence enrollment or sending.

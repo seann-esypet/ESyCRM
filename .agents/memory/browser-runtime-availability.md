@@ -50,3 +50,9 @@ Browser verification requires a successful process exit, not only a printed PASS
 **Why:** An isolated walkthrough passed its assertions but failed while removing Chromium's temporary profile. A broader rerun then exceeded the shell deadline, while the focused feature checks exited successfully. Neither harness failure established a CRM feature failure.
 
 **How to apply:** Report which checks actually completed. Use focused, fully intercepted checks to isolate the requested behavior; investigate broader harness failures separately rather than changing CRM behavior to accommodate them. Never claim a timed-out full suite passed.
+
+Changing Chromium's emulated viewport while a Radix dialog is open can emit a native ResizeObserver-loop error and trigger the development error overlay without a JavaScript exception.
+
+**Why:** A fixture's assertions and exception listener passed while the captured email preview was obscured by an “unknown runtime error.” A window-error listener identified a native ResizeObserver notification during live resizing.
+
+**How to apply:** Check window errors and rejected promises as well as JavaScript exceptions and inspect captured images. Use stable viewport loads for responsive verification; do not hide the app's error overlay or bypass authentication to make tests pass.

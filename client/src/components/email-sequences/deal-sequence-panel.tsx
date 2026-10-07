@@ -409,6 +409,17 @@ function SequenceComposerDialog({ contact, open, onOpenChange, onSuccess }: Comp
   );
 
   const isCustomTrack = selectedSeq?.sequenceTrack === "custom";
+  const emailPreview = useQuery<{ renderedSubject: string; renderedBody: string; greetingPreview: string }>({
+    queryKey: ["/api/contacts", contact.id, "sequence-preview", selectedSequenceId,
+      contact.firstName, contact.lastName, contact.useBusinessNameForEmail,
+      isCustomTrack ? customSubject : "", isCustomTrack ? customBody : ""],
+    queryFn: async () => (await apiRequest("POST", `/api/contacts/${contact.id}/owner-name/preview`, {
+      sequenceId: selectedSequenceId,
+      ...(isCustomTrack ? { customSubject: customSubject.trim(), customBody: customBody.trim() } : {}),
+    })).json(),
+    enabled: open && !!selectedSeq,
+    staleTime: 0,
+  });
 
   const reset = () => {
     setSelectedSequenceId("");
@@ -673,6 +684,18 @@ function SequenceComposerDialog({ contact, open, onOpenChange, onSuccess }: Comp
               </div>
             )}
 
+            {selectedSeq && (
+              <div className="rounded-md border-2 border-slate-400 bg-background p-3 space-y-2" data-testid="sequence-email-preview">
+                <p className="text-sm font-semibold">Email preview · current Contact name</p>
+                {emailPreview.isLoading ? <p role="status" className="text-xs text-muted-foreground">Rendering email…</p>
+                  : emailPreview.isError ? <p role="alert" className="text-xs text-destructive">{(emailPreview.error as Error).message}</p>
+                  : emailPreview.data && <>
+                    <p className="text-sm font-semibold" data-testid="sequence-greeting-preview">{emailPreview.data.greetingPreview}</p>
+                    <p className="text-xs font-medium">Subject: {emailPreview.data.renderedSubject}</p>
+                    <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap break-words font-sans text-sm">{emailPreview.data.renderedBody}</pre>
+                  </>}
+              </div>
+            )}
             {selectedSeq && (
               <div className="rounded-md border p-3 space-y-2">
                 <p className="text-xs font-medium flex items-center gap-1.5">

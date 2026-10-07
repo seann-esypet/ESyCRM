@@ -1,4 +1,5 @@
 // From Replit Auth and Database blueprints
+import { CONTACT_OWNER_LOOKUP_PURPOSE, contactOwnerLookupIdentity, contactOwnerLookupMatches } from "@shared/contactOwnerLookup";
 import { 
   type Contact, 
   type InsertContact,
@@ -350,6 +351,8 @@ export interface IStorage {
 
   // Uploaded salon enrichment
   getSalonEnrichmentBatches(userId: string | null): Promise<SalonEnrichmentBatch[]>;
+  getContactOwnerNameRow(contactId: string, userId: string): Promise<SalonEnrichmentRow | undefined>;
+  ensureContactOwnerNameRow(contactId: string, userId: string): Promise<SalonEnrichmentRow | undefined>;
   getSalonEnrichmentBatch(id: string, userId: string | null): Promise<SalonEnrichmentBatch | undefined>;
   prepareSalonReportBatchForVerification(id: string, userId: string, callsPerRow: number, retryUnverified?: boolean, expectedEligibleRows?: number): Promise<{
     batch: SalonEnrichmentBatch;
@@ -1880,9 +1883,59 @@ export class DatabaseStorage implements IStorage {
 
   // Uploaded salon enrichment
   async getSalonEnrichmentBatches(userId: string | null): Promise<SalonEnrichmentBatch[]> {
-    return userId === null
-      ? db.select().from(salonEnrichmentBatches).orderBy(desc(salonEnrichmentBatches.createdAt))
-      : db.select().from(salonEnrichmentBatches).where(eq(salonEnrichmentBatches.userId, userId)).orderBy(desc(salonEnrichmentBatches.createdAt));
+    const clauses = [sql`coalesce(${salonEnrichmentBatches.researchProgress}->>'purpose', '') <> ${CONTACT_OWNER_LOOKUP_PURPOSE}`];
+    if (userId !== null) clauses.push(eq(salonEnrichmentBatches.userId, userId));
+    return db.select().from(salonEnrichmentBatches).where(and(...clauses)).orderBy(desc(salonEnrichmentBatches.createdAt));
+  }
+
+  async getContactOwnerNameRow(contactId: string, userId: string): Promise<SalonEnrichmentRow | undefined> {
+    const [row] = await db.select().from(salonEnrichmentRows).where(and(
+      eq(salonEnrichmentRows.importedContactId, contactId),
+      eq(salonEnrichmentRows.userId, userId),
+      sql`${salonEnrichmentRows.sourceData}->>'purpose' = ${CONTACT_OWNER_LOOKUP_PURPOSE}`,
+    )).orderBy(desc(salonEnrichmentRows.createdAt)).limit(1);
+    return row;
+  }
+
+  async ensureContactOwnerNameRow(contactId: string, userId: string): Promise<SalonEnrichmentRow | undefined> {
+    return db.transaction(async tx => {
+      // Lock the Contact before checking/creating evidence to prevent double-click
+      // or multi-tab preparation from creating duplicate research records.
+      const [contact] = await tx.select().from(contacts).where(and(
+        eq(contacts.id, contactId), eq(contacts.userId, userId),
+      )).for("update");
+      if (!contact || contact.archivedAt) return undefined;
+      const identity = contactOwnerLookupIdentity(contact);
+      if (!identity.businessName) throw new Error("Add the business name to this Contact before searching for its owner.");
+      const [existing] = await tx.select().from(salonEnrichmentRows).where(and(
+        eq(salonEnrichmentRows.importedContactId, contactId), eq(salonEnrichmentRows.userId, userId),
+        sql`${salonEnrichmentRows.sourceData}->>'purpose' = ${CONTACT_OWNER_LOOKUP_PURPOSE}`,
+      )).limit(1);
+      if (existing) {
+        const changed = !contactOwnerLookupMatches(existing, contact);
+        if (!changed) return existing;
+        if (ownerNameFromRow(existing).status === "searching") {
+          throw new SalonOwnerNameStorageConflict("Wait for the current owner lookup before changing its business details.");
+        }
+        const [updated] = await tx.update(salonEnrichmentRows).set({
+          ...identity, evidence: { ...salonRowEvidence(existing), ownerName: { ...EMPTY_OWNER_NAME_RESULT } },
+          updatedAt: new Date(),
+        }).where(eq(salonEnrichmentRows.id, existing.id)).returning();
+        return updated;
+      }
+      const [batch] = await tx.insert(salonEnrichmentBatches).values({
+        userId, name: "Contact owner lookup", status: "completed", totalRows: 1,
+        processedRows: 1, importedRows: 1, pilotLimit: 0, concurrency: 1,
+        researchProgress: { purpose: CONTACT_OWNER_LOOKUP_PURPOSE }, completedAt: new Date(),
+      }).returning();
+      const [row] = await tx.insert(salonEnrichmentRows).values({
+        ...identity, batchId: batch.id, userId, rowNumber: 1,
+        importedContactId: contact.id, status: "imported", reviewStatus: "approved",
+        sourceData: { purpose: CONTACT_OWNER_LOOKUP_PURPOSE },
+        evidence: { ownerName: { ...EMPTY_OWNER_NAME_RESULT } },
+      }).returning();
+      return row;
+    });
   }
 
   async getSalonEnrichmentBatch(id: string, userId: string | null): Promise<SalonEnrichmentBatch | undefined> {
@@ -2125,7 +2178,15 @@ export class DatabaseStorage implements IStorage {
           eq(contacts.userId, userId),
         )).for("update");
         contact = linked;
-        await revokeOwnerNameContactInTransaction(tx, row, ownerName, contact);
+        if ((row.sourceData as any)?.purpose === CONTACT_OWNER_LOOKUP_PURPOSE &&
+            (!contact || contact.archivedAt || !contactOwnerLookupMatches(row, contact))) {
+          throw new SalonOwnerNameStorageConflict("The Contact's business details changed. Search again before saving this name.");
+        }
+        // A legacy Contact's repeat search is evidence gathering, not an
+        // instruction to erase its previously saved name or greeting choice.
+        if ((row.sourceData as any)?.purpose !== CONTACT_OWNER_LOOKUP_PURPOSE) {
+          await revokeOwnerNameContactInTransaction(tx, row, ownerName, contact);
+        }
       }
       const searching = ownerNameLookupStarted(ownerName);
       const [updated] = await tx.update(salonEnrichmentRows).set({
@@ -2191,6 +2252,10 @@ export class DatabaseStorage implements IStorage {
       }
       const switchingCandidate = input.decision === "rejected" ||
         (!!ownerName.selectedCandidateId && ownerName.selectedCandidateId !== candidate.id);
+      if ((row.sourceData as any)?.purpose === CONTACT_OWNER_LOOKUP_PURPOSE &&
+          (!contact || contact.archivedAt || !contactOwnerLookupMatches(row, contact))) {
+        return { error: { status: 409, message: "The Contact's business details changed. Search again before saving this name." } };
+      }
       if (switchingCandidate) {
         contact = await revokeOwnerNameContactInTransaction(tx, row, ownerName, contact);
       }
@@ -2242,6 +2307,10 @@ export class DatabaseStorage implements IStorage {
         eq(contacts.userId, userId),
       )).for("update");
       if (!contact) return { error: { status: 404, message: "The linked contact is not owned by you" } };
+      if ((row.sourceData as any)?.purpose === CONTACT_OWNER_LOOKUP_PURPOSE &&
+          (contact.archivedAt || !contactOwnerLookupMatches(row, contact))) {
+        return { error: { status: 409, message: "The Contact's business details changed. Search again before saving this name." } };
+      }
       const candidate = isStrongApprovedOwnerCandidate(ownerName);
       if (!candidate) return { error: { status: 409, message: "Approve a strongly matched owner-role candidate before applying it" } };
       const notes = parseContactNotes(contact);
