@@ -49,9 +49,16 @@ export function leadResearchResults(rows: SalonEnrichmentRow[], progress: unknow
 export function filterLeadResearchRows(rows: SalonEnrichmentRow[], states: Map<string, LeadResearchState>,
   view: string, search: string) {
   const term = search.trim().toLocaleLowerCase();
+  // Use the review decision, not the legacy row status: staged, unreviewed
+  // rows can have status="rejected". Hourly waits are not research failures.
+  const finishedReview = (row: SalonEnrichmentRow) =>
+    states.get(row.id) === "failed" || ["approved", "rejected"].includes(row.reviewStatus);
   return rows.filter(row =>
     (view !== "researched" || states.get(row.id) !== "not_started") &&
     (view !== "needs_review" || leadNeedsReview(row, states.get(row.id))) &&
     (view !== "ready_for_contacts" || leadReadyForContacts(row)) &&
-    (!term || [row.businessName, row.city, row.email].some(value => value?.toLocaleLowerCase().includes(term))));
+    (!term || [row.businessName, row.city, row.email].some(value => value?.toLocaleLowerCase().includes(term))))
+    // Stable within each group; this runs before the route paginates, so a
+    // reviewed first page cannot hide outstanding reviews on later pages.
+    .sort((a, b) => Number(finishedReview(a)) - Number(finishedReview(b)));
 }

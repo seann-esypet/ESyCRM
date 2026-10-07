@@ -44,3 +44,9 @@ Newly added Contacts must be discoverable in the normal unfiltered list, not onl
 **Why:** The user reported that an added contact appeared in search results but not the ordinary Contacts list, making a successful import appear to have lost the record.
 
 **How to apply:** Keep cross-screen contact creation/linking and list visibility consistent. Respect explicit filters and ownership, but do not require search or a hard refresh merely to see newly saved contacts.
+
+Saved-list review is a working queue: businesses with failed research, rejected reviews or approved reviews should move below the businesses still being worked on.
+
+**Why:** The user wants to keep working through the businesses at the top instead of repeatedly passing completed or failed entries.
+
+**How to apply:** Reorder as statuses change without deleting or hiding records. Preserve deliberate filters and prioritize unfinished reviews across the entire list, not just the loaded page.

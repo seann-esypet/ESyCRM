@@ -47,3 +47,60 @@ test("researching, new hourly waits, genuine failures and review-only email find
   assert.equal(result.states.get("uploaded"), "not_started");
   assert.equal(rows[3].reviewStatus, "needs_review", "classification never approves findings");
 });
+
+test("failed research, rejected reviews and approved reviews sort last without hiding any businesses", () => {
+  const rows = [
+    row("approved", { reviewStatus: "approved" }),
+    row("failed", { status: "failed", sourceData: { stagingState: "verification_attempted" } }),
+    row("review-first", { status: "enriched", sourceData: { stagingState: "verification_attempted" } }),
+    row("rejected", { reviewStatus: "rejected" }),
+    row("hourly", { status: "failed", lastError: "SERP quota or hourly limit reached (20/hour). Please wait.",
+      sourceData: { stagingState: "verification_attempted" } }),
+    row("staged", { status: "rejected", reviewStatus: "needs_review" }),
+    row("review-second", { status: "enriched", sourceData: { stagingState: "verification_attempted" } }),
+  ];
+  const original = rows.map(item => item.id);
+  const { states } = leadResearchResults(rows, {});
+  assert.deepEqual(filterLeadResearchRows(rows, states, "all", "").map(item => item.id),
+    ["review-first", "hourly", "staged", "review-second", "approved", "failed", "rejected"]);
+  assert.deepEqual(rows.map(item => item.id), original, "sorting never mutates the stored/input order");
+  assert.equal(states.get("hourly"), "waiting_hourly");
+  assert.deepEqual(filterLeadResearchRows(rows, states, "needs_review", "").map(item => item.id),
+    ["review-first", "review-second"]);
+  assert.deepEqual(filterLeadResearchRows(rows, states, "all", "approved").map(item => item.id), ["approved"]);
+  assert.deepEqual(filterLeadResearchRows(rows, states, "researched", "").map(item => item.id),
+    ["review-first", "hourly", "review-second", "failed"]);
+});
+
+test("outstanding reviews appear ahead of completed reviews across pagination boundaries", () => {
+  const rows = [
+    ...Array.from({ length: 150 }, (_, i) => row(`approved-${i}`, { reviewStatus: "approved" })),
+    ...Array.from({ length: 125 }, (_, i) => row(`review-${i}`, {
+      status: "enriched", sourceData: { stagingState: "verification_attempted" },
+    })),
+  ];
+  const { states, summary } = leadResearchResults(rows, {});
+  const sorted = filterLeadResearchRows(rows, states, "all", "");
+  assert.equal(sorted.length, 275);
+  assert.deepEqual(sorted.slice(0, 100).map(item => item.id),
+    Array.from({ length: 100 }, (_, i) => `review-${i}`));
+  assert.equal(sorted[124].id, "review-124");
+  assert.equal(sorted[125].id, "approved-0");
+  assert.equal(new Set(sorted.map(item => item.id)).size, 275);
+  assert.equal(summary.needsReview, 125, "display ordering never changes research/review counts");
+});
+
+test("status changes move a business down and reopening review restores its original priority", () => {
+  const rows = ["first", "second", "third", "fourth"].map(id => row(id, {
+    status: "enriched", sourceData: { stagingState: "verification_attempted" },
+  }));
+  const order = () => filterLeadResearchRows(rows, leadResearchResults(rows, {}).states, "all", "").map(item => item.id);
+  assert.deepEqual(order(), ["first", "second", "third", "fourth"]);
+  rows[0].reviewStatus = "approved";
+  assert.deepEqual(order(), ["second", "third", "fourth", "first"]);
+  rows[1].reviewStatus = "rejected";
+  rows[2].status = "failed";
+  assert.deepEqual(order(), ["fourth", "first", "second", "third"]);
+  rows[0].reviewStatus = "needs_review";
+  assert.deepEqual(order(), ["first", "fourth", "second", "third"]);
+});
