@@ -61,6 +61,16 @@ async function input(selector, value) {
 }
 
 async function prominentStatus(layout, emptyId = "empty", pendingId = "pending") {
+  const nextSchedule = await evaluate(`(() => {
+    const text = id => document.querySelector('[data-testid="deal-${layout}-' + id + '"]')
+      ?.querySelector('[aria-label="Next scheduled email"]')?.textContent.trim();
+    return {
+      empty: text(${JSON.stringify(emptyId)}), pending: text(${JSON.stringify(pendingId)}),
+      expected: new Date(${JSON.stringify("2026-10-12T13:30:27.000Z")}).toLocaleString("en-US"),
+    };
+  })()`);
+  assert.equal(nextSchedule.empty, "Next Scheduled: None");
+  assert.equal(nextSchedule.pending, `Next Scheduled: ${nextSchedule.expected}`);
   const metrics = await evaluate(`(() => {
     const inspect = id => {
       const panel = document.querySelector('[data-testid="deal-${layout}-' + id + '"]');
@@ -131,8 +141,8 @@ const base = id => ({
 });
 const summaries = () => ({
   empty: { ...base("empty"), ...(scheduled ? { sequenceStatus: "scheduled", logCount: 1, scheduledCount: 1 } : {}) },
-  pending: { ...base("pending"), sequenceStatus: "scheduled", logCount: 1, scheduledCount: 1 },
-  sent: { ...base("sent"), sequenceStatus: "scheduled", logCount: 2, sentCount: 1, latestSentAt: date, scheduledCount: 1 },
+  pending: { ...base("pending"), sequenceStatus: "scheduled", logCount: 1, scheduledCount: 1, nextScheduledAt: "2026-10-12T13:30:27.000Z" },
+  sent: { ...base("sent"), sequenceStatus: "scheduled", logCount: 2, sentCount: 1, latestSentAt: date, scheduledCount: 1, nextScheduledAt: "2026-10-12T13:30:27.000Z" },
   failed: { ...base("failed"), sequenceStatus: "failed", logCount: 1, failedCount: 1 },
   replied: { ...base("replied"), sequenceStatus: "reply_stopped", logCount: 1, historyUncertain: true },
   "no-address": { ...base("no-address"), sequenceStatus: "historical", logCount: 1, sentCount: 1, latestSentAt: date },
@@ -343,7 +353,7 @@ try {
   await click('[data-testid="button-schedule"]');
   await until(`!document.querySelector('[role="dialog"]')`, "workspace scheduling completed");
   await click('[data-testid="button-back-pipeline"]');
-  await until(`document.querySelector('[data-testid="deal-row-empty"]')?.innerText.includes('Scheduled')`, "fresh Scheduled status after returning to Pipeline");
+  await until(`!!document.querySelector('[data-testid="deal-row-empty"] [data-pipeline-sequence-status="Scheduled"]')`, "fresh Scheduled status after returning to Pipeline");
   for (const root of pipelineRoots) assert.ok(readCounts[root] > beforeReturn[root], `${root} was refreshed on return`);
 
   // Also prove the button refreshes independently of scheduling's invalidation.
@@ -411,7 +421,7 @@ try {
   await input('[data-testid="input-initiate-date"]', "2027-01-10");
   await input('[data-testid="input-initiate-time"]', "09:00");
   await click('[data-testid="button-submit-initiate"]');
-  await until(`document.querySelector('[data-testid="deal-card-empty"]')?.innerText.includes('Scheduled')`, "summary refresh after mocked initiation");
+  await until(`!!document.querySelector('[data-testid="deal-card-empty"] [data-pipeline-sequence-status="Scheduled"]')`, "summary refresh after mocked initiation");
   assert.equal(fakeMutations, beforeMutations + 1);
   assert.ok(summaryReads > before);
   await until(`!!document.querySelector('[data-testid="button-reschedule-log-empty"]')`, "reschedule action");
@@ -427,7 +437,7 @@ try {
   await send("Emulation.setDeviceMetricsOverride", { width: 402, height: 874, deviceScaleFactor: 1, mobile: true });
   await click('[data-testid="button-toggle-sidebar"]');
   await until(`document.querySelector('[data-testid="header"]').clientWidth>250`, "existing sidebar collapsed for phone use");
-  await until(`document.querySelector('[data-testid="deal-card-empty"]')?.innerText.includes('Scheduled')`, "mobile card rendering");
+  await until(`!!document.querySelector('[data-testid="deal-card-empty"] [data-pipeline-sequence-status="Scheduled"]')`, "mobile card rendering");
   const headerFits = await evaluate(`document.querySelector('[data-testid="header"]').scrollWidth<=document.querySelector('[data-testid="header"]').clientWidth+2`);
   assert.ok(headerFits, "Pipeline controls must fit the phone viewport");
   await prominentStatus("card", "other");
@@ -444,7 +454,7 @@ try {
   assert.doesNotMatch(await evaluate(row("empty")) ?? "", /No recorded emails sent/);
   failSummaries = false;
   await evaluate(`Array.from(document.querySelectorAll('button')).find(el=>el.textContent.includes('Retry status')||el.getAttribute('aria-label')==='Retry email status').click()`);
-  await until(`document.querySelector('[data-testid="deal-row-empty"]')?.innerText.includes('Scheduled')`, "summary retry");
+  await until(`!!document.querySelector('[data-testid="deal-row-empty"] [data-pipeline-sequence-status="Scheduled"]')`, "summary retry");
   console.log("PASS failed summaries remain unknown and retry restores status");
 
   role = "salesperson";

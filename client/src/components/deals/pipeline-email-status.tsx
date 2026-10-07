@@ -72,6 +72,17 @@ export default function PipelineEmailStatus({
     }
   }
 
+  let nextScheduled = "Unavailable";
+  if (contactId && loading) nextScheduled = "Loading";
+  else if (contactId && !failed && summary?.contactState === "available") {
+    const scheduledDate = summary.nextScheduledAt ? new Date(summary.nextScheduledAt) : null;
+    nextScheduled = scheduledDate && Number.isFinite(scheduledDate.getTime())
+      ? scheduledDate.toLocaleString("en-US")
+      : summary.scheduledCount > 0
+        ? "Date unavailable"
+        : "None";
+  }
+
   const contactLine = !contactId
     ? "No linked contact"
     : contactsLoading && !summary
@@ -111,6 +122,9 @@ export default function PipelineEmailStatus({
           </div>
           <p className="text-xs text-muted-foreground" aria-label="Recorded send summary">
             <span className="font-medium text-foreground/80">Recorded sends:</span> {recordedSummary}
+          </p>
+          <p className="text-xs text-muted-foreground" aria-label="Next scheduled email">
+            <span className="font-medium text-foreground/80">Next Scheduled:</span> {nextScheduled}
           </p>
           {summary?.historyUncertain && !failed && (
             <p className="text-[11px] text-amber-700 dark:text-amber-300">History incomplete/unknown; counts reflect available CRM records.</p>

@@ -81,3 +81,34 @@ test("other sequence statuses and uncertain history remain explicit", () => {
     assert.doesNotMatch(html, /bg-amber-100|bg-sky-100/);
   }
 });
+
+test("next pending email appears directly below recorded sends, with date, time and seconds in both sizes", () => {
+  const nextScheduledAt = "2026-10-12T13:30:27.000Z";
+  for (const compact of [false, true]) {
+    const html = renderToStaticMarkup(createElement(PipelineEmailStatus, {
+      ...props, compact, summary: {
+        ...summary, sequenceStatus: "scheduled", logCount: 2, sentCount: 1,
+        latestSentAt: "2026-10-05T13:30:27.000Z", scheduledCount: 1, nextScheduledAt,
+      },
+    }));
+    assert.match(html, /1 recorded sent/);
+    assert.ok(html.includes(new Date(nextScheduledAt).toLocaleString("en-US")));
+    assert.match(html, /Recorded sends:[\s\S]*?<\/p><p[^>]*aria-label="Next scheduled email"[^>]*><span[^>]*>Next Scheduled:<\/span>/);
+  }
+});
+
+test("no pending emails displays None without mistaking unavailable data for an empty schedule", () => {
+  const render = (overrides = {}) => renderToStaticMarkup(createElement(PipelineEmailStatus, { ...props, ...overrides }));
+  assert.match(render(), /Next Scheduled:<\/span> None/);
+  for (const overrides of [{ failed: true }, { contactId: null }, { summary: undefined },
+    { summary: { ...summary, contactState: "unavailable" } }]) {
+    const html = render(overrides);
+    assert.match(html, /Next Scheduled:<\/span> Unavailable/);
+    assert.doesNotMatch(html, /Next Scheduled:<\/span> None/);
+  }
+  assert.match(render({ loading: true }), /Next Scheduled:<\/span> Loading/);
+  for (const nextScheduledAt of [null, "invalid"]) {
+    assert.match(render({ summary: { ...summary, scheduledCount: 1, nextScheduledAt } }),
+      /Next Scheduled:<\/span> Date unavailable/);
+  }
+});

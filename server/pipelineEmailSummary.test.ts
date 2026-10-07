@@ -114,6 +114,20 @@ test("multiple strategy/track records are counted once each, independently from 
   assert.equal(result.nextScheduledAt, scheduledDate);
 });
 
+test("next schedule is the earliest pending date, not an earlier sent or failed step", () => {
+  const result = summarizePipelineContact(contact.id, contact, [
+    log({ id: "later", scheduledSendAt: "2026-10-19T13:30:27.000Z" }),
+    log({ id: "next", scheduledSendAt: "2026-10-12T13:30:27.000Z" }),
+    log({ id: "sent", status: "sent", sentAt: sentDate, scheduledSendAt: sentDate }),
+    log({ id: "failed", status: "failed", scheduledSendAt: sentDate }),
+  ]);
+  assert.equal(result.nextScheduledAt, "2026-10-12T13:30:27.000Z");
+  assert.equal(result.scheduledCount, 2);
+  assert.equal(summarizePipelineContact(contact.id, contact, [
+    log({ status: "sent", sentAt: sentDate }),
+  ]).nextScheduledAt, null);
+});
+
 test("missing current email does not erase history, while unavailable contacts never expose logs", () => {
   const missingEmail = summarizePipelineContact(contact.id, { ...contact, email: null },
     [log({ status: "sent", sentAt: sentDate })]);
