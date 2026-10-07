@@ -5,8 +5,8 @@ import { newFullResearch, readFullResearch, researchAllowance, reserveResearchPa
 
 const now = Date.parse("2026-10-05T10:00:00Z");
 const fresh = () => newFullResearch({ ...FULL_RESEARCH_DEFAULTS }, now);
-test("user-confirmed defaults are 20 businesses/hour, 40 requests/hour, 200 per list", () => {
-  assert.deepEqual(fresh().limits, { businessesPerHour: 20, paidCallsPerHour: 40, paidCallsPerList: 200 });
+test("future defaults are 20 businesses/hour, 80 requests/hour, 200 per list", () => {
+  assert.deepEqual(fresh().limits, { businessesPerHour: 20, paidCallsPerHour: 80, paidCallsPerList: 200 });
   for (const limits of [
     { ...FULL_RESEARCH_DEFAULTS, businessesPerHour: 0 },
     { ...FULL_RESEARCH_DEFAULTS, paidCallsPerHour: 101 },
@@ -24,17 +24,18 @@ test("21st business waits until rolling 60-minute allowance, not the next clock-
 });
 test("every initiated request uses allowance, including failures and deleted rows", () => {
   const run = fresh();
-  for (let i = 0; i < 40; i++) assert.equal(reserveResearchPaidCall(run, `deleted-row-${i}`, "failed_provider", now), null);
-  assert.equal(run.attempts.length, 40);
+  for (let i = 0; i < 80; i++) assert.equal(reserveResearchPaidCall(run, `deleted-row-${i}`, "failed_provider", now), null);
+  assert.equal(run.attempts.length, 80);
   assert.equal(reserveResearchPaidCall(run, "next", "name_search", now)?.status, "waiting_hourly");
-  assert.equal(run.attempts.length, 40);
+  assert.equal(run.attempts.length, 80);
+  assert.equal(reserveResearchPaidCall(run, "next", "name_search", now + FULL_RESEARCH_HOUR - 1)?.status, "waiting_hourly");
   assert.equal(reserveResearchPaidCall(run, "next", "name_search", now + FULL_RESEARCH_HOUR), null);
-  assert.equal(run.attempts.length, 41);
+  assert.equal(run.attempts.length, 81);
 });
 test("business, contact email and name tools share one hourly and whole-list cap", () => {
   const run = fresh();
-  for (let hour = 0; hour < 5; hour++) for (let i = 0; i < 40; i++) {
-    assert.equal(reserveResearchPaidCall(run, `row-${hour}-${i}`, ["business_search", "email_contact_search", "contact_name_search"][i % 3], now + hour * FULL_RESEARCH_HOUR), null);
+  for (let i = 0; i < 200; i++) {
+    assert.equal(reserveResearchPaidCall(run, `row-${i}`, ["business_search", "email_contact_search", "contact_name_search"][i % 3], now + Math.floor(i / 80) * FULL_RESEARCH_HOUR), null);
   }
   assert.equal(run.attempts.length, 200);
   assert.equal(researchAllowance(run, "paid", now + 10 * FULL_RESEARCH_HOUR)?.status, "budget_exhausted");
@@ -53,7 +54,7 @@ test("pause, resume, republish/restart and cap increases retain all paid history
 });
 test("separate state lists have independent allowances", () => {
   const california = fresh(), texas = fresh();
-  for (let i = 0; i < 40; i++) reserveResearchPaidCall(california, String(i), "business_search", now);
+  for (let i = 0; i < 80; i++) reserveResearchPaidCall(california, String(i), "business_search", now);
   assert.equal(researchAllowance(california, "paid", now)?.status, "waiting_hourly");
   assert.equal(researchAllowance(texas, "paid", now), null);
 });
@@ -66,8 +67,23 @@ test("allowance reservations serialize concurrent callers and never refund on fa
       // Simulated downstream provider failure: deliberately do not remove ledger entry.
     }
   }));
-  assert.equal(attempts, 40);
-  assert.equal(run.attempts.length, 40);
+  assert.equal(attempts, 80);
+  assert.equal(run.attempts.length, 80);
+});
+test("reading and resuming a saved 40/hour run never adopts the new default or resets history", () => {
+  const run = newFullResearch({ ...FULL_RESEARCH_DEFAULTS, paidCallsPerHour: 40 }, now);
+  for (let i = 0; i < 40; i++) reserveResearchPaidCall(run, String(i), "business_search", now);
+  run.enabled = false; run.status = "paused";
+  const saved = JSON.stringify(run);
+  const restored = readFullResearch(JSON.parse(saved))!;
+  assert.equal(JSON.stringify(restored), saved);
+  restored.enabled = true;
+  assert.equal(restored.limits.paidCallsPerHour, 40);
+  assert.equal(reserveResearchPaidCall(restored, "blocked", "business_search", now)?.status, "waiting_hourly");
+  assert.equal(restored.attempts.length, 40);
+  assert.equal(reserveResearchPaidCall(restored, "later", "business_search", now + FULL_RESEARCH_HOUR), null);
+  assert.equal(restored.attempts.length, 41);
+  assert.equal(restored.limits.paidCallsPerList, 200);
 });
 test("leases persist across process restarts and expire conservatively", () => {
   const run = fresh();

@@ -123,7 +123,7 @@ async function fullResearchUiCase(origin){
   await load();
   assert.equal(await evaluate(`${selector("full-research-start")}.disabled`),true);
   assert.equal(await evaluate(`${selector("full-research-businesses-hour")}.value`),"20");
-  assert.equal(await evaluate(`${selector("full-research-paid-hour")}.value`),"40");
+   assert.equal(await evaluate(`${selector("full-research-paid-hour")}.value`),"80");
   assert.equal(await evaluate(`${selector("full-research-paid-total")}.value`),"200");
   assert.deepEqual(writes,[]);
   await press("full-research-consent");await press("full-research-start");
@@ -160,6 +160,77 @@ async function fullResearchUiCase(origin){
     assert.equal(await evaluate("document.documentElement.scrollWidth>window.innerWidth"),false);
     await send("Page.captureScreenshot",{format:"jpeg",quality:65}).then(r=>writeFile(`reports/workflow-fixtures/${role}-full-research-${label}.jpg`,Buffer.from(r.data,"base64")));
   }
+}
+async function futureResearchDefaultsUiCase(origin) {
+  writes.length=0;
+  const previousSharedBudget=sharedProviderBudget;
+  sharedProviderBudget={monthYear:"2026-10",monthlyQuota:1000,hardStopAt:800,used:200,remaining:600};
+  const selector=id=>`document.querySelector('[data-testid="${id}"]')`;
+  const fresh={id:`fixture-future-${role}`,name:"New research defaults fixture",status:"completed",
+    totalRows:1,createdAt:new Date().toISOString()};
+  const saved={...fresh,id:`fixture-saved-hourly-${role}`,name:"Saved 40/hour fixture",status:"paused",
+    researchProgress:{workflow:"unified_leads",fullResearch:{
+      status:"paused",enabled:false,limits:{businessesPerHour:20,paidCallsPerHour:40,paidCallsPerList:200},
+      startedAt:new Date().toISOString(),processedIds:[],startedRows:[],currentRowId:null,nextRunAt:null,error:null,
+      attempts:[{rowId:"fixture-old-hourly-row",tool:"business_search",at:new Date().toISOString()}]}}};
+  batches=[fresh,saved];
+  rows=[fresh,saved].map((batch,index)=>({...unifiedUploadRow({Business:batch.name,Address:"Austin TX",State:"TX"},index,"fixture-owner"),
+    id:`fixture-hourly-row-${index}`,batchId:batch.id,serpCallsUsed:index}));
+  const load=async batch=>{
+    await send("Page.navigate",{url:origin+"/leads/"+batch.id});
+    await until(selector("full-research-panel"),"hourly allowance form");await pause(200);
+  };
+  for(const [label,width,height,mobile] of [["desktop",1365,900,false],["mobile",402,874,true]]){
+    await send("Emulation.setDeviceMetricsOverride",{width,height,deviceScaleFactor:1,mobile});
+    await load(fresh);
+    if(mobile){
+      await evaluate(`document.querySelector('button[aria-label="Collapse sidebar"]')?.click()`);
+      await until(`document.querySelector('button[aria-label="Expand sidebar"]')`,"unobstructed phone form");
+    }
+    assert.equal(await evaluate(`${selector("full-research-paid-hour")}.value`),"80");
+    assert.equal(await evaluate(`${selector("full-research-businesses-hour")}.value`),"20");
+    assert.equal(await evaluate(`${selector("full-research-paid-total")}.value`),"200");
+    assert.equal(await evaluate(`${selector("full-research-start")}.disabled`),true);
+    assert.equal(await evaluate(`${selector("full-research-limit-scope")}.innerText.includes('Saved searches resume')`),true);
+    await pause(500);
+    await evaluate(`${selector("full-research-businesses-hour")}.scrollIntoView({block:'start'})`);
+    await pause(200);
+    assert.equal(await evaluate("document.documentElement.scrollWidth>window.innerWidth"),false);
+    await send("Page.captureScreenshot",{format:"jpeg",quality:70}).then(r=>writeFile(`reports/workflow-fixtures/${role}-future-hourly-${label}.jpg`,Buffer.from(r.data,"base64")));
+  }
+  for(const state of ["paused","running","waiting_hourly","interrupted"]){
+    const run=saved.researchProgress.fullResearch;
+    run.status=state;run.enabled=["running","waiting_hourly"].includes(state);
+    run.currentRowId=state==="interrupted"?"fixture-old-hourly-row":null;
+    const before=JSON.stringify(saved);
+    await load(saved);
+    assert.equal(await evaluate(`${selector("full-research-paid-hour")}.value`),"40");
+    assert.equal(await evaluate(`${selector("full-research-paid-hour")}.disabled`),true);
+    assert.equal(JSON.stringify(saved),before,"opening an old run cannot change caps, counters or enabled state");
+  }
+  const run=saved.researchProgress.fullResearch;
+  run.status="paused";run.enabled=false;run.currentRowId=null;
+  await load(saved);
+  const before=JSON.stringify(run);
+  await evaluate("document.getElementById('full-research-resume-confirmation').click()");
+  await click("Confirm and resume");
+  await until(`${selector("full-research-pause")}`,"old run explicitly resumed");
+  assert.equal(saved.researchProgress.fullResearch.limits.paidCallsPerHour,40);
+  assert.deepEqual(saved.researchProgress.fullResearch.attempts,JSON.parse(before).attempts);
+  assert.deepEqual(writes,["full-resume"],"viewing and default changes initiate no requests; resume is separate");
+  // A completed old search offers 80 for a NEW confirmation while progress still
+  // reports the old saved 40/hour allowance. Polling must not overwrite edits.
+  writes.length=0;
+  saved.researchProgress.fullResearch.status="completed";saved.researchProgress.fullResearch.enabled=false;
+  await until(`${selector("full-research-paid-hour")}.value==='80'`,"new-search default after completion without remount");
+  const completed=JSON.stringify(saved);
+  await evaluate(`(()=>{const e=${selector("full-research-paid-hour")};Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'75');e.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+  await pause(1800);
+  assert.equal(await evaluate(`${selector("full-research-paid-hour")}.value`),"75","polling preserves unconfirmed form edits");
+  assert.equal(JSON.stringify(saved),completed);
+  assert.deepEqual(writes,[]);
+  sharedProviderBudget=previousSharedBudget;
+  await send("Emulation.setDeviceMetricsOverride",{width:1365,height:900,deviceScaleFactor:1,mobile:false});
 }
 async function researchStatusUiCase(origin) {
   writes.length=0;
@@ -470,7 +541,7 @@ async function api(url,method,body) {
     let run=batch.researchProgress?.fullResearch;
     const action=url.pathname.split("/").at(-1);
     if(action==="full-research"){
-      assert.equal(body.businessesPerHour,20);assert.equal(body.paidCallsPerHour,40);
+      assert.equal(body.businessesPerHour,20);assert.equal(body.paidCallsPerHour,80);
       assert.ok(body.paidCallsPerList===200||body.paidCallsPerList===300);
       run={...run,status:"waiting_hourly",enabled:true,
          notificationId:`fixture-confirmed-${role}-${writes.length}`,startedAt:run?.startedAt??new Date().toISOString(),
@@ -607,6 +678,11 @@ try {
       await providerCreditsUiCase(origin);
       continue;
     }
+    if(process.argv.includes("--future-hourly-only")){
+      await futureResearchDefaultsUiCase(origin);
+      await fullResearchUiCase(origin);
+      continue;
+    }
     await send("Emulation.setDeviceMetricsOverride",{width:1365,height:900,deviceScaleFactor:1,mobile:false});
     await send("Page.navigate",{url:origin+"/leads?upload=1"});
     await until("document.body.innerText.includes('Search for Businesses')","Leads home");
@@ -651,17 +727,31 @@ try {
     await until("document.querySelector('article')?.innerText.includes('Fixture Search Grooming')","search-source review");
     await reviewThroughScheduling("search-stage");
     await fullResearchUiCase(origin);
+    await futureResearchDefaultsUiCase(origin);
     await researchStatusUiCase(origin);
     await providerCreditsUiCase(origin);
     await sharedProviderBudgetUiCase(origin);
     await researchedRowsUiCase(origin);
   }
   assert.deepEqual(errors,[]);
-   console.log(process.argv.includes("--shared-budget-only") ?
+   console.log(process.argv.includes("--future-hourly-only") ?
+    "PASS: new confirmed searches use 20/80/200 defaults; saved 40/hour runs retain caps/history across viewing and resume; completion offers a new default without mutation; form edits survive polling; desktop/mobile administrator/salesperson checks. All APIs intercepted; no live records or providers used." :
+    process.argv.includes("--shared-budget-only") ?
     "PASS: admin-confirmed shared 1,000/800 budget, salesperson read-only view, unavailable-account protection, preserved NY/CA/TX ledgers and paused states, reload, desktop/mobile. All API traffic intercepted." :
     process.argv.includes("--provider-credits-only") ?
     "PASS: administrator/salesperson provider credits beside list cap; available, zero, unknown and refreshed balances, paused-state preservation and readable desktop/mobile layouts. All API traffic intercepted." :
     "PASS: administrator/salesperson upload/search → review → CRM → Pipeline → separate scheduling; research status lifecycle, once-per-run popups, new runs, list switching, reduced motion, keyboard focus, desktop/mobile, controls and researched filtering. All API traffic intercepted; no real records or providers used.");
 } finally {
-  ws?.close();chrome.kill("SIGTERM");await pause(200);await rm(profile,{recursive:true,force:true});
+  ws?.close();
+  if(chrome.exitCode===null && chrome.signalCode===null){
+    const exited=new Promise(done=>chrome.once("exit",done));
+    chrome.kill("SIGTERM");
+    await Promise.race([exited,pause(2000)]);
+    if(chrome.exitCode===null && chrome.signalCode===null){
+      chrome.kill("SIGKILL");await exited;
+    }
+  }
+  // Chromium's children can briefly keep writing the temporary profile after
+  // shutdown. Retrying cleanup must not turn successful assertions into a fail.
+  await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:100});
 }

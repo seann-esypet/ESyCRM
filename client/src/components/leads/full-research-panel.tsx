@@ -1,4 +1,5 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { FULL_RESEARCH_DEFAULTS } from "@shared/fullResearch";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { ProviderCreditSnapshot } from "@shared/providerCredits";
 import { SharedProviderBudgetPanel } from "./shared-provider-budget";
@@ -68,9 +69,16 @@ export function FullResearchPanel({ batch, readOnlyReason, busy = false, onChang
   });
   const providerEmpty = !credits.isError && credits.data?.status === "available" && credits.data.remaining === 0;
   const limits = research?.limits;
-  const [businessesPerHour, setBusinessesPerHour] = useState(String(limits?.businessesPerHour ?? 20));
-  const [paidCallsPerHour, setPaidCallsPerHour] = useState(String(limits?.paidCallsPerHour ?? 40));
-  const [paidCallsPerList, setPaidCallsPerList] = useState(String(limits?.paidCallsPerList ?? 200));
+  const hourlyFormLimit = research?.status === "completed" ? FULL_RESEARCH_DEFAULTS.paidCallsPerHour :
+    limits?.paidCallsPerHour ?? FULL_RESEARCH_DEFAULTS.paidCallsPerHour;
+  const [businessesPerHour, setBusinessesPerHour] = useState(String(limits?.businessesPerHour ?? FULL_RESEARCH_DEFAULTS.businessesPerHour));
+  const [paidCallsPerHour, setPaidCallsPerHour] = useState(String(hourlyFormLimit));
+  const [paidCallsPerList, setPaidCallsPerList] = useState(String(limits?.paidCallsPerList ?? FULL_RESEARCH_DEFAULTS.paidCallsPerList));
+  useEffect(() => {
+    // Completion offers a new search; viewing/resuming an existing run retains
+    // its saved allowance. Repeated polling must not erase edits to the form.
+    setPaidCallsPerHour(String(hourlyFormLimit));
+  }, [batch.id, hourlyFormLimit]);
   const [consent, setConsent] = useState(false);
   const [budgetConsent, setBudgetConsent] = useState(false);
   const [resumeConsent, setResumeConsent] = useState(false);
@@ -137,6 +145,7 @@ export function FullResearchPanel({ batch, readOnlyReason, busy = false, onChang
   const cap = limits?.paidCallsPerList ?? Number(paidCallsPerList);
   const canResume = currentStatus === "paused";
   const canRecover = currentStatus === "interrupted";
+  const savedCapsOnly = canResume || canRecover;
   const unavailableReason = readOnlyReason || (busy ? "Another research worker is active for this list. Full Research is unavailable until it finishes." : null);
   const notice = useResearchNotice(batch.id, research?.notificationId ?? research?.startedAt, currentStatus, Boolean(unavailableReason));
   const statusFocus = useRef<HTMLDivElement>(null);
@@ -163,10 +172,14 @@ export function FullResearchPanel({ batch, readOnlyReason, busy = false, onChang
       {readOnlyReason && <Alert><AlertTitle>Research unavailable for this list</AlertTitle><AlertDescription>{readOnlyReason}</AlertDescription></Alert>}
       {busy && <p className="text-xs text-muted-foreground">Another research worker is active for this list. Full Research controls are temporarily unavailable.</p>}
       <div className="grid gap-3 sm:grid-cols-3">
-        <div className="space-y-1"><Label htmlFor="full-research-businesses-hour">Businesses per hour (1–100)</Label><Input id="full-research-businesses-hour" data-testid="full-research-businesses-hour" type="number" min="1" max="100" step="1" value={businessesPerHour} disabled={pending||running} onChange={event=>setBusinessesPerHour(event.target.value)}/></div>
-        <div className="space-y-1"><Label htmlFor="full-research-paid-hour">Paid calls per hour (1–100)</Label><Input id="full-research-paid-hour" data-testid="full-research-paid-hour" type="number" min="1" max="100" step="1" value={paidCallsPerHour} disabled={pending||running} onChange={event=>setPaidCallsPerHour(event.target.value)}/></div>
-        <div className="space-y-1"><Label htmlFor="full-research-paid-total">Paid calls total for this list (1–10,000)</Label><Input id="full-research-paid-total" data-testid="full-research-paid-total" type="number" min="1" max="10000" step="1" value={paidCallsPerList} disabled={pending||running} onChange={event=>setPaidCallsPerList(event.target.value)}/></div>
+          <div className="space-y-1"><Label htmlFor="full-research-businesses-hour">Businesses per hour (1–100)</Label><Input id="full-research-businesses-hour" data-testid="full-research-businesses-hour" type="number" min="1" max="100" step="1" value={businessesPerHour} disabled={pending||running||savedCapsOnly} onChange={event=>setBusinessesPerHour(event.target.value)}/></div>
+          <div className="space-y-1"><Label htmlFor="full-research-paid-hour">Paid calls per hour (1–100)</Label><Input id="full-research-paid-hour" data-testid="full-research-paid-hour" type="number" min="1" max="100" step="1" value={paidCallsPerHour} disabled={pending||running||savedCapsOnly} onChange={event=>setPaidCallsPerHour(event.target.value)}/></div>
+          <div className="space-y-1"><Label htmlFor="full-research-paid-total">Paid calls total for this list (1–10,000)</Label><Input id="full-research-paid-total" data-testid="full-research-paid-total" type="number" min="1" max="10000" step="1" value={paidCallsPerList} disabled={pending||running||savedCapsOnly} onChange={event=>setPaidCallsPerList(event.target.value)}/></div>
       </div>
+       <p data-testid="full-research-limit-scope" className="text-xs text-muted-foreground">
+         New searches default to {FULL_RESEARCH_DEFAULTS.paidCallsPerHour} paid requests per rolling hour.
+         Saved searches resume within their existing confirmed caps; viewing this page does not change them.
+       </p>
       {providerEmpty && <Alert variant="destructive" data-testid="provider-credits-empty">
         <AlertTitle>No SerpAPI credits remaining</AlertTitle>
         <AlertDescription>The provider account has 0 searches left. Your list cap is a separate safety limit, not available provider credit. Replenish credits or wait for the allowance to renew, then check the balance before resuming. Waiting an hour or raising this list cap will not restore provider credits.</AlertDescription>

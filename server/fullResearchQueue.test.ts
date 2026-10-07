@@ -17,7 +17,7 @@ import { EMPTY_OWNER_NAME_RESULT } from "@shared/salonOwnerName";
 // create live records, spend provider requests, or send outreach.
 const dialect = new PgDialect();
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-function fixture(count: number, fail: boolean | number = false, cachedBusinessSearch = false) {
+function fixture(count: number, fail: boolean | number = false, cachedBusinessSearch = false, contactRequests = 1) {
   const batch: any = { id: "fixture-list", userId: "fixture-owner", name: "Fixture uploaded list",
     status: "completed", researchProgress: { workflow: "unified_leads" }, totalRows: count };
   const rows: any[] = Array.from({ length: count }, (_, i) => ({
@@ -104,7 +104,8 @@ function fixture(count: number, fail: boolean | number = false, cachedBusinessSe
     },
     searchSalonContactPages: async (_row: any, _remaining: any, before: any, policy: any) => {
       hourlyPolicies.push(policy.hourlyLimit);
-      await provider(before, policy, 2); return { results: [], calls: 1, error: null };
+      for (let i = 0; i < contactRequests; i++) await provider(before, policy, 2);
+      return { results: [], calls: contactRequests, error: null };
     },
     enrichRow: async (row: any, options: any) => {
       await options.search("fixture", "78701", "TX", "fixture");
@@ -322,10 +323,80 @@ test("Full Research controls and worker use only isolated records/providers", as
       assert.ok(!env.rows[0].importedContactId);
     } finally { env.restore(); }
   });
-  await t.test("hourly paid cap stops mid-business without discarding prior evidence or allowing a duplicate start", async () => {
+  await t.test("new 80/hour run waits before request 81 and automatically continues without refunding history", async () => {
+    const env = fixture(30, false, false, 3);
+    try {
+      await controlFullResearch(env.batch.id, env.batch.userId, "start", { confirmed: true, ...FULL_RESEARCH_DEFAULTS });
+      await env.settled();
+      const run = env.batch.researchProgress.fullResearch;
+      assert.deepEqual(run.limits, { businessesPerHour: 20, paidCallsPerHour: 80, paidCallsPerList: 200 });
+      assert.equal(run.status, "waiting_hourly");
+      assert.equal(run.enabled, true);
+      assert.equal(env.providerAttempts, 80);
+      assert.equal(run.attempts.length, 80);
+      assert.equal(run.processedIds.length, 16);
+      assert.ok(run.startedRows.length < 20, "paid-request stop is distinct from the unchanged business stop");
+      assert.ok(env.hourlyPolicies.every(limit => limit === 80));
+      await tickFullResearchScheduler();
+      assert.equal(env.providerAttempts, 80, "request 81 must wait until allowance returns");
+      run.attempts.forEach((call: any) => { call.at = new Date(Date.now() - 3600001).toISOString(); });
+      const history = structuredClone(run.attempts);
+      run.nextRunAt = new Date(Date.now() - 1).toISOString();
+      await tickFullResearchScheduler();
+      await wait(20); await env.settled();
+      const continued = env.batch.researchProgress.fullResearch;
+      assert.equal(env.providerAttempts, 95);
+      assert.equal(continued.attempts.length, 95);
+      assert.deepEqual(continued.attempts.slice(0, 80), history);
+      assert.equal(env.rows[0].serpCallsUsed, 5, "completed businesses are not researched again");
+      assert.equal(continued.status, "waiting_hourly", "unchanged business allowance also remains enforced");
+      await controlFullResearch(env.batch.id, env.batch.userId, "pause", { confirmed: true });
+      await tickFullResearchScheduler();
+      assert.equal(env.providerAttempts, 95, "manual pause cannot be overridden by hourly continuation");
+    } finally { env.restore(); }
+  });
+  await t.test("the new 80-request default still stops before business 21", async () => {
     const env = fixture(30);
     try {
       await controlFullResearch(env.batch.id, env.batch.userId, "start", { confirmed: true, ...FULL_RESEARCH_DEFAULTS });
+      await env.settled();
+      const run = env.batch.researchProgress.fullResearch;
+      assert.equal(run.startedRows.length, 20);
+      assert.equal(run.processedIds.length, 20);
+      assert.equal(env.providerAttempts, 60);
+      assert.match(run.error, /Hourly business limit/);
+      assert.equal(run.limits.paidCallsPerList, 200);
+    } finally { env.restore(); }
+  });
+  await t.test("saved 40/hour run stays unchanged on viewing/startup and explicit resume ignores new-default fields", async () => {
+    const env = fixture(15);
+    try {
+      const prior = newFullResearch({ ...FULL_RESEARCH_DEFAULTS, paidCallsPerHour: 40 }, Date.now());
+      prior.enabled = false; prior.status = "paused";
+      prior.attempts = Array.from({ length: 40 }, () => ({
+        rowId: "previous-business", tool: "business_search", at: new Date().toISOString(),
+      }));
+      env.batch.researchProgress.fullResearch = prior;
+      env.batch.status = "paused";
+      const saved = JSON.stringify(env.batch.researchProgress);
+      await tickFullResearchScheduler();
+      assert.equal(JSON.stringify(env.batch.researchProgress), saved);
+      assert.equal(env.providerAttempts, 0);
+      await controlFullResearch(env.batch.id, env.batch.userId, "resume", { confirmed: true, paidCallsPerHour: 80 });
+      await env.settled();
+      const run = env.batch.researchProgress.fullResearch;
+      assert.equal(run.limits.paidCallsPerHour, 40);
+      assert.equal(run.attempts.length, 40);
+      assert.equal(env.providerAttempts, 0);
+      assert.equal(run.status, "waiting_hourly");
+      assert.deepEqual(run.attempts, prior.attempts);
+      assert.ok(env.hourlyPolicies.every(limit => limit === 40));
+    } finally { env.restore(); }
+  });
+  await t.test("hourly paid cap stops mid-business without discarding prior evidence or allowing a duplicate start", async () => {
+    const env = fixture(30);
+    try {
+      await controlFullResearch(env.batch.id, env.batch.userId, "start", { confirmed: true, ...FULL_RESEARCH_DEFAULTS, paidCallsPerHour: 40 });
       await assert.rejects(controlFullResearch(env.batch.id, env.batch.userId, "start", { confirmed: true, ...FULL_RESEARCH_DEFAULTS }), /already active|processing/);
       await env.settled();
       const run = env.batch.researchProgress.fullResearch;
@@ -417,12 +488,12 @@ test("Full Research controls and worker use only isolated records/providers", as
       assert.equal(env.batch.researchProgress.fullResearch.status, "completed");
     } finally { env.restore(); }
   });
-  await t.test("all research tools receive the confirmed 40/hour allowance, not legacy 20/hour", async () => {
+  await t.test("all research tools receive the new confirmed 80/hour allowance, not legacy 20/hour", async () => {
     const env = fixture(1);
     try {
       await controlFullResearch(env.batch.id, env.batch.userId, "start", { confirmed: true, ...FULL_RESEARCH_DEFAULTS });
       await env.settled();
-      assert.deepEqual(env.hourlyPolicies, [40, 40, 40]);
+      assert.deepEqual(env.hourlyPolicies, [80, 80, 80]);
     } finally { env.restore(); }
   });
   await t.test("shared hourly throttling waits without charging or marking the blocked business complete, then scheduler continues", async () => {

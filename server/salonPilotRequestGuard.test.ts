@@ -14,10 +14,11 @@ test("last-moment closure prevents the HTTP request and releases only its unused
   };
   const originalFetch = globalThis.fetch;
   let requests = 0, reservations = 0, releases = 0;
+  const hourlyLimits: number[] = [];
   storage.getSerpCache = async () => undefined;
   storage.getOrCreateSerpUsage = async () => ({ usedCredits: 0, hardStopAt: 200 }) as any;
   storage.getOrCreateLeadDiscoveryConfig = async () => ({ maxSerpCallsPerHour: 20 }) as any;
-  storage.reserveSerpCall = async () => { reservations++; return "isolated-reservation"; };
+  storage.reserveSerpCall = async (_month, hourlyLimit) => { reservations++; hourlyLimits.push(hourlyLimit); return "isolated-reservation"; };
   storage.releaseSerpCall = async () => { releases++; };
   globalThis.fetch = async () => { requests++; throw new Error("simulated uncertain network failure"); };
   try {
@@ -33,6 +34,14 @@ test("last-moment closure prevents the HTTP request and releases only its unused
     assert.equal(requests, 1);
     assert.equal(reservations, 2);
     assert.equal(releases, 1, "initiated requests retain their allowance when billing is uncertain");
+    for (const hourlyLimit of [40, 80]) {
+      await assert.rejects(searchWithSerpApi("Fixture", "00000", "CA", "fixture", {
+        requestPolicy: { hourlyLimit, onReservationBlocked: async () => {} },
+      }), /simulated uncertain network failure/);
+    }
+    assert.deepEqual(hourlyLimits, [20, 20, 40, 80], "confirmed worker allowance reaches actual storage instead of falling back to legacy configuration");
+    assert.equal(requests, 3);
+    assert.equal(releases, 1, "neither old nor new allowance refunds a started provider attempt");
   } finally {
     Object.assign(storage, originals);
     globalThis.fetch = originalFetch;

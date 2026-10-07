@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const FULL_RESEARCH_DEFAULTS = {
-  businessesPerHour: 20, paidCallsPerHour: 40, paidCallsPerList: 200,
+  businessesPerHour: 20, paidCallsPerHour: 80, paidCallsPerList: 200,
 };
 export const fullResearchLimitsSchema = z.object({
   businessesPerHour: z.number().int().min(1).max(100),

@@ -44,3 +44,9 @@ Authorization checks need endpoint tests with authentication-shaped principals, 
 **Why:** Both browser and service tests accepted a budget update, but a real administrator was rejected because the request handler searched identity-provider claims for the CRM role. Browser fixtures never exercised the backend guard, and service tests skipped the role extraction.
 
 **How to apply:** Match the existing authentication middleware's principal shape: the refreshed CRM role is separate from identity-provider claims. Exercise the registered route with an administrator whose identity claims have no CRM role, and verify that conflicting claims cannot grant a salesperson administrative access. Do not move CRM permissions into provider claims to accommodate a mistaken handler.
+
+Browser verification requires a successful process exit, not only a printed PASS message. Keep feature assertions, browser teardown, and full-suite runtime failures distinct.
+
+**Why:** An isolated walkthrough passed its assertions but failed while removing Chromium's temporary profile. A broader rerun then exceeded the shell deadline, while the focused feature checks exited successfully. Neither harness failure established a CRM feature failure.
+
+**How to apply:** Report which checks actually completed. Use focused, fully intercepted checks to isolate the requested behavior; investigate broader harness failures separately rather than changing CRM behavior to accommodate them. Never claim a timed-out full suite passed.
