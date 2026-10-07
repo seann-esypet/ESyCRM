@@ -4,6 +4,7 @@
 - [Salon site fetch mismatch](salon-site-fetch-mismatch.md) — a failed scripted crawl may be a request-profile mismatch, not evidence that the salon has no public email.
 - [Salon website discovery](salon-website-discovery.md) — organic search can surface directory-listed domains absent from Maps, but discovery does not verify a live salon-owned site.
 - [Manual salon form outreach](manual-salon-form-outreach.md) — a verified general-contact form is a separate reviewed contact path, never an automatic send or an email success.
+- [Optional Leads review inputs](optional-lead-review-inputs.md) — review text and checkmarks are optional; approval remains deliberate, and missing evidence is not public verification.
 - [Salon name evidence boundary](salon-name-evidence-boundary.md) — owner identity does not prove a mailbox's addressee; name approval and personal-name salutations are separate decisions.
 - [Sales-facing UI clarity](sales-ui-clarity.md) — use task-based labels salespeople understand; distinguish ordinary list uploads from pre-checked reports and samples.
 - [Contact deletion safety](contact-deletion-safety.md) — import cleanup must preserve sales and financial history, require confirmation, and avoid guessing which records belong to an import.

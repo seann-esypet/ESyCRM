@@ -60,7 +60,6 @@ export function LeadContactHighlights({
   )[0];
   const ownerApproved = Boolean(
     strongestCandidate?.id &&
-    ownerName?.status === "approved" &&
     strongestCandidate.roleConfirmed && strongestCandidate.businessMatched &&
     ownerName?.approvedAt &&
     ownerName.selectedCandidateId === strongestCandidate.id,

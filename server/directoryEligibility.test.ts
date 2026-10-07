@@ -80,7 +80,7 @@ test("decisions bind to business and provider evidence, support reversal, and ne
   assert.equal(directoryEligibility(excluded).blocked, true);
   assert.equal(directoryEligibility(reviewed(excluded, "approved")).blocked, false);
   assert.equal(directoryEligibility({ ...candidate, sourceData: { groomingReview: groomingReviewFor(candidate, "approved", "forged") } }).blocked, true);
-  assert.throws(() => groomingReviewFor(candidate, "approved", " "), /evidence or reason/);
+  assert.equal(groomingReviewFor(candidate, "approved", " ").note, "");
 });
 
 test("full summaries include hidden flagged, approved and excluded rows without approving unsuitable email rows", () => {
@@ -168,9 +168,8 @@ test("authenticated eligibility endpoints persist independently, protect ownersh
     assert.equal((await fetch(base + "/api/salon-enrichment/batches/batch/eligibility-summary")).status, 401);
     assert.equal((await request("other", { decision: "approved", note: "Review", confirmed: true })).status, 404);
     assert.equal((await request("owner", { decision: "approved", note: "Review" })).status, 400);
-    assert.equal((await request("owner", { decision: "approved", note: " ", confirmed: true })).status, 400);
     assert.equal(calls.length, 0);
-    assert.equal((await request("owner", { decision: "approved", note: "Confirmed grooming service page", confirmed: true })).status, 200);
+    assert.equal((await request("owner", { decision: "approved", confirmed: true })).status, 200);
     assert.equal(current.reviewStatus, "needs_review");
     assert.equal(current.importedContactId, null);
     assert.equal(directoryEligibility(current).blocked, false);

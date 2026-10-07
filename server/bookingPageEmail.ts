@@ -104,6 +104,8 @@ export function importableSalonEmailCandidate(
   if (!email || salonEmailDomainRestriction(email) || !evidence || evidence.value?.trim().toLowerCase() !== email.toLowerCase()) return null;
   if (row.identityMatchStatus !== "strong") return null;
   if (evidence.purpose && evidence.purpose !== "general") return null;
+  if (evidence.source === "manual_approval" && evidence.confidence === "manual" &&
+      evidence.purpose === "general" && (row.sourceData as { Outcome?: string } | null)?.Outcome === "manually_approved_email") return email;
   if (evidence.source === "public_web_review" && evidence.confidence === "high" &&
       evidence.purpose === "general") {
     const sourceData = row.sourceData as { Outcome?: string } | null;

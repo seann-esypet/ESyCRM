@@ -17,6 +17,7 @@ import { leadRecipient } from "@shared/leadWorkflowState";
 import { controlFullResearch } from "./fullResearchQueue";
 import { getProviderCredits } from "./providerCredits";
 import { confirmSharedProviderBudget, readSharedProviderBudget } from "./sharedProviderBudget";
+import { renderContactFormDraft } from "./leadContactFormDraft";
 
 const scope = (req: any) => req.user.role === "admin" ? null : req.user.claims.sub as string;
 function confirmed(req: any) { if (req.body?.confirmed !== true) throw new Error("Confirm this action before continuing."); }
@@ -33,6 +34,21 @@ export function registerLeadWorkspaceRoutes(app: Express, auth: RequestHandler,
     return recoveredLeadEvidence(row);
   }
   route("get", "/api/leads", req => storage.getSalonEnrichmentBatches(scope(req)));
+  route("get", "/api/leads/rows/:rowId/form-draft-templates", async req => {
+    await ownedRow(req);
+    return (await storage.getEmailSequences(req.user.claims.sub))
+      .filter(s => s.isActive === "true" && s.sequenceNumber === 1)
+      .map(s => ({ id: s.id, name: `${s.sequenceTrack.replace(/_/g," ")} · ${s.strategy} · ${s.subject.slice(0,80)}` }));
+  });
+  route("post", "/api/leads/rows/:rowId/form-draft", async req => {
+    const row = await ownedRow(req);
+    if (row.status === "processing") throw new Error("Wait for research to finish before generating a draft.");
+    const sequence = await storage.getEmailSequence(String(req.body?.sequenceId || ""), req.user.claims.sub);
+    if (!sequence || sequence.isActive !== "true" || sequence.sequenceNumber !== 1) throw new Error("Choose one of your active first-step outreach messages.");
+    const sender = await storage.getUser(req.user.claims.sub);
+    if (!sender) throw new Error("Your salesperson profile could not be loaded.");
+    return renderContactFormDraft(row, getSalonOwnerNameResult(row), sequence, sender);
+  });
   route("post", "/api/recipient-outreach/history", async req => {
     const ids = req.body?.contactIds;
     if (!Array.isArray(ids) || ids.length > 200) throw new Error("Preview up to 200 selected contacts at a time.");
@@ -230,7 +246,7 @@ export function registerLeadWorkspaceRoutes(app: Express, auth: RequestHandler,
     const evidence = { ...directoryObject(row.evidence), email };
     const updated = await storage.updateSalonEnrichmentRow(row.id, {
       email: email.value, evidence, identityMatchStatus: "strong", reviewStatus: "approved", status: "enriched",
-      sourceData: { ...directoryObject(row.sourceData), Outcome: String(leadView(row).historicalFinding).includes("directory") || directoryObject(directoryObject(row.evidence).email).source === "public_directory" ? "verified_independent_directory_email" : "verified_first_party_email", category: "verified_public_email",
+      sourceData: { ...directoryObject(row.sourceData), Outcome: email.source === "manual_approval" ? "manually_approved_email" : String(leadView(row).historicalFinding).includes("directory") || directoryObject(directoryObject(row.evidence).email).source === "public_directory" ? "verified_independent_directory_email" : "verified_first_party_email", category: email.source === "manual_approval" ? "manually_approved_email" : "verified_public_email",
         reviewHistory: [...(Array.isArray(directoryObject(row.sourceData).reviewHistory) ? directoryObject(row.sourceData).reviewHistory as any[] : []),
           { at:new Date().toISOString(),actor:req.user.claims.sub,previousEvidence:directoryObject(row.evidence).email||null,previousReviewStatus:row.reviewStatus }],
         reviewDecision: { at: new Date().toISOString(), actor: req.user.claims.sub, note: req.body.reviewNote } },

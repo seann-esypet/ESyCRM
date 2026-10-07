@@ -85,7 +85,7 @@ export function directoryEligibility(row: EligibilityRow): DirectoryEligibility 
   const identityKey = JSON.stringify([row.businessName || row.company || "", row.address || "", row.placeId || "",
     listing.name, listing.address, listing.placeId, [...filteredCategories].sort()]);
   const review = directoryObject(evidence.groomingReview);
-  const validReview = review.identityKey === identityKey && !!clean(review.note) &&
+  const validReview = review.identityKey === identityKey && typeof review.note === "string" &&
     typeof review.reviewedAt === "string" && !Number.isNaN(Date.parse(review.reviewedAt));
   const decision = validReview && ["approved", "excluded"].includes(review.decision) ? review.decision : "pending";
   const blocked = decision === "excluded" || (decision !== "approved" && ["unrelated", "ambiguous"].includes(classification));
@@ -99,7 +99,6 @@ export function directoryEligibility(row: EligibilityRow): DirectoryEligibility 
     reviewNote: validReview ? clean(review.note) : null, identityKey };
 }
 export function groomingReviewFor(row: EligibilityRow, decision: GroomingReview["decision"], note: string): GroomingReview {
-  if (!note.trim()) throw new Error("Record the evidence or reason for this grooming decision");
   return { decision, note: note.trim().slice(0, 1500), identityKey: directoryEligibility(row).identityKey, reviewedAt: new Date().toISOString() };
 }
 export function directoryEligibilitySummary(rows: EligibilityRow[]) {

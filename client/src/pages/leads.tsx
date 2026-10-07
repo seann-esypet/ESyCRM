@@ -7,12 +7,12 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import Header from "@/components/layout/header";
 import { OwnerNameReview } from "@/components/owner-name-review";
 import { LeadContactHighlights } from "@/components/leads/lead-contact-highlights";
+import { ContactFormDraft } from "@/components/leads/contact-form-draft";
 import { GroomingChecksPanel } from "@/components/leads/grooming-checks";
 import { LeadWorkflowGuide } from "@/components/leads/workflow-guide";
 import { FullResearchPanel, type FullResearchStatus } from "@/components/leads/full-research-panel";
 import { CompletedSearches } from "@/components/leads/completed-searches";
 import { useToast } from "@/hooks/use-toast";
-import { DirectoryEligibilityReview } from "@/components/directory-eligibility";
 import { directoryEligibility, type DirectoryEligibility, type EligibilityRow } from "@shared/directoryEligibility";
 import { leadResearchNeedsRefresh, leadSchedulePreviewReady, leadRecipient, type LeadResearchProgress } from "@shared/leadWorkflowState";
 import { Button } from "@/components/ui/button";
@@ -30,7 +30,7 @@ type LeadBatch = { id: string; name: string; fileName?: string; status: string; 
 type LeadRow = {
   id: string; batchId: string; businessName: string; address?: string; state?: string; websiteUrl?: string;
   researchState?: "not_started" | "researching" | "researched" | "waiting_hourly" | "failed";
-  email?: string; candidateEmail?: string; sourceUrl?: string; evidenceNote?: string; category?: string;
+  email?: string; candidateEmail?: string; sourceUrl?: string; evidenceNote?: string; category?: string; placeId?: string;
   reviewStatus?: string; status?: string; identityMatchStatus?: string; importedContactId?: string; dealId?: string;
   nextAction?: string; historicalFinding?: unknown; sourceData?: Record<string, unknown>; evidence?: unknown;
   ownerName?: any; contactName?: any; eligibility?: unknown; processedAt?: string; recipientHistory?: unknown;
@@ -104,6 +104,64 @@ function researchBadge(state: LeadRow["researchState"], waitReason?: unknown) {
     case "failed": return <Badge variant="destructive">Research failed</Badge>;
     default: return <Badge variant="outline">Not researched</Badge>;
   }
+}
+
+function LeadGroomingReview({ row, eligibility, onRefresh }: {
+  row: LeadRow;
+  eligibility: DirectoryEligibility;
+  onRefresh: () => void;
+}) {
+  const [note, setNote] = useState("");
+  const [confirmed, setConfirmed] = useState(false);
+  const provider = eligibility.listing;
+  const save = useMutation({
+    mutationFn: (decision: "approved" | "excluded") => requestJson(
+      `/api/salon-enrichment/rows/${encodeURIComponent(row.id)}/eligibility`,
+      { decision, note: note.trim() || undefined, confirmed: true },
+    ),
+    onSuccess: () => {
+      setNote("");
+      setConfirmed(false);
+      onRefresh();
+    },
+  });
+  const sourceName = row.businessName || "—";
+  const sourceAddress = row.address || "—";
+  const sourcePlaceId = row.placeId || "";
+  const comparable = [[sourceName === "—" ? "" : sourceName, provider.name], [sourceAddress === "—" ? "" : sourceAddress, provider.address], [sourcePlaceId, provider.placeId]].filter(([source, listing]) => Boolean(source && listing));
+  const exactMatch = comparable.length > 0 && comparable.every(([source, listing]) =>
+    String(source).trim().toLocaleLowerCase().replace(/\s+/g, " ") === String(listing).trim().toLocaleLowerCase().replace(/\s+/g, " "),
+  );
+  return <section className={`rounded-md border-2 p-3 ${eligibility.blocked ? "border-amber-300 bg-amber-50/60 dark:bg-amber-950/10" : "border-slate-300 bg-muted/10 dark:border-slate-700"}`} aria-label="Grooming eligibility evidence">
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Grooming suitability</span>
+      <Badge variant={eligibility.decision === "approved" ? "default" : eligibility.decision === "excluded" ? "destructive" : "outline"}>
+        {eligibility.decision === "approved" ? "Human approved" : eligibility.decision === "excluded" ? "Human excluded" : "Review pending"}
+      </Badge>
+      {eligibility.flagged && <Badge variant="destructive">Flagged</Badge>}
+    </div>
+    <p className="mt-1 text-xs text-muted-foreground">{eligibility.reason}</p>
+    <p className="mt-1 text-xs"><span className="text-muted-foreground">Provider categories: </span>{provider.categories.length ? provider.categories.join(" · ") : "Not supplied"}</p>
+    <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+      <div className="rounded-md border-2 bg-background p-3"><b>Source row</b><p className="mt-1">Business: {sourceName}</p><p>Address: {sourceAddress}</p><p className="break-all">Place ID: {sourcePlaceId || "—"}</p></div>
+      <div className="rounded-md border-2 bg-background p-3"><b>{provider.provider} listing</b><p className="mt-1">Business: {provider.name || "—"}</p><p>Address: {provider.address || "—"}</p><p className="break-all">Place ID: {provider.placeId || "—"}</p></div>
+    </div>
+    <p className={`mt-2 text-xs font-medium ${exactMatch ? "text-emerald-800 dark:text-emerald-300" : "text-amber-800 dark:text-amber-300"}`}>Identity evidence: {exactMatch ? "Exact match on comparable source values" : "Identity not confirmed"}</p>
+    {provider.sourceUrl && <a className="mt-2 inline-flex text-xs font-medium text-primary underline" href={provider.sourceUrl} target="_blank" rel="noopener noreferrer">Open provider listing</a>}
+    {eligibility.reviewNote && <p className="mt-2 border-l-2 border-primary/40 pl-2 text-xs"><b>Reviewer note:</b> {eligibility.reviewNote}</p>}
+    <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+      <div className="space-y-2">
+        <div><Label>Reviewer note <span className="font-normal text-muted-foreground">· optional</span></Label><Textarea rows={2} value={note} onChange={event => setNote(event.target.value)} placeholder="Optional context for this grooming decision." className="border-2 bg-background text-sm" /></div>
+        <label className="flex items-start gap-2 text-xs text-muted-foreground"><Checkbox checked={confirmed} onCheckedChange={value => setConfirmed(value === true)} disabled={save.isPending} /><span>Optional confirmation: I reviewed the provider evidence and confirm this decision. This does not approve the email.</span></label>
+      </div>
+      <div className="flex flex-wrap gap-2 sm:justify-end">
+        <Button size="sm" className="min-h-10" disabled={save.isPending} onClick={() => save.mutate("approved")}><Check className="mr-1 h-4 w-4" />Approve grooming</Button>
+        <Button size="sm" variant="outline" className="min-h-10" disabled={save.isPending} onClick={() => save.mutate("excluded")}><span aria-hidden="true">×</span><span className="ml-1">Exclude</span></Button>
+      </div>
+    </div>
+    {save.isError && <p role="alert" className="mt-2 rounded border-2 border-destructive/40 p-2 text-xs text-destructive">Could not save grooming decision: {(save.error as Error).message}</p>}
+    <p className="mt-2 text-[11px] text-muted-foreground">{eligibility.blocked ? "Grooming review is a separate approval gate for email approval, Contacts, and outreach." : "Suitability approval and identity evidence do not replace email or owner review."}</p>
+  </section>;
 }
 function FieldMap({ raw, mapping, setMapping }: { raw: Raw[]; mapping: Record<string,string>; setMapping: (v: Record<string,string>) => void }) {
   const headers = Object.keys(raw[0] ?? {});
@@ -183,6 +241,7 @@ function LeadRowCard({row,onRefresh}:{row:LeadRow;onRefresh:()=>void}) {
   const [scheduleMessage,setScheduleMessage]=useState("");
   const [crmMessage,setCrmMessage]=useState("");
   const eligibility=(row.eligibility as DirectoryEligibility|undefined)??directoryEligibility(row as unknown as EligibilityRow);
+  const emailToApprove=[row.candidateEmail,row.email].map(value=>value?.trim()||"").find(value=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value))||"";
   const history=useQuery<LeadHistory>({
     queryKey:["/api/leads/rows",row.id,"history",row.importedContactId||null],queryFn:()=>requestJson(`/api/leads/rows/${encodeURIComponent(row.id)}/history`),enabled:open,
   });
@@ -237,7 +296,7 @@ function LeadRowCard({row,onRefresh}:{row:LeadRow;onRefresh:()=>void}) {
   });
   const reviewMutation=useMutation({
     mutationFn:({decision}:{decision:"approved"|"rejected"})=>requestJson(`/api/leads/rows/${encodeURIComponent(row.id)}/review`,{
-      confirmed:true,decision,sourceUrl:sourceUrl.trim()||undefined,reviewNote:note.trim()||undefined,
+      confirmed:true,decision,sourceUrl:sourceUrl.trim(),reviewNote:note.trim()||undefined,
       ...(historical?{historicalEvidenceConfirmed:true}:{}),...(identity?{identityConfirmed:true}:{}),
     }),
     onSuccess:onRefresh,
@@ -305,16 +364,22 @@ function LeadRowCard({row,onRefresh}:{row:LeadRow;onRefresh:()=>void}) {
       </section>
       <div className="grid gap-4 lg:grid-cols-2">
         <section className="space-y-2 rounded-lg border-2 border-slate-400 bg-card p-3 dark:border-slate-600"><h4 className="text-sm font-semibold">Email & identity review</h4><p className="text-xs leading-5 text-muted-foreground">Email review is independent from a personal name. Inspect the source yourself and confirm the address is a general-contact email for this business. Grooming suitability is reviewed separately below.</p>
-          <div><Label>Source URL</Label><Input value={sourceUrl} onChange={e=>setSourceUrl(e.target.value)} placeholder="https://business.example/contact"/></div>
-          <div><Label>Required review note</Label><Textarea value={note} onChange={e=>setNote(e.target.value)} placeholder="Describe what you inspected and how it matches the business/location."/></div>
-          <label className="flex items-start gap-2 text-xs"><Checkbox checked={historical} onCheckedChange={v=>setHistorical(v===true)}/><span>I inspected the source, matched the business/location, and confirmed this is a general-contact email.</span></label>
-          <label className="flex items-start gap-2 text-xs"><Checkbox checked={identity} onCheckedChange={v=>setIdentity(v===true)}/><span>I confirm this source and suggested email belong to this business identity.</span></label>
-          <div className="flex flex-wrap gap-2"><Button size="sm" disabled={reviewMutation.isPending||!sourceUrl.trim()||!note.trim()||!identity||!historical||eligibility.blocked} onClick={()=>reviewMutation.mutate({decision:"approved"})}><Check className="mr-1.5 h-4 w-4"/>Approve email</Button><Button size="sm" variant="outline" disabled={reviewMutation.isPending} onClick={()=>reviewMutation.mutate({decision:"rejected"})}>Reject suggestion</Button></div>
+          <div><Label>Source URL <span className="font-normal text-muted-foreground">· optional</span></Label><Input value={sourceUrl} onChange={e=>setSourceUrl(e.target.value)} placeholder="https://business.example/contact"/></div>
+          <div><Label>Review note <span className="font-normal text-muted-foreground">· optional</span></Label><Textarea value={note} onChange={e=>setNote(e.target.value)} placeholder="Describe what you inspected and how it matches the business/location."/></div>
+          <label className="flex items-start gap-2 text-xs"><Checkbox checked={historical} onCheckedChange={v=>setHistorical(v===true)}/><span>Optional confirmation: I inspected the source, matched the business/location, and confirmed this is a general-contact email.</span></label>
+          <label className="flex items-start gap-2 text-xs"><Checkbox checked={identity} onCheckedChange={v=>setIdentity(v===true)}/><span>Optional confirmation: I confirm this source and suggested email belong to this business identity.</span></label>
+          <div className="rounded-lg border-2 border-slate-300 bg-muted/30 p-3 dark:border-slate-700">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Email being approved</p>
+            <p className="mt-1 break-all text-lg font-bold" data-testid="lead-email-approval-target">{emailToApprove||"No email found"}</p>
+          </div>
+          <div className="flex flex-wrap gap-2"><Button size="sm" disabled={reviewMutation.isPending||!emailToApprove||eligibility.blocked} onClick={()=>reviewMutation.mutate({decision:"approved"})}><Check className="mr-1.5 h-4 w-4"/>Approve email</Button><Button size="sm" variant="outline" disabled={reviewMutation.isPending} onClick={()=>reviewMutation.mutate({decision:"rejected"})}>Reject suggestion</Button></div>
+          {!emailToApprove&&<p role="status" className="text-xs font-medium text-amber-800">A usable email address is required before approval.</p>}
           {eligibility.blocked&&<p className="text-xs text-amber-800">Email approval is blocked until grooming suitability is separately approved.</p>}
           {!!row.historicalFinding&&<div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950"><b>Historical source finding — inspect evidence</b><pre className="mt-2 whitespace-pre-wrap font-sans">{pretty(row.historicalFinding)}</pre></div>}
+          <ContactFormDraft key={`${row.id}:${row.businessName}:${row.address||""}:${row.ownerName?.lookedUpAt||""}:${row.ownerName?.selectedCandidateId||""}:${row.ownerName?.approvedAt||""}:${row.ownerName?.usePersonalName||false}`} rowId={row.id} businessName={row.businessName} address={row.address} ownerSearch={row.ownerName ? {status:row.ownerName.status,lookedUpAt:row.ownerName.lookedUpAt,error:row.ownerName.error}:undefined}/>
         </section>
         <section className="space-y-2 rounded-lg border-2 border-slate-400 bg-card p-3 dark:border-slate-600"><h4 className="text-sm font-semibold">Grooming eligibility & source history</h4>
-          <DirectoryEligibilityReview row={row as unknown as EligibilityRow} eligibility={row.eligibility as DirectoryEligibility|undefined} endpoint={`/api/salon-enrichment/rows/${encodeURIComponent(row.id)}/eligibility`} compact invalidateKeys={[["/api/leads",row.batchId]]}/>
+          <LeadGroomingReview row={row} eligibility={eligibility} onRefresh={onRefresh}/>
           <details className="rounded-md border p-3"><summary className="cursor-pointer text-sm font-medium">Evidence notes and original row</summary><p className="mt-3 whitespace-pre-wrap break-words text-xs leading-5">{pretty(row.evidenceNote||"No evidence notes supplied.")}</p><pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-words border-t pt-3 text-[11px] leading-5">{pretty(row.evidence||"No structured evidence supplied.")}</pre><pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-words border-t pt-3 text-[11px] leading-5">{pretty(sourceData||"Original row unavailable")}</pre></details>
           {!historyAvailable&&(history.isLoading||sequenceData.isLoading)?<p className="text-xs text-muted-foreground">Checking permission-safe recipient history before any scheduling option is enabled…</p>:!historyAvailable?<Alert variant="destructive"><AlertDescription>Recipient history unavailable. Scheduling is disabled until history can be checked: {(history.error as Error)?.message||(sequenceData.error as Error)?.message}</AlertDescription></Alert>:<div className="rounded-md border p-3 text-xs"><b>{recipientHistory?.label||"No recorded schedule or email history"}</b>{recipientHistory?.crossOwner&&<p className="mt-1">History includes another owner.</p>}{recipientHistory?.history.map((h,i)=><p key={i} className="mt-2">{h.status} · {dateText(h.date)}{h.sequenceTrack?` · ${h.sequenceTrack}`:""}</p>)}</div>}
           {(crmContactId||row.importedContactId)&&<p className="text-xs text-emerald-800">Contact linked: <Link className="underline" href={`/contacts?edit=${encodeURIComponent(crmContactId||row.importedContactId!)}`}>open record</Link></p>}

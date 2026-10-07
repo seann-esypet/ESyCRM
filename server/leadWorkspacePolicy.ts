@@ -106,12 +106,16 @@ export function historicalApprovalEvidence(row: SalonEnrichmentRow, input: Recor
   const view = leadView(row);
   const candidate = (row.email || view.candidateEmail || "").trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(candidate) || salonEmailDomainRestriction(candidate)) throw new Error("A usable business email is required; restricted service addresses cannot be approved.");
-  if (input.identityConfirmed !== true || input.historicalEvidenceConfirmed !== true || typeof input.reviewNote !== "string" || !input.reviewNote.trim()) {
-    throw new Error("Inspect the original source, confirm the exact business/location and general-contact purpose, and enter a review note.");
+  const sourceUrl = String(typeof input.sourceUrl === "string" ? input.sourceUrl : view.sourceUrl || "").trim();
+  if (sourceUrl) {
+    let url: URL;
+    try { url = new URL(sourceUrl); } catch { throw new Error("If supplied, the source must be a valid public HTTPS URL."); }
+    if (url.protocol !== "https:" || url.username || url.password) throw new Error("If supplied, the source must be a public HTTPS URL.");
   }
-  const sourceUrl = String(input.sourceUrl || view.sourceUrl || "");
-  const url = new URL(sourceUrl);
-  if (url.protocol !== "https:" || url.username || url.password) throw new Error("A public HTTPS source URL is required for historical evidence approval.");
-  return { value: candidate, source: "public_web_review", confidence: "high", sourceUrl, purpose: "general",
-    fetchedAt: new Date().toISOString(), reviewedAt: new Date().toISOString(), reviewNote: input.reviewNote.trim() };
+  const sourceReviewed = Boolean(sourceUrl && input.identityConfirmed === true && input.historicalEvidenceConfirmed === true);
+  return { value: candidate, source: sourceReviewed ? "public_web_review" : "manual_approval", confidence: sourceReviewed ? "high" : "manual",
+    sourceUrl: sourceUrl || null, purpose: "general",
+    fetchedAt: sourceReviewed ? new Date().toISOString() : null, reviewedAt: new Date().toISOString(),
+    reviewNote: typeof input.reviewNote === "string" ? input.reviewNote.trim().slice(0,1500) : "",
+    identityConfirmed: input.identityConfirmed === true, sourceInspected: input.historicalEvidenceConfirmed === true };
 }

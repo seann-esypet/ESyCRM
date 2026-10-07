@@ -10,6 +10,7 @@ import { unifiedUploadRow, leadView, historicalApprovalEvidence } from "../serve
 import { renderLeadSequencePreview } from "../server/leadSequencePreview.ts";
 import { leadResearchResults, filterLeadResearchRows } from "../server/leadResearchResults.ts";
 import { evaluateGroomingPages } from "../server/groomingChecks.ts";
+import { renderContactFormDraft } from "../server/leadContactFormDraft.ts";
 const profile = await mkdtemp(join(tmpdir(),"leads-browser-"));
 const chrome = spawn("chromium",["--headless","--no-sandbox","--disable-dev-shm-usage","--remote-debugging-port=0",`--user-data-dir=${profile}`,"about:blank"],{stdio:"ignore"});
 const pending=new Map(),errors=[],writes=[];
@@ -162,6 +163,66 @@ async function fullResearchUiCase(origin){
     await send("Page.captureScreenshot",{format:"jpeg",quality:65}).then(r=>writeFile(`reports/workflow-fixtures/${role}-full-research-${label}.jpg`,Buffer.from(r.data,"base64")));
   }
 }
+async function contactFormDraftUiCase(origin) {
+  writes.length=0;
+  const batch={id:"fixture-form-draft",name:"Contact form draft fixture",status:"completed",totalRows:1,createdAt:new Date().toISOString()};
+  const target={...unifiedUploadRow({Business:"Fixture Forms Grooming",Address:"123 Main Street Austin TX",State:"TX"},0,"fixture-owner"),
+    id:"fixture-form-row",batchId:batch.id,status:"enriched",reviewStatus:"needs_review",
+    evidence:{ownerName:{status:"failed",candidates:[],selectedCandidateId:null,approvedAt:null,usePersonalName:false,
+      providerCalls:1,pagesFetched:0,lookedUpAt:"2026-10-07T12:00:00Z",error:"Owner provider timed out"}}};
+  rows=[target];batches=[batch];
+  const panel=`document.querySelector('[aria-label="Contact form message draft for Fixture Forms Grooming"]')`;
+  for(const [label,width,height,mobile] of [["desktop",1365,950,false],["mobile",402,874,true]]){
+    await send("Emulation.setDeviceMetricsOverride",{width,height,deviceScaleFactor:1,mobile});
+    await send("Page.navigate",{url:origin+"/leads/"+batch.id});await until("document.querySelector('article')","draft candidate");
+    if(mobile){await evaluate(`document.querySelector('button[aria-label="Collapse sidebar"]')?.click()`);await until(`document.querySelector('button[aria-label="Expand sidebar"]')`,"collapsed sidebar");}
+    await click("Review details",article);await until(panel,"draft panel");
+    assert.equal(await evaluate(`${button("Approve email",article)}.disabled`),true);
+    assert.equal(await evaluate(`${article}.innerText.includes('No email found')`),true);
+    assert.equal(await evaluate(`${article}.querySelectorAll('input[required], textarea[required]').length`),0);
+    await click("Build a draft",panel);
+    await until(`${panel}.querySelector('[role="combobox"]')`,"saved message choice");
+    assert.equal(await evaluate(`${panel}.innerText.includes('Owner lookup failed')`),true,"lookup result must be visible before generating");
+    await evaluate(`${panel}.querySelector('[role="combobox"]').click()`);
+    await until(`document.querySelector('[role="option"]')`,"saved message option");
+    await evaluate(`document.querySelector('[role="option"]').click()`);
+    await click("Generate draft",panel);
+    await until(`document.getElementById('draft-body-fixture-form-row')`,"editable draft");
+    assert.equal(await evaluate(`document.getElementById('draft-greeting-fixture-form-row').value`),"Hi Fixture Forms Grooming team,");
+    assert.equal(await evaluate(`document.getElementById('draft-body-fixture-form-row').value.includes('Fixture Forms Grooming team')`),true);
+    assert.equal(await evaluate(`${panel}.innerText.includes('Owner provider timed out')`),true);
+    await evaluate(`Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async value=>{window.__copiedDraft=value;}}})`);
+    await evaluate(`(()=>{const e=document.getElementById('draft-body-fixture-form-row');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(e,'Edited message for manual form submission');e.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+    await click("Copy message",panel);
+    assert.equal(await evaluate("window.__copiedDraft"),"Edited message for manual form submission");
+    await click("Copy all",panel);
+    assert.equal(await evaluate(`window.__copiedDraft.includes('Subject:')&&window.__copiedDraft.includes('Edited message')`),true);
+    await evaluate(`Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{throw new Error('Fixture clipboard blocked');}}})`);
+    await click("Copy message",panel);
+    assert.equal(await evaluate(`${panel}.innerText.includes('Could not copy message')`),true);
+    await evaluate(`${panel}.scrollIntoView({block:'start'})`);await pause(250);
+    assert.equal(await evaluate("document.documentElement.scrollWidth>window.innerWidth"),false);
+    await send("Page.captureScreenshot",{format:"jpeg",quality:75}).then(r=>writeFile(`reports/workflow-fixtures/${role}-contact-form-draft-${label}.jpg`,Buffer.from(r.data,"base64")));
+  }
+  assert.deepEqual(writes,["draft-preview","draft-preview"],"generating, editing and copying cannot submit, approve, enroll or send");
+  target.evidence.ownerName={...target.evidence.ownerName,status:"not_searched",lookedUpAt:null};
+  await send("Page.navigate",{url:origin+"/leads/"+batch.id});await until("document.querySelector('article')","unsearched row");
+  await click("Review details",article);await click("Build a draft",panel);
+  await until(`${panel}.querySelector('[role="combobox"]')`,"unsearched draft tool");
+  assert.equal(await evaluate(`${button("Generate draft",panel)}.disabled`),true);
+  assert.equal(await evaluate(`${panel}.innerText.includes('Run the owner search')`),true);
+  target.email="team@fixture.example";
+  await send("Page.navigate",{url:origin+"/leads/"+batch.id});await until("document.querySelector('article')","email now present");
+  await click("Review details",article);
+  assert.equal(await evaluate(`${button("Approve email",article)}.disabled`),false,"blank optional review fields cannot block an actual email");
+  await click("Approve email",article);
+  await until(`${article}.innerText.includes('approved')`,"deliberate manual email approval");
+  assert.equal(target.reviewStatus,"approved");
+  assert.equal(target.evidence.email.source,"manual_approval");
+  assert.equal(target.evidence.email.reviewNote,"");
+  assert.equal(target.evidence.email.sourceUrl,null);
+  await send("Emulation.setDeviceMetricsOverride",{width:1365,height:900,deviceScaleFactor:1,mobile:false});
+}
 async function groomingUiCase(origin) {
   writes.length=0;
   const batch={id:"fixture-grooming-checks",name:"Grooming checks fixture",status:"completed",totalRows:1,createdAt:new Date().toISOString()};
@@ -208,7 +269,7 @@ async function groomingUiCase(origin) {
   }
   assert.deepEqual(writes,[],"reading findings and expanding sources cannot approve, import, schedule or research");
   target.reviewStatus="approved";
-  target.evidence.ownerName={...owner,status:"approved",selectedCandidateId:"fixture-avery",approvedAt:new Date().toISOString()};
+  target.evidence.ownerName={...owner,status:"needs_review",selectedCandidateId:"fixture-avery",approvedAt:new Date().toISOString()};
   await load();
   assert.equal(await evaluate(`document.querySelector('[aria-label="Found contact details"]').innerText.includes('Owner approved')`),true);
   assert.equal(await evaluate(`document.querySelector('[aria-label="Found contact details"]').innerText.includes('Approved')`),true);
@@ -681,6 +742,11 @@ async function api(url,method,body) {
     const contact=linkedContact(row);if(contact)linkedPreviewReads++;
     return {sequences:[{...fixtureSequence,...(contact?renderLeadSequencePreview(fixtureSequence,contact,fixtureSender):{renderedSubject:null,renderedBody:null,greetingPreview:null,previewFingerprint:null})}],history:{label:scheduled?"Already scheduled":null,history:[],crossOwner:false},contact};
   }
+  if(row&&method==="GET"&&url.pathname.endsWith("/form-draft-templates"))return[{id:fixtureSequence.id,name:"Saved outreach fixture"}];
+  if(row&&method==="POST"&&url.pathname.endsWith("/form-draft")){
+    assert.equal(body.sequenceId,fixtureSequence.id);writes.push("draft-preview");
+    return renderContactFormDraft(row,row.evidence.ownerName,fixtureSequence,fixtureSender);
+  }
   if(row&&method==="POST"){
     assert.equal(body.confirmed,true);
     if(url.pathname.endsWith("/review")){
@@ -743,6 +809,10 @@ try {
       await groomingUiCase(origin);
       continue;
     }
+    if(process.argv.includes("--contact-form-only")){
+      await contactFormDraftUiCase(origin);
+      continue;
+    }
     await send("Emulation.setDeviceMetricsOverride",{width:1365,height:900,deviceScaleFactor:1,mobile:false});
     await send("Page.navigate",{url:origin+"/leads?upload=1"});
     await until("document.body.innerText.includes('Search for Businesses')","Leads home");
@@ -788,6 +858,7 @@ try {
     await reviewThroughScheduling("search-stage");
     await fullResearchUiCase(origin);
     await groomingUiCase(origin);
+    await contactFormDraftUiCase(origin);
     await futureResearchDefaultsUiCase(origin);
     await researchStatusUiCase(origin);
     await providerCreditsUiCase(origin);
@@ -795,7 +866,9 @@ try {
     await researchedRowsUiCase(origin);
   }
   assert.deepEqual(errors,[]);
-   console.log(process.argv.includes("--grooming-only") ?
+   console.log(process.argv.includes("--contact-form-only") ?
+    "PASS: optional review fields, no-email approval disabled, owner attempt shown before drafting, saved-message generation, team fallback, editing/copying, clipboard failure, unsearched gating and no submit/send/enrollment. Administrator/salesperson desktop/mobile; every API intercepted." :
+    process.argv.includes("--grooming-only") ?
     "PASS: exact-business grooming Yes/No/Unknown, inspectable sources, separate unverified Google AI answers, prominent contact and email, darker/thicker borders, approved/unverified states and corrected-address protection. Administrator/salesperson desktop/mobile; all APIs intercepted and zero writes." :
     process.argv.includes("--future-hourly-only") ?
     "PASS: new confirmed searches use 20/80/200 defaults; saved 40/hour runs retain caps/history across viewing and resume; completion offers a new default without mutation; form edits survive polling; desktop/mobile administrator/salesperson checks. All APIs intercepted; no live records or providers used." :

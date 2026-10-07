@@ -26,10 +26,16 @@ test("restored 36 rows retain all 18 emails, seven historical findings and 18 un
   assert.equal(recovered.reviewStatus, "needs_review");
   assert.equal(leadView(recovered).evidenceNote, historical.sourceData.originalInput.notes);
 });
-test("human review requires source, exact identity, general purpose and note independently of spreadsheet labels or name", () => {
+test("manual approval accepts optional review fields without inventing publicly verified evidence", () => {
   const row = asRow({ Business: "Fixture Grooming", Address: "1 Main Street, Austin TX", Email: "team@fixture.example",
     "Email Source URL": "https://fixture.example/contact", "Email Review Status": "confirmed_first_party" });
-  assert.throws(() => historicalApprovalEvidence(row, { identityConfirmed: true }), /Inspect/);
+  const manual = historicalApprovalEvidence(row, {});
+  assert.equal(manual.source,"manual_approval");
+  assert.equal(manual.confidence,"manual");
+  assert.equal(manual.fetchedAt,null);
+  assert.equal(manual.reviewNote,"");
+  assert.equal(importableSalonEmail({...row,email:manual.value,reviewStatus:"approved",identityMatchStatus:"strong",
+    evidence:{email:manual},sourceData:{...row.sourceData,Outcome:"manually_approved_email"}}),manual.value);
   const evidence = historicalApprovalEvidence(row, { identityConfirmed: true, historicalEvidenceConfirmed: true, reviewNote: "Business and general contact source inspected." });
   assert.equal(evidence.value, "team@fixture.example");
   const approved = { ...row, email: evidence.value, identityMatchStatus: "strong", reviewStatus: "approved",

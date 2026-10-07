@@ -6,14 +6,14 @@ import { directoryEligibility, directoryEligibilitySummary, directoryNotesEviden
 
 const reviewInput = z.object({
   decision: z.enum(["approved", "excluded"]),
-  note: z.string().trim().min(1, "Record the grooming evidence or reason for exclusion").max(1500),
+  note: z.string().trim().max(1500).optional().default(""),
   confirmed: z.literal(true),
 });
 
 export function registerDirectoryEligibilityRoutes(app: Express, authenticate: RequestHandler) {
   app.get("/api/salon-enrichment/batches/:id/eligibility-summary", authenticate, async (req: any, res) => {
     try {
-      const scope = req.user.claims.role === "admin" ? null : req.user.claims.sub;
+      const scope = req.user.role === "admin" ? null : req.user.claims.sub;
       const batch = await storage.getSalonEnrichmentBatch(req.params.id, scope);
       if (!batch) return res.status(404).json({ message: "Batch not found" });
       const rows = await storage.getSalonEnrichmentRows(batch.id, batch.userId);
@@ -24,7 +24,7 @@ export function registerDirectoryEligibilityRoutes(app: Express, authenticate: R
   app.post("/api/salon-enrichment/rows/:rowId/eligibility", authenticate, async (req: any, res) => {
     try {
       const input = reviewInput.parse(req.body);
-      const scope = req.user.claims.role === "admin" ? null : req.user.claims.sub;
+      const scope = req.user.role === "admin" ? null : req.user.claims.sub;
       const row = await storage.getSalonEnrichmentRow(req.params.rowId, scope);
       if (!row) return res.status(404).json({ message: "Row not found" });
       if (row.status === "processing") return res.status(409).json({ message: "Wait until enrichment finishes before reviewing grooming suitability" });
