@@ -15,3 +15,4 @@
 - [Manual sequence restarts](manual-sequence-restarts.md) — past outreach is not a permanent ban on a manually chosen future sequence; retain active-send safeguards.
 - [CRM plan scope](crm-plan-scope.md) — directory and pay-as-you-go assignments do not authorize billing, new commission rates, or historical financial changes.
 - [Full Research authorization](full-research-authorization.md) — future searches default to 80 requests/hour; existing runs retain approved limits, and building controls does not authorize paid searches.
+- [Grooming business checks](grooming-business-checks.md) — distinguish services from a dedicated shop; AI answers are hints, and found names/emails must be prominent.

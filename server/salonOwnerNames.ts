@@ -866,7 +866,8 @@ async function organicSearch(
       }, Math.min(runtime.providerTimeoutMs ?? PROVIDER_TIMEOUT_MS, Math.max(1, deadline - Date.now())));
     });
     const payload = await Promise.race([request(), providerDeadline]);
-    const parsed = parseOwnerSearchResponse(payload, parts.businessName, query);
+    const parsed = parseOwnerSearchResponse(payload, parts.businessName, query,
+      cacheKey.startsWith("grooming-check-v1:") ? "grooming" : "owner");
     try {
       await runtime.storage.createSerpCache(zip, cacheKey, state, { version: 2, ...parsed });
     } catch (error) {
@@ -898,6 +899,24 @@ export async function searchSalonContactPages(row: SalonEnrichmentRow, remaining
   const result=await organicSearch({...parts,query,cacheKey:`salon-contact-organic:${normalized(query)}`},remainingCalls,Date.now()+PROVIDER_TIMEOUT_MS,progress);
   return {...result,results:result.results.filter(item=>!item.summaryKind&&item.title&&item.link&&businessAndLocationMatch(row,`${item.title} ${item.snippet||""}`))
     .map(item=>({title:item.title!,link:item.link!,address:`${item.title} ${item.snippet||""}`,snippet:item.snippet}))};
+}
+
+// Reuse the bounded public-search cache, shared reservations and provider retry
+// policy. Search summaries are discovery hints only; callers inspect live pages.
+export async function searchSalonGroomingPages(row: SalonEnrichmentRow, question: "services" | "shop",
+  beforeProvider: () => Promise<void>, requestPolicy?: SerpRequestPolicy) {
+  const location = [row.address1 || row.address, row.city, row.state, row.zipCode].filter(Boolean).join(" ");
+  const query = question === "services"
+    ? `Does "${row.businessName}", located at "${location}", offer pet grooming services?`
+    : `Is "${row.businessName}", located at "${location}", a pet grooming shop?`;
+  const progress = { ...newOwnerLookupProgress(), beforeProvider, requestPolicy };
+  const found = await organicSearch({ ...queryParts(row), query, cacheKey: `grooming-check-v1:${normalized(query)}` },
+    1, Date.now() + PROVIDER_TIMEOUT_MS, progress);
+  return { ...found, results: found.results.filter(item => item.link || item.summaryKind) };
+}
+
+export async function fetchPublicResearchPage(url: string) {
+  return runtime.fetchPage(url);
 }
 
 async function withRowSearchLock<T>(key: string, action: () => Promise<T>): Promise<T> {

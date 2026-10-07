@@ -6,8 +6,9 @@ import { enrichRow } from "./salonEnrichment";
 import { businessAndLocationMatch, extractSalonOwnerCandidates, stripHtml, searchSalonContactPages, researchSalonOwnerCandidates } from "./salonOwnerNames";
 import { safeWebsite } from "./salonListStaging";
 import type { SerpRequestPolicy } from "./serpRequestPolicy";
+import { researchGroomingChecks, evaluateGroomingPages } from "./groomingChecks";
 
-export const fullResearchRowTools = { crawlWebsite, searchWithSerpApi, enrichRow, searchSalonContactPages, researchSalonOwnerCandidates };
+export const fullResearchRowTools = { crawlWebsite, searchWithSerpApi, enrichRow, searchSalonContactPages, researchSalonOwnerCandidates, researchGroomingChecks };
 export async function researchFullRow(
   row: SalonEnrichmentRow,
   beforePaid: (tool: string) => Promise<void>,
@@ -15,12 +16,14 @@ export async function researchFullRow(
   requestPolicy?: SerpRequestPolicy,
 ): Promise<Partial<SalonEnrichmentRow>> {
   const pages: { url: string; html: string }[] = [];
+  const discoveredUrls: string[] = [];
   const cached = new Map<string, Awaited<ReturnType<typeof crawlWebsite>>>();
   let patch: Partial<SalonEnrichmentRow> = {};
   let matchedWebsite = false;
   const crawl: typeof crawlWebsite = async (url, options) => {
     if (cached.has(url)) return cached.get(url)!;
     const result = await tools.crawlWebsite(url, { ...options, onPage: page => pages.push(page) });
+    if (result.html && !pages.some(page => page.url === url)) pages.push({ url, html: result.html });
     const matched = businessAndLocationMatch(row, stripHtml(result.html));
     const safe = matched ? result : { ...result, email: undefined, phone: undefined, ownerName: undefined,
       bookingUrl: undefined, softwareName: undefined,
@@ -49,15 +52,19 @@ export async function researchFullRow(
       }
     } catch { /* Missing live pages are unknown, not evidence of no email or no software. */ }
   }
-  const search: typeof searchWithSerpApi = (query, zip, state, template, options) =>
-    tools.searchWithSerpApi(query, zip, state, template, {
+  const search: typeof searchWithSerpApi = async (query, zip, state, template, options) => {
+    const result = await tools.searchWithSerpApi(query, zip, state, template, {
       ...options, requestPolicy, beforeProviderRequest: async () => {
         await beforePaid("business_search");
         await options?.beforeProviderRequest?.();
       },
     });
+    discoveredUrls.push(...result.results.map(result => result.link).filter(Boolean));
+    return result;
+  };
   const fallbackSearch: typeof searchWithSerpApi = async () => {
     const found = await tools.searchSalonContactPages(row, 1, () => beforePaid("email_contact_search"), requestPolicy);
+    discoveredUrls.push(...found.results.map(result => result.link));
     if (found.error) throw new Error(found.error);
     return { results: found.results, fromCache: found.calls === 0 };
   };
@@ -81,10 +88,16 @@ export async function researchFullRow(
         ? { ...EMPTY_OWNER_NAME_RESULT, status: "needs_review", candidates: websiteCandidates, pagesFetched: pages.length }
         : await tools.researchSalonOwnerCandidates({ ...row, ...patch } as SalonEnrichmentRow, () => beforePaid("contact_name_search"), requestPolicy);
       patch.evidence = { ...directoryObject(patch.evidence), ownerName: names };
+      discoveredUrls.push(...names.candidates.flatMap(candidate => candidate.sources.map(source => source.url)).filter(Boolean));
     }
+    await tools.researchGroomingChecks({ ...row, ...patch } as SalonEnrichmentRow, pages, discoveredUrls, beforePaid, requestPolicy,
+      groomingChecks => { patch.evidence = { ...directoryObject(patch.evidence), groomingChecks }; });
   } catch (error) {
     patch.lastError = error instanceof Error ? error.message : "Research did not finish.";
     patch.status = "failed";
+  }
+  if (!directoryObject(patch.evidence).groomingChecks) {
+    patch.evidence = { ...directoryObject(patch.evidence), groomingChecks: evaluateGroomingPages({ ...row, ...patch } as SalonEnrichmentRow, pages) };
   }
   return { ...patch, reviewStatus: "needs_review", processedAt: new Date() };
 }

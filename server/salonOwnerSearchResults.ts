@@ -28,7 +28,7 @@ const publicLink = (value: unknown): string | undefined => {
 // An overview is a discovery summary, never fetched-page ownership evidence.
 // Retain block-level citations separately so an AI claim is not attributed to
 // the cited page as though we had read and verified it.
-export function parseOwnerSearchResponse(payload: unknown, businessName: string, query: string): OwnerSearchResponse {
+export function parseOwnerSearchResponse(payload: unknown, businessName: string, query: string, focus: "owner" | "grooming" = "owner"): OwnerSearchResponse {
   const data = object(payload);
   const results: OwnerSearchResult[] = array(data.organic_results).slice(0, 10).map(value => {
     const item = object(value);
@@ -38,6 +38,9 @@ export function parseOwnerSearchResponse(payload: unknown, businessName: string,
   const references = array(overview.references).map(value => object(value));
   let context = "";
   let visited = 0;
+  const neutralHeading = focus === "grooming"
+    ? /^(?:business details|details|overview|about|grooming|grooming services|services|business type|grooming shop)\s*:?\s*$/i
+    : /^(?:business details|details|overview|about|owner(?:ship)?|staff|team)\s*:?\s*$/i;
   const visit = (values: unknown[], inheritedIndexes: unknown[] = [], depth = 0) => {
     if (depth > 5) return;
     for (const value of values) {
@@ -53,9 +56,10 @@ export function parseOwnerSearchResponse(payload: unknown, businessName: string,
         mentionsOwnerBusiness(businessName, `${item.title} ${item.snippet}`));
       if (mentionsOwnerBusiness(businessName, text)) context = text;
       else if ((block.type === "paragraph" && !relevantCitations.length) || (block.type === "heading" &&
-        !/^(?:business details|details|overview|about|owner(?:ship)?|staff|team)\s*:?\s*$/i.test(text))) context = "";
+         !neutralHeading.test(text))) context = "";
       const summary = mentionsOwnerBusiness(businessName, text) ? text : context ? `${context}\n${text}` : "";
-      if (text && summary && /\b(?:owner|founder|proprietor|owned)\b/i.test(text)) {
+      const relevantTopic = focus === "grooming" ? /\b(?:grooming|groomer|groomers)\b/i : /\b(?:owner|founder|proprietor|owned)\b/i;
+      if (text && summary && relevantTopic.test(text)) {
         // A citation naming an unrelated business must not lend relevance to
         // a name merely because another overview paragraph mentioned our salon.
         if (!cited.length || relevantCitations.length) {

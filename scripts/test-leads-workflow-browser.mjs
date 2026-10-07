@@ -9,6 +9,7 @@ import Papa from "papaparse";
 import { unifiedUploadRow, leadView, historicalApprovalEvidence } from "../server/leadWorkspacePolicy.ts";
 import { renderLeadSequencePreview } from "../server/leadSequencePreview.ts";
 import { leadResearchResults, filterLeadResearchRows } from "../server/leadResearchResults.ts";
+import { evaluateGroomingPages } from "../server/groomingChecks.ts";
 const profile = await mkdtemp(join(tmpdir(),"leads-browser-"));
 const chrome = spawn("chromium",["--headless","--no-sandbox","--disable-dev-shm-usage","--remote-debugging-port=0",`--user-data-dir=${profile}`,"about:blank"],{stdio:"ignore"});
 const pending=new Map(),errors=[],writes=[];
@@ -160,6 +161,61 @@ async function fullResearchUiCase(origin){
     assert.equal(await evaluate("document.documentElement.scrollWidth>window.innerWidth"),false);
     await send("Page.captureScreenshot",{format:"jpeg",quality:65}).then(r=>writeFile(`reports/workflow-fixtures/${role}-full-research-${label}.jpg`,Buffer.from(r.data,"base64")));
   }
+}
+async function groomingUiCase(origin) {
+  writes.length=0;
+  const batch={id:"fixture-grooming-checks",name:"Grooming checks fixture",status:"completed",totalRows:1,createdAt:new Date().toISOString()};
+  const target={...unifiedUploadRow({Business:"Paws and Co",Address:"123 Main Street, Austin TX 78701",State:"TX",
+    Email:"office@fixture.example","Email Source URL":"https://fixture.example/services"},0,"fixture-owner"),
+    id:"fixture-grooming-row",batchId:batch.id,address1:"123 Main Street",city:"Austin",zipCode:"78701",state:"TX",
+    email:"office@fixture.example",status:"enriched",reviewStatus:"needs_review",processedAt:new Date().toISOString()};
+  const checks=evaluateGroomingPages(target,[{url:"https://fixture.example/services",
+    html:"<h1>Paws and Co</h1><p>We are a pet store. We offer pet grooming services.</p><footer>123 Main Street Austin TX 78701</footer>"}]);
+  checks.aiAnswers=[{question:"shop",text:"Google AI suggests Paws and Co is a grooming salon. This claim needs verification.",
+    sourceUrl:"https://www.google.com/search?q=fixture",citations:["https://fixture.example/services"]}];
+  const owner={status:"needs_review",approvedAt:null,selectedCandidateId:null,usePersonalName:false,candidates:[
+    {id:"fixture-avery",firstName:"Avery",lastName:"Smith",role:"owner",roleConfirmed:true,businessMatched:true,confidence:"high",
+      sources:[{kind:"business_website",url:"https://fixture.example/about",excerpt:"Paws and Co Owner: Avery Smith"}]}]};
+  target.evidence={...target.evidence,groomingChecks:checks,ownerName:owner,
+    email:{value:target.email,source:"website",sourceUrl:"https://fixture.example/services",confidence:"high",purpose:"general",rationale:"Fixture public business email; human review required."}};
+  rows=[target];batches=[batch];
+  const load=async()=>{await send("Page.navigate",{url:origin+"/leads/"+batch.id});await until("document.querySelector('article')","grooming candidate");await pause(300);};
+  for(const [label,width,height,mobile] of [["desktop",1365,900,false],["mobile",402,874,true]]){
+    await send("Emulation.setDeviceMetricsOverride",{width,height,deviceScaleFactor:1,mobile});
+    await load();
+    if(mobile){await evaluate(`document.querySelector('button[aria-label="Collapse sidebar"]')?.click()`);await until(`document.querySelector('button[aria-label="Expand sidebar"]')`,"collapsed sidebar");}
+    assert.equal(await evaluate(`document.querySelector('[aria-label="Found contact details"]').innerText.includes('Avery Smith')`),true);
+    assert.equal(await evaluate(`document.querySelector('[aria-label="Found contact details"]').innerText.includes('Unverified candidate')`),true);
+    assert.equal(await evaluate(`document.querySelector('[data-testid="lead-highlight-email"]').innerText`),target.email);
+    assert.ok(await evaluate(`parseFloat(getComputedStyle(document.querySelector('[data-testid="lead-highlight-email"]')).fontSize)>=18`));
+    assert.equal(await evaluate(`document.querySelector('[aria-label="Found contact details"] a[href^="mailto:"]')===null`),true);
+    assert.equal(await evaluate(`getComputedStyle(document.querySelector('article')).borderTopWidth`),"2px");
+    await evaluate(`document.querySelector('[aria-label="Found contact details"]').scrollIntoView({block:'start'})`);
+    await pause(250);
+    assert.equal(await evaluate("document.documentElement.scrollWidth>window.innerWidth"),false);
+    await send("Page.captureScreenshot",{format:"jpeg",quality:75}).then(r=>writeFile(`reports/workflow-fixtures/${role}-contact-highlights-${label}.jpg`,Buffer.from(r.data,"base64")));
+    await click("Review details",article);
+    await until(`document.querySelector('[data-testid="grooming-offersGrooming"]')`,"grooming checks visible");
+    assert.equal(await evaluate(`document.querySelector('[data-testid="grooming-offersGrooming"]').innerText.includes('Yes')`),true);
+    assert.equal(await evaluate(`document.querySelector('[data-testid="grooming-groomingShop"]').innerText.includes('No')`),true);
+    assert.equal(await evaluate(`document.querySelector('[data-testid="grooming-ai-answers"]').innerText.includes('Google AI suggests')`),true);
+    await evaluate(`document.querySelector('[data-testid="grooming-offersGrooming"] summary').click()`);
+    assert.equal(await evaluate(`document.querySelector('[data-testid="grooming-offersGrooming"] details').open`),true);
+    await evaluate(`document.querySelector('[aria-label="Grooming business checks"]').scrollIntoView({block:'start'})`);
+    await pause(250);
+    assert.equal(await evaluate("document.documentElement.scrollWidth>window.innerWidth"),false);
+    await send("Page.captureScreenshot",{format:"jpeg",quality:75}).then(r=>writeFile(`reports/workflow-fixtures/${role}-grooming-checks-${label}.jpg`,Buffer.from(r.data,"base64")));
+  }
+  assert.deepEqual(writes,[],"reading findings and expanding sources cannot approve, import, schedule or research");
+  target.reviewStatus="approved";
+  target.evidence.ownerName={...owner,status:"approved",selectedCandidateId:"fixture-avery",approvedAt:new Date().toISOString()};
+  await load();
+  assert.equal(await evaluate(`document.querySelector('[aria-label="Found contact details"]').innerText.includes('Owner approved')`),true);
+  assert.equal(await evaluate(`document.querySelector('[aria-label="Found contact details"]').innerText.includes('Approved')`),true);
+  target.address="999 Other Street, Austin TX 78701";await load();await click("Review details",article);
+  assert.equal(await evaluate(`document.querySelector('[data-testid="grooming-offersGrooming"]').innerText.includes('Unknown')`),true);
+  assert.equal(await evaluate(`document.querySelector('[data-testid="grooming-ai-answers"]').innerText.includes('Google AI suggests')`),false);
+  await send("Emulation.setDeviceMetricsOverride",{width:1365,height:900,deviceScaleFactor:1,mobile:false});
 }
 async function futureResearchDefaultsUiCase(origin) {
   writes.length=0;
@@ -683,6 +739,10 @@ try {
       await fullResearchUiCase(origin);
       continue;
     }
+    if(process.argv.includes("--grooming-only")){
+      await groomingUiCase(origin);
+      continue;
+    }
     await send("Emulation.setDeviceMetricsOverride",{width:1365,height:900,deviceScaleFactor:1,mobile:false});
     await send("Page.navigate",{url:origin+"/leads?upload=1"});
     await until("document.body.innerText.includes('Search for Businesses')","Leads home");
@@ -727,6 +787,7 @@ try {
     await until("document.querySelector('article')?.innerText.includes('Fixture Search Grooming')","search-source review");
     await reviewThroughScheduling("search-stage");
     await fullResearchUiCase(origin);
+    await groomingUiCase(origin);
     await futureResearchDefaultsUiCase(origin);
     await researchStatusUiCase(origin);
     await providerCreditsUiCase(origin);
@@ -734,7 +795,9 @@ try {
     await researchedRowsUiCase(origin);
   }
   assert.deepEqual(errors,[]);
-   console.log(process.argv.includes("--future-hourly-only") ?
+   console.log(process.argv.includes("--grooming-only") ?
+    "PASS: exact-business grooming Yes/No/Unknown, inspectable sources, separate unverified Google AI answers, prominent contact and email, darker/thicker borders, approved/unverified states and corrected-address protection. Administrator/salesperson desktop/mobile; all APIs intercepted and zero writes." :
+    process.argv.includes("--future-hourly-only") ?
     "PASS: new confirmed searches use 20/80/200 defaults; saved 40/hour runs retain caps/history across viewing and resume; completion offers a new default without mutation; form edits survive polling; desktop/mobile administrator/salesperson checks. All APIs intercepted; no live records or providers used." :
     process.argv.includes("--shared-budget-only") ?
     "PASS: admin-confirmed shared 1,000/800 budget, salesperson read-only view, unavailable-account protection, preserved NY/CA/TX ledgers and paused states, reload, desktop/mobile. All API traffic intercepted." :

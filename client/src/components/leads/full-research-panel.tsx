@@ -151,7 +151,7 @@ export function FullResearchPanel({ batch, readOnlyReason, busy = false, onChang
   const statusFocus = useRef<HTMLDivElement>(null);
   const reviewChosen = useRef(false);
 
-  return <Card data-testid="full-research-panel" className="border-primary/20">
+  return <Card data-testid="full-research-panel" className="border-2 border-slate-400 dark:border-slate-600">
     <CardHeader className="pb-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -180,6 +180,10 @@ export function FullResearchPanel({ batch, readOnlyReason, busy = false, onChang
          New searches default to {FULL_RESEARCH_DEFAULTS.paidCallsPerHour} paid requests per rolling hour.
          Saved searches resume within their existing confirmed caps; viewing this page does not change them.
        </p>
+       <p className="text-xs text-muted-foreground">Includes separate pet-grooming service and grooming-shop checks.
+         Existing pages and search results are reused first; each research attempt may add up to two searches.
+         All requests, including retries, use the same confirmed caps. Google AI answers are retained when returned,
+         but cited pages must support the findings. Findings still require your review.</p>
       {providerEmpty && <Alert variant="destructive" data-testid="provider-credits-empty">
         <AlertTitle>No SerpAPI credits remaining</AlertTitle>
         <AlertDescription>The provider account has 0 searches left. Your list cap is a separate safety limit, not available provider credit. Replenish credits or wait for the allowance to renew, then check the balance before resuming. Waiting an hour or raising this list cap will not restore provider credits.</AlertDescription>

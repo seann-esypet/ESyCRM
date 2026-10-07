@@ -285,6 +285,7 @@ export function registerLeadWorkspaceRoutes(app: Express, auth: RequestHandler,
         sourceData, evidence: { ...directoryObject(row.evidence), email: null, historicalFinding: null,
           originalNotes: directoryObject(row.evidence).originalNotes, sourceUrl: preview.after.sourceUrl,
           ...(preview.changes.some(change => ["businessName","address"].includes(change.field)) ? {
+            groomingChecks: null,
             ownerName: { ...getSalonOwnerNameResult(row), status: "needs_review", selectedCandidateId: null, usePersonalName: false,
               candidates: getSalonOwnerNameResult(row).candidates.map(candidate => ({ ...candidate, businessMatched: false, roleConfirmed: false })) },
           } : {}) },

@@ -17,7 +17,7 @@ import { EMPTY_OWNER_NAME_RESULT } from "@shared/salonOwnerName";
 // create live records, spend provider requests, or send outreach.
 const dialect = new PgDialect();
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-function fixture(count: number, fail: boolean | number = false, cachedBusinessSearch = false, contactRequests = 1) {
+function fixture(count: number, fail: boolean | number = false, cachedBusinessSearch = false, contactRequests = 1, groomingRequests = 0) {
   const batch: any = { id: "fixture-list", userId: "fixture-owner", name: "Fixture uploaded list",
     status: "completed", researchProgress: { workflow: "unified_leads" }, totalRows: count };
   const rows: any[] = Array.from({ length: count }, (_, i) => ({
@@ -94,6 +94,16 @@ function fixture(count: number, fail: boolean | number = false, cachedBusinessSe
     if (fail === true || fail === providerAttempts) throw new Error("Fixture provider failed after starting");
   };
   Object.assign(fullResearchRowTools, {
+    researchGroomingChecks: async (_row: any, _pages: any, _urls: any, _before: any, _policy: any, progress: any) => {
+      const { evaluateGroomingPages } = await import("./groomingChecks");
+      const result = evaluateGroomingPages(_row, _pages); progress(result);
+      for(let i=0;i<groomingRequests;i++){
+        hourlyPolicies.push(_policy.hourlyLimit);
+        await provider(()=>_before(i===0?"grooming_services_search":"grooming_shop_search"),_policy,4);
+        result.providerCalls++; progress(result);
+      }
+      return result;
+    },
     crawlWebsite: async () => { throw new Error("Unexpected website crawl in provider fixture"); },
     searchWithSerpApi: async (_q: any, _z: any, _s: any, _t: any, options: any) => {
       hourlyPolicies.push(options.requestPolicy.hourlyLimit);
@@ -354,6 +364,33 @@ test("Full Research controls and worker use only isolated records/providers", as
       await tickFullResearchScheduler();
       assert.equal(env.providerAttempts, 95, "manual pause cannot be overridden by hourly continuation");
     } finally { env.restore(); }
+  });
+  await t.test("grooming questions share the confirmed worker hourly policy and paid ledger", async () => {
+    const env = fixture(1, false, false, 1, 2);
+    try {
+      await controlFullResearch(env.batch.id,env.batch.userId,"start",{confirmed:true,...FULL_RESEARCH_DEFAULTS});
+      await env.settled();
+      assert.equal(env.providerAttempts,5);
+      assert.deepEqual(env.hourlyPolicies,[80,80,80,80,80]);
+      assert.deepEqual(env.batch.researchProgress.fullResearch.attempts.slice(-2).map((attempt:any)=>attempt.tool),
+        ["grooming_services_search","grooming_shop_search"]);
+      assert.equal(env.rows[0].evidence.groomingChecks.providerCalls,2);
+      assert.equal(env.rows[0].reviewStatus,"needs_review");
+      assert.equal(env.rows[0].importedContactId,null);
+    } finally {env.restore();}
+  });
+  await t.test("list stop blocks an extra grooming question without refunding attempts or losing earlier email evidence", async () => {
+    const env = fixture(1, false, false, 1, 2);
+    try {
+      await controlFullResearch(env.batch.id,env.batch.userId,"start",{confirmed:true,...FULL_RESEARCH_DEFAULTS,paidCallsPerList:4});
+      await env.settled();
+      assert.equal(env.providerAttempts,4);
+      assert.equal(env.batch.researchProgress.fullResearch.status,"budget_exhausted");
+      assert.equal(env.batch.researchProgress.fullResearch.attempts.length,4);
+      assert.equal(env.rows[0].evidence.groomingChecks.providerCalls,1);
+      assert.equal(env.rows[0].email,"row-1@fixture.example");
+      assert.equal(env.rows[0].reviewStatus,"needs_review");
+    } finally {env.restore();}
   });
   await t.test("the new 80-request default still stops before business 21", async () => {
     const env = fixture(30);

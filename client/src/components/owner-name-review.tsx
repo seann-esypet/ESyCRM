@@ -115,14 +115,15 @@ export function OwnerNameReview({
   const approved = Boolean(selectedCandidate && ownerName?.approvedAt && ownerName.selectedCandidateId && ownerName.selectedCandidateId === candidateId);
 
   return (
-    <section className="mt-4 rounded-lg border-2 border-slate-400 bg-muted/20 p-3 dark:border-slate-600 sm:p-4" aria-label={`Owner name review for ${businessName}`}>
+    <section className="mt-4 rounded-lg border-2 border-slate-500 bg-muted/30 p-3 shadow-sm dark:border-slate-500 sm:p-4" aria-label={`Owner name review for ${businessName}`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-start gap-2">
           <span className="mt-0.5 rounded-md bg-primary/10 p-1.5 text-primary"><UserRound className="h-4 w-4" /></span>
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <h4 className="text-sm font-semibold">Owner / addressee</h4>
-              <Badge variant={approved ? "default" : "outline"}>{approved ? "Owner approved" : unrelatedCandidatesHidden > 0 && !candidates.length ? "No matching candidates" : (ownerName?.status ?? "not_searched").replaceAll("_", " ")}</Badge>
+              <Badge variant={approved ? "default" : "outline"}>{approved ? "Owner approved" : candidates.length ? "Unverified candidates" : unrelatedCandidatesHidden > 0 ? "No matching candidates" : (ownerName?.status ?? "not_searched").replaceAll("_", " ")}</Badge>
+              {candidates.length > 0 && <Badge variant="secondary">{candidates.length} candidate{candidates.length === 1 ? "" : "s"}</Badge>}
               {onSelectedForBatchChange && canSearch && <label className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
                 <Checkbox checked={selectedForBatch} onCheckedChange={value => onSelectedForBatchChange(value === true)} aria-label={`Select ${businessName} for owner search`} />
                 Batch search
@@ -148,11 +149,11 @@ export function OwnerNameReview({
           {candidates.map(candidate => {
             const eligible = candidate.roleConfirmed && candidate.businessMatched && candidate.sources.length > 0;
             const isChosen = candidateId === candidate.id;
-            return <article key={candidate.id} className={`rounded-md border-2 bg-background p-3 ${isChosen ? "border-primary" : "border-slate-400 dark:border-slate-600"}`}>
+            return <article key={candidate.id} className={`rounded-md border-2 bg-background p-3 ${isChosen ? "border-primary" : "border-slate-500 dark:border-slate-500"}`}>
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <label className="flex min-w-0 cursor-pointer items-start gap-2">
                   <input type="radio" name={`owner-${rowId}`} className="mt-1 accent-primary" checked={isChosen} onChange={() => setCandidateId(candidate.id)} />
-                  <span><span className="block text-sm font-semibold">{candidate.firstName} {candidate.lastName || ""}</span><span className="text-xs text-muted-foreground">{candidate.role || "Role unspecified"}</span></span>
+                  <span><span className="block text-base font-bold">{candidate.firstName} {candidate.lastName || ""}</span><span className="text-xs text-muted-foreground">{candidate.role || "Role unspecified"}</span><span className="mt-1 block text-[11px] font-semibold uppercase tracking-wide">{approved ? "Approved owner" : "Unverified candidate"}</span></span>
                 </label>
                 <div className="flex flex-wrap gap-1.5">
                   <Badge variant="outline">{candidate.confidence} confidence</Badge>

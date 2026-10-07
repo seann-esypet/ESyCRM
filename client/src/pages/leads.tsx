@@ -6,6 +6,8 @@ import * as XLSX from "xlsx";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import Header from "@/components/layout/header";
 import { OwnerNameReview } from "@/components/owner-name-review";
+import { LeadContactHighlights } from "@/components/leads/lead-contact-highlights";
+import { GroomingChecksPanel } from "@/components/leads/grooming-checks";
 import { LeadWorkflowGuide } from "@/components/leads/workflow-guide";
 import { FullResearchPanel, type FullResearchStatus } from "@/components/leads/full-research-panel";
 import { CompletedSearches } from "@/components/leads/completed-searches";
@@ -252,16 +254,18 @@ function LeadRowCard({row,onRefresh}:{row:LeadRow;onRefresh:()=>void}) {
   });
   const anyError=reviewMutation.error||actionMutation.error||crmMutation.error||scheduleMutation.error;
   const sourceData=row.sourceData;
-  return <article id={`lead-row-${row.id}`} className="rounded-xl border bg-card p-4 shadow-sm">
+  return <article id={`lead-row-${row.id}`} className="rounded-xl border-2 border-slate-400 bg-card p-4 shadow-sm dark:border-slate-600">
     <div className="flex flex-wrap items-start justify-between gap-3">
        <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold">{row.businessName}</h3>{researchBadge(row.researchState,row.sourceData?.fullResearchWaitReason)}<Badge variant={row.reviewStatus==="approved"?"default":row.reviewStatus==="rejected"?"destructive":"outline"}>{row.reviewStatus||"needs review"}</Badge>{row.identityMatchStatus&&<Badge variant="secondary">Identity · {row.identityMatchStatus}</Badge>}{!!row.historicalFinding&&<Badge variant="outline">Historical source finding · inspect evidence</Badge>}</div><p className="mt-1 text-sm text-muted-foreground">{[row.address,row.state].filter(Boolean).join(" · ")||"Address not provided"}</p><p className="mt-1 text-xs text-muted-foreground">Added {dateText(row.processedAt)}{row.sourceData?.originalResearchDate?` · Originally researched ${dateText(String(row.sourceData.originalResearchDate))}`:""}{row.category?` · ${row.category}`:""}</p></div>
       <Button size="sm" variant="ghost" onClick={()=>setOpen(!open)} aria-expanded={open}>{open?"Close details":"Review details"}<ChevronDown className={`ml-1 h-4 w-4 transition-transform ${open?"rotate-180":""}`}/></Button>
     </div>
     <p className="mt-3 rounded-md bg-muted/60 px-3 py-2 text-sm"><span className="font-medium">Next action · </span>{row.nextAction||"Review source evidence and confirm business identity before approving."}</p>
-    {(row.email||row.candidateEmail)&&<div className="mt-3 flex flex-wrap items-center gap-2 text-sm"><span className="font-medium">{row.reviewStatus==="approved"?"Business contact email":"Email suggestion"}</span><span>{row.email||row.candidateEmail}</span><Badge variant={row.reviewStatus==="approved"?"secondary":"outline"}>{row.reviewStatus==="approved"?"Email approved for business contact; deliverability not guaranteed":"Not approved until reviewed"}</Badge></div>}
+    <LeadContactHighlights businessName={row.businessName} contactName={row.contactName} ownerName={row.ownerName}
+      email={row.email} candidateEmail={row.candidateEmail} reviewStatus={row.reviewStatus}
+      importedContactId={row.importedContactId} sourceUrl={row.sourceUrl}/>
     {row.websiteUrl&&<a className="mt-2 inline-flex items-center gap-1 text-sm text-primary underline-offset-4 hover:underline" href={row.websiteUrl} target="_blank" rel="noreferrer">{row.websiteUrl}<ExternalLink className="h-3 w-3"/></a>}
-    {open&&<div className="mt-4 space-y-4 border-t pt-4">
-      {!row.importedContactId&&row.reviewStatus!=="approved"&&<section className="rounded-lg border bg-muted/20 p-3">
+    {open&&<div className="mt-4 space-y-4 border-t-2 border-slate-400 pt-4 dark:border-slate-600">
+      {!row.importedContactId&&row.reviewStatus!=="approved"&&<section className="rounded-lg border-2 border-slate-400 bg-muted/20 p-3 dark:border-slate-600">
         <div className="flex flex-wrap items-start justify-between gap-2"><div><h4 className="text-sm font-semibold">Staged details</h4><p className="mt-1 text-xs text-muted-foreground">Correct source suggestions before approval. Original uploaded input remains preserved; correction resets identity and email approval.</p></div><Button size="sm" variant="outline" onClick={()=>{if(correctionOpen)cancelCorrection();else{setCorrectionOpen(true);setCorrectionPreview(null);setCorrectionError("");}}}>{correctionOpen?"Cancel correction":"Correct staged details"}</Button></div>
         {correctionOpen&&<div className="mt-3 space-y-3">
           <div className="grid gap-3 sm:grid-cols-2">
@@ -300,7 +304,7 @@ function LeadRowCard({row,onRefresh}:{row:LeadRow;onRefresh:()=>void}) {
         {!row.importedContactId&&(row.reviewStatus!=="approved"||eligibility.blocked)&&<p className="mt-3 text-xs font-medium text-amber-900">{row.reviewStatus!=="approved"?"Approve the lead’s email evidence before adding it to Contacts.":"Approve grooming eligibility before adding this lead to Contacts."}</p>}
       </section>
       <div className="grid gap-4 lg:grid-cols-2">
-        <section className="space-y-2"><h4 className="text-sm font-semibold">Email & identity review</h4><p className="text-xs leading-5 text-muted-foreground">Email review is independent from a personal name. Inspect the source yourself and confirm the address is a general-contact email for this business. Grooming suitability is reviewed separately below.</p>
+        <section className="space-y-2 rounded-lg border-2 border-slate-400 bg-card p-3 dark:border-slate-600"><h4 className="text-sm font-semibold">Email & identity review</h4><p className="text-xs leading-5 text-muted-foreground">Email review is independent from a personal name. Inspect the source yourself and confirm the address is a general-contact email for this business. Grooming suitability is reviewed separately below.</p>
           <div><Label>Source URL</Label><Input value={sourceUrl} onChange={e=>setSourceUrl(e.target.value)} placeholder="https://business.example/contact"/></div>
           <div><Label>Required review note</Label><Textarea value={note} onChange={e=>setNote(e.target.value)} placeholder="Describe what you inspected and how it matches the business/location."/></div>
           <label className="flex items-start gap-2 text-xs"><Checkbox checked={historical} onCheckedChange={v=>setHistorical(v===true)}/><span>I inspected the source, matched the business/location, and confirmed this is a general-contact email.</span></label>
@@ -309,7 +313,7 @@ function LeadRowCard({row,onRefresh}:{row:LeadRow;onRefresh:()=>void}) {
           {eligibility.blocked&&<p className="text-xs text-amber-800">Email approval is blocked until grooming suitability is separately approved.</p>}
           {!!row.historicalFinding&&<div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950"><b>Historical source finding — inspect evidence</b><pre className="mt-2 whitespace-pre-wrap font-sans">{pretty(row.historicalFinding)}</pre></div>}
         </section>
-        <section className="space-y-2"><h4 className="text-sm font-semibold">Grooming eligibility & source history</h4>
+        <section className="space-y-2 rounded-lg border-2 border-slate-400 bg-card p-3 dark:border-slate-600"><h4 className="text-sm font-semibold">Grooming eligibility & source history</h4>
           <DirectoryEligibilityReview row={row as unknown as EligibilityRow} eligibility={row.eligibility as DirectoryEligibility|undefined} endpoint={`/api/salon-enrichment/rows/${encodeURIComponent(row.id)}/eligibility`} compact invalidateKeys={[["/api/leads",row.batchId]]}/>
           <details className="rounded-md border p-3"><summary className="cursor-pointer text-sm font-medium">Evidence notes and original row</summary><p className="mt-3 whitespace-pre-wrap break-words text-xs leading-5">{pretty(row.evidenceNote||"No evidence notes supplied.")}</p><pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-words border-t pt-3 text-[11px] leading-5">{pretty(row.evidence||"No structured evidence supplied.")}</pre><pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-words border-t pt-3 text-[11px] leading-5">{pretty(sourceData||"Original row unavailable")}</pre></details>
           {!historyAvailable&&(history.isLoading||sequenceData.isLoading)?<p className="text-xs text-muted-foreground">Checking permission-safe recipient history before any scheduling option is enabled…</p>:!historyAvailable?<Alert variant="destructive"><AlertDescription>Recipient history unavailable. Scheduling is disabled until history can be checked: {(history.error as Error)?.message||(sequenceData.error as Error)?.message}</AlertDescription></Alert>:<div className="rounded-md border p-3 text-xs"><b>{recipientHistory?.label||"No recorded schedule or email history"}</b>{recipientHistory?.crossOwner&&<p className="mt-1">History includes another owner.</p>}{recipientHistory?.history.map((h,i)=><p key={i} className="mt-2">{h.status} · {dateText(h.date)}{h.sequenceTrack?` · ${h.sequenceTrack}`:""}</p>)}</div>}
@@ -328,6 +332,7 @@ function LeadRowCard({row,onRefresh}:{row:LeadRow;onRefresh:()=>void}) {
             {blockedHistory&&<p className="text-xs font-medium text-amber-800">Scheduling disabled: recipient history is {history.data?.label?.toLowerCase()}.</p>}
             {scheduleMessage&&<p role="status" className={`text-xs ${scheduleMessage.startsWith("Sequence scheduled")?"text-emerald-800":"text-destructive"}`}>{scheduleMessage}</p>}
           </section>}
+          <GroomingChecksPanel row={row}/>
           {row.contactName||row.ownerName?<OwnerNameReview rowId={row.id} businessName={row.businessName} ownerName={row.ownerName} contactName={row.contactName} canSearch={row.sourceData?.stagingState!=="research_directory"&&!row.sourceData?.researchDataset}/>:null}
         </section>
       </div>
