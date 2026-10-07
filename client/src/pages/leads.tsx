@@ -298,7 +298,7 @@ function LeadRowCard({row,onRefresh}:{row:LeadRow;onRefresh:()=>void}) {
         if(!data.duplicates?.length) setCrmMessage("Possible duplicates were detected, but the server returned no selectable contact records. No CRM link was made.");
         return;
       }
-      if(data.contactId){setCrmContactId(data.contactId);setDuplicateChoices([]);setScheduleConfirmed(false);queryClient.invalidateQueries({queryKey:["/api/leads/rows",row.id,"sequences"]});queryClient.invalidateQueries({queryKey:["/api/leads/rows",row.id,"history"]});onRefresh();return;}
+      if(data.contactId){setCrmContactId(data.contactId);setDuplicateChoices([]);setScheduleConfirmed(false);queryClient.invalidateQueries({queryKey:["/api/contacts"]});queryClient.invalidateQueries({queryKey:["/api/leads/rows",row.id,"sequences"]});queryClient.invalidateQueries({queryKey:["/api/leads/rows",row.id,"history"]});onRefresh();return;}
       setCrmMessage("The server did not return a contact ID. No contact link was recorded.");
     },
   });

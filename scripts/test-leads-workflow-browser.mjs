@@ -16,6 +16,7 @@ const chrome = spawn("chromium",["--headless","--no-sandbox","--disable-dev-shm-
 const pending=new Map(),errors=[],writes=[];
 let ws,id=0,role="salesperson",rows=[],batches=[],scheduled=false,researchActive=false,linkedPreviewReads=0,failSearchSave=false;
 let fullResearchReadOnlyReason=null;
+let contactFreshnessFixture=null;
 let providerCreditsRemaining=35,providerCreditsStatus="available";
 let providerCreditsMonthlyLimit=250;
 let sharedProviderBudget={monthYear:"2026-10",monthlyQuota:250,hardStopAt:200,used:200,remaining:0};
@@ -162,6 +163,53 @@ async function fullResearchUiCase(origin){
     assert.equal(await evaluate("document.documentElement.scrollWidth>window.innerWidth"),false);
     await send("Page.captureScreenshot",{format:"jpeg",quality:65}).then(r=>writeFile(`reports/workflow-fixtures/${role}-full-research-${label}.jpg`,Buffer.from(r.data,"base64")));
   }
+}
+async function contactFreshnessUiCase(origin) {
+  writes.length=0;
+  const original={id:"fixture-existing-contact",company:"Fixture Existing Contact",email:"existing@fixture.example",status:"active",userId:"fixture-owner"};
+  const added={id:"fixture-new-contact",company:"Fixture Newly Added Contact",email:"new@fixture.example",status:"active",userId:"fixture-owner"};
+  contactFreshnessFixture={records:[original],reads:0,added};
+  const batch={id:"fixture-contact-freshness",name:"Contact freshness fixture",status:"completed",totalRows:1,createdAt:new Date().toISOString()};
+  rows=[{...unifiedUploadRow({Business:added.company,Address:"123 Main Street Austin TX",State:"TX"},0,"fixture-owner"),
+    id:"fixture-freshness-row",batchId:batch.id,status:"enriched",reviewStatus:"approved",email:added.email,identityMatchStatus:"strong",
+    sourceData:{"Provider category":"Pet groomer"},evidence:{email:{value:added.email,source:"manual_approval",purpose:"general"}}}];
+  batches=[batch];
+  const go=async path=>{
+    await evaluate(`document.querySelector('a[href="${path}"]').click()`);
+    await until(`location.pathname===${JSON.stringify(path)}`,"same-session navigation");
+  };
+  await send("Page.navigate",{url:origin+"/contacts"});
+  await until("document.body.innerText.includes('Fixture Existing Contact')","original contacts cached");
+  await evaluate(`(async()=>{window.contactsCacheFixture=(await import('/src/lib/queryClient.ts')).queryClient;
+    window.contactsCacheFixture.setQueryData(['/api/contacts','Fixture','',false],[]);window.sameSessionFixture=true;})()`);
+  await go("/leads");await until(`document.querySelector('a[href="/leads/${batch.id}"]')`,"saved fixture list");
+  await go(`/leads/${batch.id}`);await until("document.querySelector('article')","approved fixture lead");
+  await click("Review details","document.querySelector('article')");
+  await click("Add approved lead to Contacts");
+  await until("window.contactsCacheFixture.getQueryState(['/api/contacts','','',false])?.isInvalidated===true","unfiltered cache invalidated after creation");
+  assert.equal(await evaluate("window.contactsCacheFixture.getQueryState(['/api/contacts','Fixture','',false])?.isInvalidated"),true,"all Contacts query variants invalidated");
+  const readsBefore=contactFreshnessFixture.reads;
+  await go("/contacts");await until("document.body.innerText.includes('Fixture Newly Added Contact')","new contact visible without search");
+  assert.ok(contactFreshnessFixture.reads>readsBefore);assert.equal(await evaluate("window.sameSessionFixture"),true);
+  contactFreshnessFixture.linked=true;
+  contactFreshnessFixture.added=original;
+  rows=[{...rows[0],id:"fixture-existing-link-row",importedContactId:null,email:original.email}];
+  await evaluate(`window.contactsCacheFixture.invalidateQueries({queryKey:['/api/leads',${JSON.stringify(batch.id)}]})`);
+  await go("/leads");await go(`/leads/${batch.id}`);
+  await until("document.getElementById('lead-row-fixture-existing-link-row')","unlinked view of existing contact");
+  await click("Review details","document.querySelector('article')");
+  await click("Add approved lead to Contacts");
+  await until("window.contactsCacheFixture.getQueryState(['/api/contacts','','',false])?.isInvalidated===true","Contacts invalidated after existing-contact link");
+  assert.equal(contactFreshnessFixture.records.length,2,"linking must not create a duplicate");
+  await go("/contacts");await until("document.body.innerText.includes('Fixture Newly Added Contact')","list preserved after link");
+  const elsewhere={...original,id:"fixture-external-contact",company:"Fixture Added Elsewhere",email:"elsewhere@fixture.example"};
+  await go("/leads");contactFreshnessFixture.records.push(elsewhere);
+  const remountReads=contactFreshnessFixture.reads;
+  await go("/contacts");await until("document.body.innerText.includes('Fixture Added Elsewhere')","remount refresh even without local invalidation");
+  assert.ok(contactFreshnessFixture.reads>remountReads);
+  assert.deepEqual(writes,["crm","crm"],"only deliberate contact addition/link may mutate");
+  await send("Page.captureScreenshot",{format:"jpeg",quality:75}).then(r=>writeFile(`reports/workflow-fixtures/${role}-contacts-freshness.jpg`,Buffer.from(r.data,"base64")));
+  contactFreshnessFixture=null;
 }
 async function missingEmailHighlightUiCase(origin) {
   writes.length=0;
@@ -682,6 +730,11 @@ async function researchedRowsUiCase(origin) {
   assert.deepEqual(writes,[],"finding/review-filtering results never initiates research or outreach");
 }
 async function api(url,method,body) {
+  if(contactFreshnessFixture&&url.pathname==="/api/contacts"&&method==="GET"){
+    contactFreshnessFixture.reads++;
+    const search=(url.searchParams.get("search")||"").toLowerCase();
+    return contactFreshnessFixture.records.filter(c=>!search||`${c.company} ${c.email}`.toLowerCase().includes(search));
+  }
   if(method==="POST"&&/^\/api\/leads\/[^/]+\/shared-provider-budget$/.test(url.pathname)){
     assert.equal(role,"admin");
     assert.deepEqual(body,{confirmed:true,monthlyQuota:1000,hardStopAt:800});
@@ -797,6 +850,11 @@ async function api(url,method,body) {
     }
     if(url.pathname.endsWith("/crm")){
       assert.equal(row.reviewStatus,"approved");
+      if(contactFreshnessFixture){
+        if(!contactFreshnessFixture.linked)contactFreshnessFixture.records.push(contactFreshnessFixture.added);
+        row.importedContactId=contactFreshnessFixture.added.id;
+        writes.push("crm");return {contactId:row.importedContactId,linked:Boolean(contactFreshnessFixture.linked)};
+      }
       if(row.batchId==="fixture-batch"&&!body.linkContactId)return {needsDuplicateReview:true,duplicates:[{id:"fixture-email-contact",company:"Existing email match",email:row.email,matchReasons:["Email address"]},{id:"fixture-phone-contact",company:"Existing phone-linked business",email:"existing@fixture-contact.example",phone:"5125550100",address:row.address,matchReasons:["Phone number"]}]};
       if(row.batchId==="fixture-batch")assert.equal(body.linkContactId,"fixture-phone-contact");
       row.importedContactId=body.linkContactId||"fixture-contact";writes.push("crm");return {contactId:row.importedContactId,linked:!!body.linkContactId};
@@ -853,6 +911,10 @@ try {
     }
     if(process.argv.includes("--missing-email-only")){
       await missingEmailHighlightUiCase(origin);
+      continue;
+    }
+    if(process.argv.includes("--contacts-freshness-only")){
+      await contactFreshnessUiCase(origin);
       continue;
     }
     if(process.argv.includes("--contact-form-only")){
@@ -912,7 +974,8 @@ try {
     await researchedRowsUiCase(origin);
   }
   assert.deepEqual(errors,[]);
-   console.log(process.argv.includes("--missing-email-only") ? "PASS: prominent missing-email label, 16px bold text, highlighted background, thick border and no overflow on desktop/mobile for administrator/salesperson. No mutations; all API traffic intercepted." :
+   console.log(process.argv.includes("--contacts-freshness-only") ? "PASS: administrator/salesperson same-session unfiltered Contacts refresh after lead addition, prefix invalidation of search variants, and fresh data on Contacts remount. All APIs intercepted; no live records touched." :
+    process.argv.includes("--missing-email-only") ? "PASS: prominent missing-email label, 16px bold text, highlighted background, thick border and no overflow on desktop/mobile for administrator/salesperson. No mutations; all API traffic intercepted." :
     process.argv.includes("--contact-form-only") ?
     "PASS: optional review fields, no-email approval disabled, owner attempt shown before drafting, saved-message generation, team fallback, editing/copying, clipboard failure, unsearched gating and no submit/send/enrollment. Administrator/salesperson desktop/mobile; every API intercepted." :
     process.argv.includes("--grooming-only") ?

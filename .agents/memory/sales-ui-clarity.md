@@ -38,3 +38,9 @@ Missing verified emails must be prominent, not small metadata beside the date.
 **Why:** The user asked for “no_verified_email” to be highlighted in a larger font after previously requesting prominent contact and email information.
 
 **How to apply:** Give missing-email status a clear, readable label and visual emphasis in the lead header. Do not imply that completed research found an email or change research/review status merely for presentation.
+
+Newly added Contacts must be discoverable in the normal unfiltered list, not only through search.
+
+**Why:** The user reported that an added contact appeared in search results but not the ordinary Contacts list, making a successful import appear to have lost the record.
+
+**How to apply:** Keep cross-screen contact creation/linking and list visibility consistent. Respect explicit filters and ownership, but do not require search or a hard refresh merely to see newly saved contacts.

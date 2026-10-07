@@ -60,6 +60,7 @@ export default function Contacts() {
 
   const { data: contacts, isLoading } = useQuery<Contact[]>({
     queryKey: ["/api/contacts", searchQuery, filterUserId, showArchived],
+    refetchOnMount: "always",
     queryFn: async () => {
       const params = new URLSearchParams();
       if (searchQuery) params.set("search", searchQuery);
