@@ -35,9 +35,9 @@ Browser fixtures must reproduce complete HTTP response contracts, not just the o
 
 Responsive fixture checks must confirm the page is unobstructed, not merely that the underlying elements have the expected dimensions.
 
-**Why:** Pipeline mobile checks passed while Email History remained open; the captured image exposed that the badges were behind a modal overlay. Element existence and layout measurements alone did not establish that a salesperson could see the status.
+**Why:** Pipeline mobile checks passed while Email History remained open; the captured image exposed that the badges were behind a modal overlay. An expanded sidebar also clipped a Contact action despite passing root-overflow assertions. Element existence and layout measurements alone did not establish that a salesperson could see the controls.
 
-**How to apply:** Assert that transient dialogs have actually closed before responsive checks and inspect at least one captured fixture image of the changed content. Keep that fixture evidence separate from verification of the real signed-in screen.
+**How to apply:** Assert that transient dialogs have actually closed before responsive checks and inspect at least one captured fixture image of the changed content. On narrow screens, exercise the intended sidebar state, wait for its actual width after transitions rather than just its toggle label, and confirm actions fit inside their panel. Root overflow checks can miss clipped content. Keep fixture evidence separate from verification of the real signed-in screen.
 
 Authorization checks need endpoint tests with authentication-shaped principals, not only intercepted browser responses or role strings supplied directly to a service.
 

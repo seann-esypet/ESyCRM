@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
-import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, type InfiniteData } from "@tanstack/react-query";
 import Papa from "papaparse";
 import * as XLSX from "xlsx";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -12,6 +12,7 @@ import { GroomingChecksPanel } from "@/components/leads/grooming-checks";
 import { LeadWorkflowGuide } from "@/components/leads/workflow-guide";
 import { FullResearchPanel, type FullResearchStatus } from "@/components/leads/full-research-panel";
 import { CompletedSearches } from "@/components/leads/completed-searches";
+import { ApprovedContactNextStep } from "@/components/leads/approved-contact-next-step";
 import { useToast } from "@/hooks/use-toast";
 import { directoryEligibility, type DirectoryEligibility, type EligibilityRow } from "@shared/directoryEligibility";
 import { leadResearchNeedsRefresh, leadSchedulePreviewReady, leadRecipient, type LeadResearchProgress } from "@shared/leadWorkflowState";
@@ -212,7 +213,7 @@ function UploadPanel({ onDone }: { onDone: (id: string) => void }) {
   </Card>;
 }
 
-function LeadRowCard({row,onRefresh}:{row:LeadRow;onRefresh:()=>void}) {
+function LeadRowCard({row,onRefresh,onApproved}:{row:LeadRow;onRefresh:()=>void;onApproved:(row:LeadRow)=>void}) {
   const [reviewEmail,setReviewEmail]=useState(row.email||row.candidateEmail||"");
   const [sourceUrl,setSourceUrl]=useState(row.sourceUrl||""),[note,setNote]=useState(""),[historical,setHistorical]=useState(false),[identity,setIdentity]=useState(false),[open,setOpen]=useState(false);
   const [reviewMessage,setReviewMessage]=useState("");
@@ -313,7 +314,14 @@ function LeadRowCard({row,onRefresh}:{row:LeadRow;onRefresh:()=>void}) {
       confirmed:true,decision,email:email.trim(),sourceUrl:sourceUrl.trim(),reviewNote:note.trim()||undefined,
       ...(historical?{historicalEvidenceConfirmed:true}:{}),...(identity?{identityConfirmed:true}:{}),
     });},
-    onSuccess:(_data,variables)=>{setReviewMessage(variables.decision==="approved"?`Email approved: ${variables.email.trim()}.`:variables.decision==="needs_review"?`Email saved for review: ${variables.email.trim()}. It has not been approved or sent.`:"Suggestion rejected.");onRefresh();},
+    onSuccess:(_data,variables)=>{
+      setReviewMessage(variables.decision==="approved"?`Email approved: ${variables.email.trim()}.`:variables.decision==="needs_review"?`Email saved for review: ${variables.email.trim()}. It has not been approved or sent.`:"Suggestion rejected.");
+      if(variables.decision==="approved"&&!row.importedContactId){
+        const saved=_data as LeadRow;
+        onApproved({...row,...saved,email:variables.email.trim(),reviewStatus:"approved",eligibility:directoryEligibility(saved as EligibilityRow)});
+      }
+      onRefresh();
+    },
     onError:()=>setReviewMessage(""),
   });
   const correctionPreviewMutation=useMutation({
@@ -452,6 +460,18 @@ export default function Leads() {
   const [confirmResearch,setConfirmResearch]=useState(false);
   const [confirmResume,setConfirmResume]=useState(false);
   const [researchError,setResearchError]=useState("");
+  const [recentApprovals,setRecentApprovals]=useState<LeadRow[]>([]);
+  useEffect(()=>{setRecentApprovals([]);},[id]);
+  const rememberApproval=(row:LeadRow)=>{
+    // Publish the acknowledged review into cached list pages before the refetch,
+    // so an old needs-review copy cannot briefly contradict this confirmation.
+    queryClient.setQueriesData<InfiniteData<Detail>>({
+      queryKey:["/api/leads",id],
+      predicate:query=>query.queryKey.length===5,
+    },previous=>previous?{...previous,pages:previous.pages.map(page=>({...page,rows:page.rows.map(item=>item.id===row.id?row:item)}))}:previous);
+    setRecentApprovals(previous=>[...previous.filter(item=>item.id!==row.id),row]);
+    window.requestAnimationFrame(()=>document.getElementById("approved-lead-next-steps")?.scrollIntoView({behavior:"smooth",block:"start"}));
+  };
   useEffect(()=>{
     if(!id&&new URLSearchParams(window.location.search).get("upload")==="1"){
       window.requestAnimationFrame(()=>document.getElementById("upload-list")?.scrollIntoView({behavior:"smooth",block:"start"}));
@@ -595,7 +615,16 @@ export default function Leads() {
              </div>
              <p className="text-xs text-muted-foreground">{batchData.total.toLocaleString()} {view==="all"?"businesses in this list":view==="researched"?"businesses attempted, including waiting and failed":view==="needs_review"?"researched businesses awaiting review":"approved businesses ready to add to Contacts"}</p>
            </div>
-           {visibleRows.length?visibleRows.map(row=><LeadRowCard key={row.id} row={row} onRefresh={reload}/>):<div className="rounded-xl border border-dashed p-10 text-center"><ListChecks className="mx-auto h-8 w-8 text-muted-foreground"/><p className="mt-3 font-medium">No businesses in this view yet</p><p className="text-sm text-muted-foreground">{view==="researched"?"No research attempts are available to review yet.":view==="needs_review"?"No researched businesses are waiting for your review.":view==="ready_for_contacts"?"No approved businesses are ready for Contacts yet.":"Try another search or check the batch again."}</p></div>}
+           {recentApprovals.some(row=>row.batchId===id)&&<div id="approved-lead-next-steps" className="scroll-mt-5 space-y-3">
+             {recentApprovals.filter(row=>row.batchId===id).map(saved=>{
+               const row=visibleRows.find(item=>item.id===saved.id)??saved;
+               return <ApprovedContactNextStep key={saved.id} lead={row} onRefresh={reload}
+                 onReview={()=>{setSearch(saved.businessName);changeView("all","lead-candidates");}}
+                 onAdded={contactId=>setRecentApprovals(previous=>previous.map(item=>item.id===saved.id?{...item,importedContactId:contactId}:item))}
+                 onDismiss={()=>setRecentApprovals(previous=>previous.filter(item=>item.id!==saved.id))}/>;
+             })}
+           </div>}
+           {visibleRows.length?visibleRows.map(row=><LeadRowCard key={row.id} row={row} onRefresh={reload} onApproved={rememberApproval}/>):<div className="rounded-xl border border-dashed p-10 text-center"><ListChecks className="mx-auto h-8 w-8 text-muted-foreground"/><p className="mt-3 font-medium">No businesses in this view yet</p><p className="text-sm text-muted-foreground">{view==="researched"?"No research attempts are available to review yet.":view==="needs_review"?"No researched businesses are waiting for your review.":view==="ready_for_contacts"?"No approved businesses are ready for Contacts yet.":"Try another search or check the batch again."}</p></div>}
           {detail.hasNextPage&&<Button variant="outline" disabled={detail.isFetchingNextPage} onClick={()=>detail.fetchNextPage()}>{detail.isFetchingNextPage?"Loading more…":"Load more candidates"}</Button>}
         </section>
       </>}

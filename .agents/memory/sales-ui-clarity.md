@@ -50,3 +50,9 @@ Saved-list review is a working queue: businesses with failed research, rejected 
 **Why:** The user wants to keep working through the businesses at the top instead of repeatedly passing completed or failed entries.
 
 **How to apply:** Reorder as statuses change without deleting or hiding records. Preserve deliberate filters and prioritize unfinished reviews across the entire list, not just the loaded page.
+
+After approval, show “Approved—not yet in Contacts” with a direct Add to Contacts action that stays available when the business moves out of the current results.
+
+**Why:** The user could not find approved businesses in Contacts and explicitly requested this confirmation so the separate addition step does not get lost.
+
+**How to apply:** Keep the outstanding action independent of list sorting, filtering and pagination. Approval is not Contact creation; show successful addition only after the server confirms a Contact, and preserve explicit duplicate review and error handling.

@@ -17,6 +17,7 @@ const pending=new Map(),errors=[],writes=[];
 let ws,id=0,role="salesperson",rows=[],batches=[],scheduled=false,researchActive=false,linkedPreviewReads=0,failSearchSave=false;
 let fullResearchReadOnlyReason=null;
 let contactFreshnessFixture=null;
+let approvalNextFixture=null;
 let providerCreditsRemaining=35,providerCreditsStatus="available";
 let providerCreditsMonthlyLimit=250;
 let sharedProviderBudget={monthYear:"2026-10",monthlyQuota:250,hardStopAt:200,used:200,remaining:0};
@@ -729,6 +730,71 @@ async function researchedRowsUiCase(origin) {
     .then(r=>writeFile(`reports/workflow-fixtures/${role}-researched-results-mobile.jpg`,Buffer.from(r.data,"base64")));
   assert.deepEqual(writes,[],"finding/review-filtering results never initiates research or outreach");
 }
+async function approvedContactNextStepUiCase(origin) {
+  for (const mode of ["paged", "filtered", "duplicates"]) {
+    const batch={id:`fixture-next-step-${role}-${mode}`,name:"Next-step fixture",status:"completed",totalRows:mode==="paged"?105:mode==="filtered"?2:1,createdAt:new Date().toISOString()};
+    const target={...unifiedUploadRow({Business:`Next-step ${mode} Grooming`,Address:"Austin TX",State:"TX",Email:"office@fixture.example"},0,"fixture-owner"),
+      id:`fixture-next-step-row-${mode}`,batchId:batch.id,email:"office@fixture.example",reviewStatus:"needs_review",status:"enriched",processedAt:new Date().toISOString()};
+    target.sourceData={...target.sourceData,stagingState:"verification_attempted"};
+    target.evidence={...target.evidence,ownerName:{status:"failed",error:"Fixture owner lookup failed",candidates:[],providerCalls:0,pagesFetched:0}};
+    rows=[target];
+    if(mode==="filtered")rows.push({...target,id:"fixture-next-step-second",businessName:"Second next-step Grooming"});
+    if(mode==="paged")for(let n=1;n<105;n++)rows.push({...unifiedUploadRow({Business:`Untouched queue ${n}`,Address:"Austin TX",State:"TX"},n,"fixture-owner"),id:`fixture-next-step-untouched-${n}`,batchId:batch.id});
+    batches=[batch];writes.length=0;
+    approvalNextFixture={mode,crmRequests:0,failOnce:mode==="filtered"};
+    await send("Emulation.setDeviceMetricsOverride",{width:1365,height:1000,deviceScaleFactor:1,mobile:false});
+    await send("Page.navigate",{url:origin+"/leads/"+batch.id+(mode==="filtered"?"?view=needs_review":"")});
+    await until("document.querySelector('article')?.innerText.includes('Next-step')","next-step fixture");
+    await click("Review details",article);
+    await click("Approve email",article);
+    const confirmation=`document.querySelector('[data-testid="approved-contact-next-step"][data-lead-id="${target.id}"]')`;
+    await until(`${confirmation}?.innerText.includes('Approved—not yet in Contacts')`,"approval confirmation");
+    await until(mode==="paged"
+      ? `!Array.from(document.querySelectorAll('article')).some(a=>a.innerText.includes(${JSON.stringify(target.businessName)}))`
+      : mode==="filtered"?"document.querySelectorAll('article').length===1":`${button("Add to Contacts",confirmation)}&&!${button("Add to Contacts",confirmation)}.disabled`,
+      "approval remains actionable after filtering or pagination");
+    assert.deepEqual(writes,["review"],"approval alone must never add, schedule, search, or send");
+    if(mode==="filtered"){
+      await click("Review details",article);
+      await click("Approve email",article);
+      await until("document.querySelectorAll('article').length===0 && document.querySelectorAll('[data-testid=\"approved-contact-next-step\"]').length===2","both pending next steps survive an empty review view");
+      assert.deepEqual(writes,["review","review"]);
+    }
+    await send("Emulation.setDeviceMetricsOverride",{width:402,height:874,deviceScaleFactor:1,mobile:true});
+    await evaluate(`document.querySelector('button[aria-label="Collapse sidebar"]')?.click()`);
+    await until(`document.querySelector('button[aria-label="Expand sidebar"]')`,"collapsed mobile sidebar");
+    await evaluate(`${confirmation}.scrollIntoView({block:'start'})`);
+    assert.ok(await evaluate("document.documentElement.scrollWidth<=innerWidth+1"),"mobile confirmation must not overflow");
+    await until(`${confirmation}.getBoundingClientRect().width>=250`,"readable confirmation after sidebar width transition");
+    assert.ok(await evaluate(`${button("Add to Contacts",confirmation)}.getBoundingClientRect().right<=${confirmation}.getBoundingClientRect().right`),"mobile action must fit inside its confirmation");
+    const image=await send("Page.captureScreenshot",{format:"png"});
+    await writeFile(`reports/workflow-fixtures/approved-contact-next-step-${role}-${mode}.png`,Buffer.from(image.data,"base64"));
+    await click("Add to Contacts",confirmation);
+    if(mode==="filtered"){
+      await until(`${confirmation}.querySelector('[role="alert"]')?.innerText.includes('Fixture import temporarily unavailable')`,"explicit import error");
+      assert.equal(target.importedContactId,null);
+      assert.ok(await evaluate(`${confirmation}.innerText.includes('Approved—not yet in Contacts')`));
+      await evaluate(`{const b=${button("Add to Contacts",confirmation)};b.click();b.click();}`);
+    }
+    if(mode==="duplicates"){
+      await until(`${confirmation}.innerText.includes('Possible matching Contacts')`,"duplicate review in persistent confirmation");
+      assert.equal(target.importedContactId,null);
+      assert.equal(await evaluate(`${button("Confirm link to selected Contact",confirmation)}.disabled`),true);
+      await evaluate(`${confirmation}.querySelector('input[type="radio"]').click()`);
+      await click("Confirm link to selected Contact",confirmation);
+    }
+    await until(`${confirmation}?.innerText.includes('Added to Contacts')`,"server-confirmed addition");
+    assert.equal(await evaluate(`${confirmation}.querySelector('a').getAttribute('href')`),`/contacts?edit=${target.importedContactId}`);
+    assert.equal(approvalNextFixture.crmRequests,mode==="paged"?1:2,"no automatic retries or double-click requests");
+    assert.deepEqual(writes,mode==="filtered"?["review","review","crm"]:["review","crm"]);
+    await click("Dismiss confirmation",confirmation);
+    if(mode==="filtered"){
+      assert.equal(await evaluate("document.querySelectorAll('[data-testid=\"approved-contact-next-step\"]').length"),1,"adding one business does not discard another pending business");
+      assert.equal(rows[1].importedContactId,null);
+    }
+  }
+  approvalNextFixture=null;
+}
 async function api(url,method,body) {
   if(contactFreshnessFixture&&url.pathname==="/api/contacts"&&method==="GET"){
     contactFreshnessFixture.reads++;
@@ -850,6 +916,17 @@ async function api(url,method,body) {
     }
     if(url.pathname.endsWith("/crm")){
       assert.equal(row.reviewStatus,"approved");
+      if(approvalNextFixture){
+        approvalNextFixture.crmRequests++;
+        if(approvalNextFixture.failOnce){
+          approvalNextFixture.failOnce=false;
+          return {__httpStatus:400,message:"Fixture import temporarily unavailable"};
+        }
+        if(approvalNextFixture.mode==="duplicates"&&!body.linkContactId)return {
+          needsDuplicateReview:true,duplicates:[{id:"fixture-next-step-existing",company:row.businessName,email:row.email,address:row.address,matchReasons:["Email address"]}],
+        };
+        if(approvalNextFixture.mode==="duplicates")assert.equal(body.linkContactId,"fixture-next-step-existing");
+      }
       if(contactFreshnessFixture){
         if(!contactFreshnessFixture.linked)contactFreshnessFixture.records.push(contactFreshnessFixture.added);
         row.importedContactId=contactFreshnessFixture.added.id;
@@ -892,6 +969,10 @@ try {
   await mkdir("reports/workflow-fixtures",{recursive:true});
   for(const currentRole of ["salesperson","admin"]){
     role=currentRole;rows=[];batches=[];scheduled=false;researchActive=false;linkedPreviewReads=0;writes.length=0;
+    if(process.argv.includes("--approval-next-step-only")){
+      await approvedContactNextStepUiCase(origin);
+      continue;
+    }
     if(process.argv.includes("--shared-budget-only")){
       await sharedProviderBudgetUiCase(origin);
       continue;
@@ -974,7 +1055,8 @@ try {
     await researchedRowsUiCase(origin);
   }
   assert.deepEqual(errors,[]);
-   console.log(process.argv.includes("--contacts-freshness-only") ? "PASS: administrator/salesperson same-session unfiltered Contacts refresh after lead addition, prefix invalidation of search variants, and fresh data on Contacts remount. All APIs intercepted; no live records touched." :
+   console.log(process.argv.includes("--approval-next-step-only") ? "PASS: administrator/salesperson persistent approval confirmation after first-page displacement and empty review filtering; multiple businesses, direct explicit Contact addition, duplicate selection, failed imports, safe retry/double-click, confirmed Contact link and mobile layout. Every API intercepted; no live records, searches, schedules or sends." :
+    process.argv.includes("--contacts-freshness-only") ? "PASS: administrator/salesperson same-session unfiltered Contacts refresh after lead addition, prefix invalidation of search variants, and fresh data on Contacts remount. All APIs intercepted; no live records touched." :
     process.argv.includes("--missing-email-only") ? "PASS: prominent missing-email label, 16px bold text, highlighted background, thick border and no overflow on desktop/mobile for administrator/salesperson. No mutations; all API traffic intercepted." :
     process.argv.includes("--contact-form-only") ?
     "PASS: optional review fields, no-email approval disabled, owner attempt shown before drafting, saved-message generation, team fallback, editing/copying, clipboard failure, unsearched gating and no submit/send/enrollment. Administrator/salesperson desktop/mobile; every API intercepted." :
